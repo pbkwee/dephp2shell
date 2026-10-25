@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">DePHP2Shell logo</title>
+  <desc id="description">A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates.</desc>
+  <path id="php-document" d="M376 250V138L286 48H104Q80 48 80 72V374Q80 398 104 398H222" fill="none" stroke="#BC9B85" stroke-width="26" stroke-linejoin="round" />
+  <path id="fold" d="M286 48V126Q286 138 298 138H376Z" fill="#BC9B85" />
+  <g id="php" fill="#BC9B85" fill-rule="evenodd">
+    <path d="M112 174H150Q180 174 180 205Q180 236 150 236H134V258H112Z M134 194V216H148Q158 216 158 205Q158 194 148 194Z" />
+    <path d="M192 174H214V204H234V174H256V258H234V226H214V258H192Z" />
+    <path d="M268 174H306Q336 174 336 205Q336 236 306 236H290V258H268Z M290 194V216H304Q314 216 314 205Q314 194 304 194Z" />
+  </g>
+  <g id="magnifier" fill="none" stroke="#BFE369">
+    <circle cx="332" cy="338" r="72" stroke-width="26" />
+    <path d="M384 390L432 438" stroke-width="32" stroke-linecap="round" />
+  </g>
+</svg>

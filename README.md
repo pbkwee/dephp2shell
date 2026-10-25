@@ -1,6 +1,6 @@
 # DePHP2Shell
 
-![DePHP2Shell. Check first. Patch carefully.](assets/branding/readme-banner.png)
+![DePHP2Shell. Check first. Patch carefully. PHP security checks for mixed Linux fleets.](assets/branding/readme-banner.png)
 
 Check Linux servers for the PHP2Shell vulnerabilities, then update supported PHP installations through their existing package sources.
 

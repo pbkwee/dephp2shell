@@ -1,17 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title description">
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
   <title id="title">DePHP2Shell logo</title>
-  <desc id="description">An open teal shell frames a terminal prompt. A copper join represents a careful repair.</desc>
-  <defs>
-    <linearGradient id="teal" x1="205" y1="627" x2="1073" y2="627" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#187D80"/>
-      <stop offset="1" stop-color="#36B6AC"/>
-    </linearGradient>
-  </defs>
-  <g fill="url(#teal)">
-    <path id="left-shell" d="M 503 225 H 627 L 551 355 L 342 471 V 799 L 662 990 L 532 1071 L 205 865 L 209 397 Z"/>
-    <path id="right-shell" d="M 801 225 L 1073 412 V 867 L 738 1064 V 915 L 934 800 V 496 L 725 351 Z"/>
-    <path id="terminal-chevron" d="M 456 471 L 663 600 V 670 L 456 799 V 710 L 576 635 L 456 560 Z"/>
-    <path id="terminal-underscore" d="M 623 736 H 854 V 795 H 623 Z"/>
+  <desc id="description">A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates.</desc>
+  <path id="php-document" d="M376 250V138L286 48H104Q80 48 80 72V374Q80 398 104 398H222" fill="none" stroke="#996444" stroke-width="26" stroke-linejoin="round" />
+  <path id="fold" d="M286 48V126Q286 138 298 138H376Z" fill="#996444" />
+  <g id="php" fill="#996444" fill-rule="evenodd">
+    <path d="M112 174H150Q180 174 180 205Q180 236 150 236H134V258H112Z M134 194V216H148Q158 216 158 205Q158 194 148 194Z" />
+    <path d="M192 174H214V204H234V174H256V258H234V226H214V258H192Z" />
+    <path d="M268 174H306Q336 174 336 205Q336 236 306 236H290V258H268Z M290 194V216H304Q314 216 314 205Q314 194 304 194Z" />
   </g>
-  <path id="repair-join" fill="#D48851" d="M 662 225 H 801 L 725 351 H 589 Z"/>
+  <g id="magnifier" fill="none" stroke="#587200">
+    <circle cx="332" cy="338" r="72" stroke-width="26" />
+    <path d="M384 390L432 438" stroke-width="32" stroke-linecap="round" />
+  </g>
 </svg>

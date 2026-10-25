@@ -1,71 +1,72 @@
 # DePHP2Shell branding
 
-DePHP2Shell checks PHP first and attempts a supported update without changing
-package providers. The visual identity combines a terminal prompt with an open,
-angular shell. A copper join suggests a careful repair.
+Use **DePHP2Shell** with this spelling. The tagline is **“Check first. Patch carefully.”**
+and the short description is “PHP security checks for mixed Linux fleets.”
 
-Use **DePHP2Shell** with this capitalisation. The short description is
-“PHP security checks for mixed Linux fleets.” The tagline is
-**“Check first. Patch carefully.”** Neither is a guarantee of complete detection
-or a successful fix.
+A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates.
+
+## RimuHosting design system
+
+The tool uses RimuHosting's brand colours and CartoGothic Std typography.
+The banner follows the site's Warm Surface masthead style, with Warm Ink text,
+a Bark edge, a small mono eyebrow and secondary RimuHosting attribution.
+The official tree and wordmark retain their canonical logo colours.
+
+| Token | Colour | Role |
+| --- | --- | --- |
+| `--rr-clr-brand-surface-warm` | `#F4EEDB` | Banner surface |
+| `--rr-clr-brand-ink` | `#251D18` | Product name and description |
+| `--rr-clr-brand-bark` | `#452008` | Tagline and top edge |
+| `--rr-clr-brand-clay` | `#996444` | Tool symbol |
+| `--rr-clr-brand-leaf` | `#88AA00` | Decorative status accents |
+| `--rr-clr-brand-green-text` | `#587200` | Arrow or magnifier with contrast on light surfaces |
+| `--rh-clr-clay-deep` | `#8A5A3C` | Small eyebrow and attribution text |
+| `--rr-clr-brand-nav-tan` | `#BC9B85` | Tool symbol on dark surfaces only |
+| `--rr-clr-brand-leaf-soft` | `#BFE369` | Arrow or magnifier on dark surfaces |
+
+Leaf is decorative; it is not used for body text on light surfaces.
+CartoGothic lettering is converted to paths so viewers need no installed fonts.
+The standalone tool symbol is transparent and contains no embedded fonts or images.
 
 ## Assets
 
 | File | Use |
 | --- | --- |
-| [Vector logo](../assets/branding/logo.svg) | Editable paths on a transparent background; scales to any size. |
-| [Transparent logo](../assets/branding/logo.png) | Square avatars, icons and presentations; 1254 × 1254 PNG with transparency. |
-| [README banner](../assets/branding/readme-banner.png) | Repository masthead; 2172 × 724 PNG, with its own dark background for either GitHub theme. |
+| [SVG logo](../assets/branding/logo.svg) | Editable tool symbol on a transparent background. |
+| [PNG logo](../assets/branding/logo.png) | 1254 × 1254 transparent export for avatars and presentations. |
+| [Dark-surface SVG logo](../assets/branding/logo-dark.svg) | Navigation Tan and Leaf Soft variant for Bark or other dark backgrounds. |
+| [Dark-surface PNG logo](../assets/branding/logo-dark.png) | 1254 × 1254 transparent export of the dark-surface variant. |
+| [SVG README banner](../assets/branding/readme-banner.svg) | Editable 2172 × 724 artwork, including outlined brand typography and the company lockup. |
+| [PNG README banner](../assets/branding/readme-banner.png) | README masthead with an opaque surface for either GitHub theme. |
 
-The SVG is a clean vector reconstruction of the original PNG mark, with separate
-paths for the shell, prompt and copper join. It contains no embedded bitmap,
-fonts or external resources. Use it for resizing and editing.
+Keep the symbol's proportions and clear space. Prefer at least 48 pixels for
+the standalone logo. Use the banner when the name and tagline are needed.
+Use `logo.svg` or `logo.png` on light surfaces and the `logo-dark` variant on dark surfaces.
+Describe supported operations and their limits; the artwork does not guarantee a successful result.
 
-The README uses the banner through a relative image link, so it travels with a
-clone or fork. The transparent mark is readable on light and dark backgrounds.
-Prefer at least 48 pixels for an icon where space permits. Keep the clear space
-around the mark, preserve its proportions, and use the full-resolution files for
-larger placements. Avoid recolouring, stretching or putting the mark over a busy
-background.
+## Editing and export
 
-## Palette
+The SVG files are the current source artwork. The symbols were developed from
+image-generated concepts; the current banners use vector shapes and brand typography.
+To change wording, set it in CartoGothic Std and convert the lettering to paths.
+Preserve the official company lockup. Regenerate PNGs after editing:
 
-These are the reference colours for future companion assets. The generated PNGs
-include subtle tonal variation.
-
-| Colour | Hex | Role |
-| --- | --- | --- |
-| Ink navy | `#10222D` | Banner background |
-| Deep teal | `#187D80` | Main mark |
-| Bright teal | `#36B6AC` | Mark accent |
-| Copper | `#D48851` | Repair join |
-| Warm white | `#F5F3EE` | Text on navy |
-
-Use a plain sans-serif for headings and body text. Reserve monospace for commands.
-Keep language practical and calm: describe checks, supported updates and limits
-rather than promising that a server is safe.
-
-RimuHosting attribution is secondary to the project name. Retain the existing
-[licence](../LICENSE) and [trademark notice](../NOTICE); these assets do not imply
-endorsement of modified versions.
-
-## Generation prompts
-
-Both PNGs were created with the built-in OpenAI image-generation tool. The banner
-used the transparent logo as its identity reference. These prompts record the
-creative brief; inspect any regenerated artwork for lettering, transparency and
-small-size legibility before replacing an asset.
-
-### Logo
-
-```text
-Use case: logo-brand. Asset: standalone square logo mark for an open-source Linux PHP security maintenance tool named DePHP2Shell. Generate ONE finished, original logo mark, centered on a genuinely transparent background, no text or lettering. Design a compact geometric protective shell from two substantial interlocking angular terminal-bracket forms: an open hexagonal silhouette, with a terminal chevron and underscore thoughtfully formed in the negative space. A small warm copper join or repair segment should be the distinctive detail, suggesting careful patching and repair. Simple silhouette, precise flat shapes, consistent thick geometry, comfortable internal spacing, excellent legibility at small avatar sizes. Main color deep teal #187D80 with a lighter teal #36B6AC face so it stands out on both light and dark surfaces; copper accent #D48851. No gradients, no shadows, no glow, no 3D, no texture, no mockup, no background, no shield-with-checkmark stock icon, no padlock, no mascots. Restrained, confident Unix utility branding with a custom, memorable terminal-shell motif. Keep generous transparent clear space around the single mark. Do not draw a wordmark or any typography.
+```sh
+cairosvg assets/branding/logo.svg -o assets/branding/logo.png -s 1
+cairosvg assets/branding/logo-dark.svg -o assets/branding/logo-dark.png -s 1
+cairosvg assets/branding/readme-banner.svg -o assets/branding/readme-banner.png
 ```
 
-### README banner
+CairoSVG is a maintainer export tool, not a dependency of the server tools.
 
-Reference image: `assets/branding/logo.png`.
+## Recreation brief
+
+This brief describes the current design. The checked-in SVGs preserve the exact
+colours, shapes and lettering; image generation would produce a new variation.
 
 ```text
-Use case: logo-brand. Asset: polished horizontal GitHub README masthead for DePHP2Shell. Input image 1 is the existing logo identity reference. Reuse its distinctive open hexagonal teal shell / terminal prompt / small copper repair join faithfully; do not invent another logo. Create a finished ultra-wide landscape banner with a 3:1 aspect ratio, approximately 2400x800. Opaque solid very dark ink-navy background #10222D, with exceptionally restrained thin darker-teal terminal-grid line details only near the corners, no decorative clutter. Comfortable clear space and balanced editorial typography. Place the reference logo at the left, sized to roughly two thirds of the banner height. To its right put the EXACT product name "DePHP2Shell" in large, crisp warm-white modern sans-serif typography, accurately capitalised D e P H P 2 S h e l l. Below the name, smaller but easily readable: "Check first. Patch carefully." Under that, a subtle smaller line: "PHP security checks for mixed Linux fleets." At the lower right put a tiny restrained "by RimuHosting" attribution. Three text lines plus attribution only; no extra words, no fake command text, no badges. Teal #36B6AC and copper #D48851 should be subtle accents; text #F5F3EE. Professional, calm, useful open-source infrastructure software branding. This is a final flat digital artwork, not a photograph, not a browser screenshot, not a mockup on a surface. No gradients or neon effects, no 3D, no drop shadows, no bevels, no padlocks, no promises of guaranteed security. The banner must remain clear when scaled to a GitHub README column about 800 pixels wide. Preserve generous padding on all edges.
+Create a 3:1 banner for DePHP2Shell. Use RimuHosting Warm Surface #F4EEDB, Warm Ink #251D18 text, Bark #452008, Clay #996444, decorative Leaf #88AA00 and Green Text #587200 for the arrow or magnifier. Use CartoGothic Std, a small mono eyebrow and the official light-surface RimuHosting lockup. Preserve this symbol: A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates. Show the exact wording: DePHP2Shell / Check first. Patch carefully. / PHP security checks for mixed Linux fleets. Keep the company lockup secondary. Use simple flat shapes and generous clear space.
 ```
+
+The artwork uses the repository's existing [licence](../LICENSE).
+Retain the [trademark notice](../NOTICE); the assets do not imply endorsement of modified versions.
