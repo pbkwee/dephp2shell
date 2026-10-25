@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title description">
+  <title id="title">DePHP2Shell logo</title>
+  <desc id="description">An open teal shell frames a terminal prompt. A copper join represents a careful repair.</desc>
+  <defs>
+    <linearGradient id="teal" x1="205" y1="627" x2="1073" y2="627" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#187D80"/>
+      <stop offset="1" stop-color="#36B6AC"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#teal)">
+    <path id="left-shell" d="M 503 225 H 627 L 551 355 L 342 471 V 799 L 662 990 L 532 1071 L 205 865 L 209 397 Z"/>
+    <path id="right-shell" d="M 801 225 L 1073 412 V 867 L 738 1064 V 915 L 934 800 V 496 L 725 351 Z"/>
+    <path id="terminal-chevron" d="M 456 471 L 663 600 V 670 L 456 799 V 710 L 576 635 L 456 560 Z"/>
+    <path id="terminal-underscore" d="M 623 736 H 854 V 795 H 623 Z"/>
+  </g>
+  <path id="repair-join" fill="#D48851" d="M 662 225 H 801 L 725 351 H 589 Z"/>
+</svg>
