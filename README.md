@@ -13,15 +13,15 @@ The tool is one Bash script. The server needs no Python, Node.js, PHP library or
 Download the script, inspect it, then run it as root:
 
 ```sh
-wget -O dephp2shell.sh https://raw.githubusercontent.com/OWNER/dephp2shell/REF/dephp2shell.sh
+wget -O dephp2shell.sh https://raw.githubusercontent.com/pbkwee/dephp2shell/main/dephp2shell.sh
 less dephp2shell.sh
 sudo bash dephp2shell.sh --check
 ```
 
-`OWNER` and `REF` are placeholders. Replace them with the project's published owner and a reviewed release tag or commit. Alternatively:
+These examples use `main`, the latest development version. For repeatable deployments, replace `main` in the download URL with a reviewed release tag or commit. Alternatively, clone the repository:
 
 ```sh
-git clone https://github.com/OWNER/dephp2shell.git
+git clone --branch main https://github.com/pbkwee/dephp2shell.git
 cd dephp2shell
 less dephp2shell.sh
 sudo bash dephp2shell.sh --check

@@ -4,10 +4,10 @@
 
 Old `wget` and TLS libraries can fail to negotiate HTTPS with GitHub. Errors include `unknown protocol` and `Unable to establish SSL connection`. Disabling certificate verification does not fix an unsupported TLS protocol.
 
-Download on a current computer, inspect the file, then transfer it over SSH. Replace `OWNER` and `REF` with the published project owner and a reviewed release tag or commit. Replace `OLD_SERVER` with the destination address.
+Download on a current computer, inspect the file, then transfer it over SSH. The download follows `main`, the latest development version; use a reviewed tag or commit for a fixed version. Replace `OLD_SERVER` with the destination address.
 
 ```sh
-wget -O dephp2shell.sh https://raw.githubusercontent.com/OWNER/dephp2shell/REF/dephp2shell.sh
+wget -O dephp2shell.sh https://raw.githubusercontent.com/pbkwee/dephp2shell/main/dephp2shell.sh
 less dephp2shell.sh
 scp -O dephp2shell.sh root@OLD_SERVER:/root/dephp2shell.sh
 ```
