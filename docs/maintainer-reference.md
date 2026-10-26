@@ -691,6 +691,20 @@ Finding `/etc/cagefs` requires a separate review; the directory alone does not
 establish that CageFS is active. If applications use CageFS PHP copies, those
 copies need refresh and verification as well as the host packages.
 
+Supervisor-managed PHP applications and workers remain blocked because the script
+has no verified restart procedure for them. Supervisor and RoadRunner are standard
+software; this restriction is a script coverage gap. The warning directs operators
+to match `service_mapping` process IDs and `process_parent` launchers to named
+Supervisor programs using `supervisorctl status` with the correct system configuration.
+A parent launcher may be RoadRunner (`rr`). Restarting PHP-FPM alone does not replace
+these workers. Arrange maintenance to update PHP and replace the affected programs
+and their PHP children, then rerun the check. The script does not invoke Supervisor
+or restart all of its programs. RoadRunner documents
+[`rr reset`](https://docs.roadrunner.dev/docs/app-server/cli) for worker replacement.
+Supervisor supports [individual program restarts](https://supervisord.org/running.html);
+child shutdown depends on the application and its
+[process-group settings](https://supervisord.org/configuration.html#program-x-section-values).
+
 Detached LSPHP workers can survive a LiteSpeed restart. They are reported as a
 blocker rather than killed indiscriminately. Chrooted processes and unverified
 mount namespaces cannot supply host package paths or restart targets. A private

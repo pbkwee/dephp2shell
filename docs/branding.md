@@ -3,7 +3,8 @@
 Use **DePHP2Shell** with this spelling. The tagline is **“Check first. Patch carefully.”**
 and the short description is “PHP security checks for mixed Linux fleets.”
 
-A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates.
+The PHP document and magnifying glass represent inspecting PHP installations before attempting supported security updates.
+Preserve the traced contours and PHP lettering when making colour variants.
 
 ## RimuHosting design system
 
@@ -17,14 +18,12 @@ The official tree and wordmark retain their canonical logo colours.
 | `--rr-clr-brand-surface-warm` | `#F4EEDB` | Banner surface |
 | `--rr-clr-brand-ink` | `#251D18` | Product name and description |
 | `--rr-clr-brand-bark` | `#452008` | Tagline and top edge |
-| `--rr-clr-brand-clay` | `#996444` | Tool symbol |
-| `--rr-clr-brand-leaf` | `#88AA00` | Decorative status accents |
-| `--rr-clr-brand-green-text` | `#587200` | Arrow or magnifier with contrast on light surfaces |
+| `--rr-clr-brand-link` | `#255982` | PHP document and lettering |
+| `--rr-clr-brand-clay` | `#996444` | Magnifying glass |
 | `--rh-clr-clay-deep` | `#8A5A3C` | Small eyebrow and attribution text |
-| `--rr-clr-brand-nav-tan` | `#BC9B85` | Tool symbol on dark surfaces only |
-| `--rr-clr-brand-leaf-soft` | `#BFE369` | Arrow or magnifier on dark surfaces |
+| `--rr-clr-brand-canvas` | `#FFFFFF` | PHP document and lettering on dark surfaces |
+| `--rr-clr-brand-nav-tan` | `#BC9B85` | Magnifying glass on dark surfaces only |
 
-Leaf is decorative; it is not used for body text on light surfaces.
 CartoGothic lettering is converted to paths so viewers need no installed fonts.
 The standalone tool symbol is transparent and contains no embedded fonts or images.
 
@@ -34,7 +33,7 @@ The standalone tool symbol is transparent and contains no embedded fonts or imag
 | --- | --- |
 | [SVG logo](../assets/branding/logo.svg) | Editable tool symbol on a transparent background. |
 | [PNG logo](../assets/branding/logo.png) | 1254 × 1254 transparent export for avatars and presentations. |
-| [Dark-surface SVG logo](../assets/branding/logo-dark.svg) | Navigation Tan and Leaf Soft variant for Bark or other dark backgrounds. |
+| [Dark-surface SVG logo](../assets/branding/logo-dark.svg) | White and Navigation Tan variant for Bark or other dark backgrounds. |
 | [Dark-surface PNG logo](../assets/branding/logo-dark.png) | 1254 × 1254 transparent export of the dark-surface variant. |
 | [SVG README banner](../assets/branding/readme-banner.svg) | Editable 2172 × 724 artwork, including outlined brand typography and the company lockup. |
 | [PNG README banner](../assets/branding/readme-banner.png) | README masthead with an opaque surface for either GitHub theme. |
@@ -46,8 +45,8 @@ Describe supported operations and their limits; the artwork does not guarantee a
 
 ## Editing and export
 
-The SVG files are the current source artwork. The symbols were developed from
-image-generated concepts; the current banners use vector shapes and brand typography.
+The SVG files are the current source artwork. The logo was recoloured with the built-in image-generation tool, then its contours were traced into editable vector paths.
+The banner combines that same logo with outlined brand typography.
 To change wording, set it in CartoGothic Std and convert the lettering to paths.
 Preserve the official company lockup. Regenerate PNGs after editing:
 
@@ -61,12 +60,14 @@ CairoSVG is a maintainer export tool, not a dependency of the server tools.
 
 ## Recreation brief
 
-This brief describes the current design. The checked-in SVGs preserve the exact
-colours, shapes and lettering; image generation would produce a new variation.
+Use the PHP-file-and-magnifying-glass logo as the identity reference.
+Preserve its document silhouette, folded corner, PHP lettering, lens and diagonal handle.
+Use RimuHosting Link Blue `#255982` for the file and Clay `#996444` for the magnifier.
+Keep the background, document interior and lens interior transparent.
+Use white and Navigation Tan `#BC9B85` on dark surfaces.
+Retain the banner's Warm Surface, CartoGothic typography, official company lockup and exact wording.
 
-```text
-Create a 3:1 banner for DePHP2Shell. Use RimuHosting Warm Surface #F4EEDB, Warm Ink #251D18 text, Bark #452008, Clay #996444, decorative Leaf #88AA00 and Green Text #587200 for the arrow or magnifier. Use CartoGothic Std, a small mono eyebrow and the official light-surface RimuHosting lockup. Preserve this symbol: A PHP document under a magnifying glass represents inspecting PHP installations before attempting supported security updates. Show the exact wording: DePHP2Shell / Check first. Patch carefully. / PHP security checks for mixed Linux fleets. Keep the company lockup secondary. Use simple flat shapes and generous clear space.
-```
+The SVG files preserve the traced contours and exact colours. Keep their silhouette and letterforms when making variants.
 
 The artwork uses the repository's existing [licence](../LICENSE).
 Retain the [trademark notice](../NOTICE); the assets do not imply endorsement of modified versions.

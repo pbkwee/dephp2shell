@@ -1747,6 +1747,7 @@ EOF
                 advice="Ask support or your administrator to review this service, then retry."
                 if (unit[key] ~ /^(cron|crond)[.]service$/) advice="Cron launched these PHP tasks, but their package-managed command-line runtime could not be verified. Identify the tasks and PHP installation before updating. Restarting cron does not reliably replace existing tasks; the script will not terminate them."
                 if (name[key] ~ /^php.*cgi/) advice="These CGI/FastCGI workers need their launcher or supervising service identified before a restart can be planned. Restarting PHP-FPM alone may not replace them. Automatic updates are blocked until the restart target is verified."
+                if (unit[key] ~ /^(supervisor|supervisord)[.]service$/) advice="Supervisor manages these PHP applications or background workers. Restarting PHP-FPM alone will not replace them. Ask your administrator to match the process IDs and parent launchers in the service_mapping and process_parent records to individual programs using supervisorctl status with the correct system configuration. A parent launcher may be RoadRunner (rr). Arrange a maintenance window to update PHP and safely replace those programs and their PHP children, then rerun this check. Do not restart all Supervisor programs. Automatic updates remain blocked because this script has no verified restart procedure for these applications."
                 print "Automatic updating is paused: we could not verify a safe restart method for " name[key] " (" count[key] (count[key]==1 ? " process" : " processes") "; service " unit[key] "). " advice
             }
         }' "$P2S_WORK/unmapped-services" |
@@ -2432,7 +2433,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command script_revision=2026-10-25.9
+    local mode=check result=0 command script_revision=2026-10-26.1
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;

@@ -1220,6 +1220,50 @@ printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
         self.assertIn('No deleted PHP executables or modules were detected in the inspected processes.', out)
         self.assertNotIn('This does not establish', out)
 
+    def test_supervisor_workers_explain_targeted_review_and_remain_blocked(self):
+        for unit in ('supervisor.service', 'supervisord.service'):
+            with self.subTest(unit=unit):
+                out = self.shell(f'unit={unit}\n' + r'''
+mkdir -p "$P2S_WORK/proc/1" "$P2S_WORK/proc/4200"
+printf '1 (init) S 0\n' > "$P2S_WORK/proc/1/stat"
+printf '4200 (rr) S 1\n' > "$P2S_WORK/proc/4200/stat"
+printf '0::/system.slice/%s\n' "$unit" > "$P2S_WORK/proc/4200/cgroup"
+for pid in 4242 4243; do
+    mkdir -p "$P2S_WORK/proc/$pid"
+    printf '%s (php8.2) S 4200\n' "$pid" > "$P2S_WORK/proc/$pid/stat"
+    : > "$P2S_WORK/proc/$pid/maps"
+    printf '0::/system.slice/%s\n' "$unit" > "$P2S_WORK/proc/$pid/cgroup"
+done
+p2s_command_exists() { case "$1" in readlink|ps) return 0;; *) return 1;; esac; }
+readlink() { case "$1" in
+    */4242/exe|*/4243/exe) printf '/fixture/php8.2\n';;
+    */4200/exe) printf '/fixture/rr\n';;
+    *) return 1;; esac; }
+ps() { printf 'Thu Oct 22 10:00:00 2026\n'; }
+p2s_process_check_host_scope() { return 0; }
+p2s_process_inventory_collect
+printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
+printf 'RESTART_TARGETS=%s\n' "$(cat "$P2S_WORK/services")"
+p2s_fix_run
+printf 'FIX_STATUS=%s|INSTALL=%s|RESTART=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED" "$P2S_RESTART_ATTEMPTED"
+''')
+                warnings = [row for row in out.splitlines() if row.startswith('dss:warn:')]
+                self.assertEqual(len(warnings), 1)
+                warning = warnings[0]
+                for text in ('2 processes', 'Supervisor manages these PHP applications',
+                             'Restarting PHP-FPM alone will not replace them',
+                             'service_mapping and process_parent', 'supervisorctl status',
+                             'RoadRunner (rr)', 'maintenance window', 'PHP children',
+                             'Do not restart all Supervisor programs',
+                             'Automatic updates remain blocked'):
+                    self.assertIn(text, warning)
+                for pid in (4242, 4243):
+                    self.assertIn(f'process_parent:beforefix|{pid}|4200|rr|/fixture/rr|{unit}', out)
+                    self.assertIn(f'service_mapping:beforefix|{pid}|php8.2|/fixture/php8.2|{unit}|restart_target_unverified', out)
+                self.assertIn('UNKNOWN=false|BLOCKED=true', out)
+                self.assertIn('RESTART_TARGETS=\n', out)
+                self.assertIn('FIX_STATUS=1|INSTALL=false|RESTART=false', out)
+
     def test_cgi_workers_explain_launcher_review_and_keep_parent_evidence(self):
         out = self.shell(r'''
 mkdir -p "$P2S_WORK/proc/1" "$P2S_WORK/proc/4200"
