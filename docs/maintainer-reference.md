@@ -187,9 +187,17 @@ Whether stopping a service kills its children depends on its
 [systemd KillMode configuration](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html#KillMode=).
 Do not use a cron service restart as an application-aware task replacement.
 
-Pre-5.4 PHP stays unknown without a reviewed rule. Its summary distinguishes
-unverified CVE coverage from an unverified vendor backport and recommends a
-security-support review and application migration.
+Pre-5.4 PHP stays unknown without a reviewed rule. The archived CentOS 5 stock
+engine packages `php`, `php-cli` and `php-common` at `5.1.6-44.el5_10`, with vendor
+`CentOS` and no epoch or epoch zero, are presumed vulnerable. This bounded rule
+uses the [PHP2Shell advisory](https://cert.europa.eu/publications/security-advisories/2026-018/)
+including end-of-life PHP and the obsolete vendor build. It does not claim tested
+exploitability. Its package assessment records
+`presumed_affected_legacy_vendor_build`, the summary explains the presumption,
+and both machine markers emit `Y`. Custom revisions, other vendors and other
+unreviewed builds remain unknown. CentOS 5 automatic updates remain blocked.
+Build dates alone do not classify arbitrary PHP builds. Previously saved results
+need a fresh check to change.
 
 `function_checksum` records POSIX `cksum` output for the loaded shell functions,
 or `unavailable` if that optional command is absent. It fingerprints delivered
@@ -693,13 +701,18 @@ copies need refresh and verification as well as the host packages.
 
 Supervisor-managed PHP applications and workers remain blocked because the script
 has no verified restart procedure for them. Supervisor and RoadRunner are standard
-software; this restriction is a script coverage gap. The warning directs operators
+software; their application configuration still requires review. Automatic
+updates support verified package and service procedures, without changing local
+Supervisor/Laravel/RoadRunner configuration. The warning directs operators
 to match `service_mapping` process IDs and `process_parent` launchers to named
 Supervisor programs using `supervisorctl status` with the correct system configuration.
 A parent launcher may be RoadRunner (`rr`). Restarting PHP-FPM alone does not replace
-these workers. Arrange maintenance to update PHP and replace the affected programs
-and their PHP children, then rerun the check. The script does not invoke Supervisor
-or restart all of its programs. RoadRunner documents
+these workers. During maintenance, an administrator can safely stop only the
+affected programs, confirm their PHP children have stopped and stay stopped, then
+retry `--fix`. All other package-source and safety checks still apply. Restore the
+applications afterwards even if the update was blocked, verify application health,
+then rerun `--check`. Do not stop Supervisor itself or restart all its programs.
+The script does not invoke Supervisor or change application configuration. RoadRunner documents
 [`rr reset`](https://docs.roadrunner.dev/docs/app-server/cli) for worker replacement.
 Supervisor supports [individual program restarts](https://supervisord.org/running.html);
 child shutdown depends on the application and its

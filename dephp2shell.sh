@@ -341,6 +341,13 @@ p2s_version_package_state() {
         case "$P2S_MAJOR:${version#0:}" in 9:8.0.30-8.el9_8.1)
             case "$name" in php|php-cli|php-common|php-fpm|php-embedded) state=N ;; esac ;;
         esac
+    elif [ "$P2S_BACKEND" = rpm ] && [ "$P2S_DISTRO" = centos ] && [ "$P2S_MAJOR" = 5 ] && [ "$vendor" = CentOS ]; then
+        [ "$state" = N ] || state='?'
+        # Presume this archived stock build affected: it predates the fixes; exact pre-5.4 exploitability is untested.
+        # https://cert.europa.eu/publications/security-advisories/2026-018/
+        case "$name:${version#0:}" in
+            php:5.1.6-44.el5_10|php-cli:5.1.6-44.el5_10|php-common:5.1.6-44.el5_10) state=Y ;;
+        esac
     elif [ "$P2S_BACKEND" = rpm ]; then
         # Vendor backports below the upstream floors need vendor/stream-specific evidence.
         [ "$state" = N ] || state='?'
@@ -605,6 +612,7 @@ p2s_package_inventory_assess() {
             p2s_manifest_record package_state "$name|$state"
             reason=verified_version_rule
             if [ "$state" = Y ]; then reason=verified_affected_version_rule; fi
+            if [ "$state" = Y ] && [ "$upstream_state" = '?' ]; then reason=presumed_affected_legacy_vendor_build; fi
             if [ "$state" = '?' ]; then reason=no_verified_vendor_rule_or_unrecognised_version; fi
             p2s_manifest_record package_assessment "$name|$version|$arch|$vendor|$provider|$state|$reason|upstream=$upstream_state"
             printf '%s|%s\n' "$name" "$state" >> "$P2S_WORK/package-states"
@@ -1747,7 +1755,7 @@ EOF
                 advice="Ask support or your administrator to review this service, then retry."
                 if (unit[key] ~ /^(cron|crond)[.]service$/) advice="Cron launched these PHP tasks, but their package-managed command-line runtime could not be verified. Identify the tasks and PHP installation before updating. Restarting cron does not reliably replace existing tasks; the script will not terminate them."
                 if (name[key] ~ /^php.*cgi/) advice="These CGI/FastCGI workers need their launcher or supervising service identified before a restart can be planned. Restarting PHP-FPM alone may not replace them. Automatic updates are blocked until the restart target is verified."
-                if (unit[key] ~ /^(supervisor|supervisord)[.]service$/) advice="Supervisor manages these PHP applications or background workers. Restarting PHP-FPM alone will not replace them. Ask your administrator to match the process IDs and parent launchers in the service_mapping and process_parent records to individual programs using supervisorctl status with the correct system configuration. A parent launcher may be RoadRunner (rr). Arrange a maintenance window to update PHP and safely replace those programs and their PHP children, then rerun this check. Do not restart all Supervisor programs. Automatic updates remain blocked because this script has no verified restart procedure for these applications."
+                if (unit[key] ~ /^(supervisor|supervisord)[.]service$/) advice="Supervisor manages these PHP applications or background workers. Restarting PHP-FPM alone will not replace them. Ask your administrator to match the process IDs and parent launchers in the service_mapping and process_parent records to individual programs using supervisorctl status with the correct system configuration. A parent launcher may be RoadRunner (rr). During a maintenance window, safely stop only the affected Supervisor programs and confirm their PHP children have stopped and stay stopped. Retry --fix while they are stopped; all other package and safety checks still apply. Restore the applications afterwards even if the update is blocked, verify they work, then rerun --check. Do not restart all Supervisor programs or stop Supervisor itself. Automatic updates remain blocked while these workers run because this script has no verified restart procedure for these applications."
                 print "Automatic updating is paused: we could not verify a safe restart method for " name[key] " (" count[key] (count[key]==1 ? " process" : " processes") "; service " unit[key] "). " advice
             }
         }' "$P2S_WORK/unmapped-services" |
@@ -2190,12 +2198,15 @@ p2s_summary_print_versions() {
             if (!(key in version)) { order[++count]=key; version[key]=$1; state[key]=$2; provider[key]=$5 }
             if (!seen_role[key SUBSEP $3]++) roles[key]=roles[key] (roles[key] ? ", " : "") $3
             if ($7 == "Y") affected_upstream[key]=1
+            if ($2 == "Y" && $7 == "?") presumed_affected[key]=1
             if ($8 != "") evidence[key SUBSEP $8]=1
         }
         END {
             for (i=1; i<=count; i++) {
                 key=order[i]; level="info"; conclusion="fixes verified for both PHP2Shell vulnerabilities."
                 if (state[key]=="Y") { level="warn"; conclusion="vulnerable; update these components and restart the services using them." }
+                if (state[key]=="Y" && presumed_affected[key])
+                    conclusion="presumed vulnerable because this stock CentOS 5 PHP package predates the PHP2Shell fixes and has no verified backport. Migrate applications to maintained, patched PHP. Exploitability has not been tested."
                 if (state[key]=="?") { level="warn"; conclusion="patch status not verified." }
                 split(version[key], parts, "[.]")
                 if (state[key]=="?" && version[key] ~ /^[0-9]+[.][0-9]+[.][0-9]+$/ &&
@@ -2254,7 +2265,7 @@ p2s_summary_print_result() {
             }
             END { if (branches > 1 && versions != "") print versions }')
         if [ -n "$unresolved_versions" ]; then
-            p2s_message_print warn "PHP versions needing attention: $unresolved_versions. If your provider cannot supply a fixed package, move the affected websites, applications and scheduled jobs to a supported, patched PHP version. Test them before removing old PHP packages. Changing the default PHP version alone does not move individual websites."
+            p2s_message_print warn "PHP versions needing attention: $unresolved_versions. If your configured PHP package sources cannot supply a fixed package, move the affected websites, applications and scheduled jobs to a supported, patched PHP version. Test them before removing old PHP packages. Changing the default PHP version alone does not move individual websites."
         fi
     fi
 }
@@ -2433,7 +2444,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command script_revision=2026-10-26.1
+    local mode=check result=0 command script_revision=2026-10-26.4
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -2469,7 +2480,7 @@ p2s_main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
     export LC_ALL=C
-    p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-25'
+    p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-26'
     p2s_manifest_record script_revision "$script_revision"
     p2s_manifest_record source_preservation 'policy=explicit_provider_migrations_only|script_repository_changes=none|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|other_providers_and_panel_transactions_require_separate_review'
     p2s_manifest_record bash "$BASH_VERSION"

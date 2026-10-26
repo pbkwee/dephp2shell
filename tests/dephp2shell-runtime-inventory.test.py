@@ -1254,7 +1254,13 @@ printf 'FIX_STATUS=%s|INSTALL=%s|RESTART=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
                              'Restarting PHP-FPM alone will not replace them',
                              'service_mapping and process_parent', 'supervisorctl status',
                              'RoadRunner (rr)', 'maintenance window', 'PHP children',
-                             'Do not restart all Supervisor programs',
+                             'safely stop only the affected Supervisor programs',
+                             'PHP children have stopped and stay stopped',
+                             'Retry --fix while they are stopped',
+                             'all other package and safety checks still apply',
+                             'Restore the applications afterwards even if the update is blocked',
+                             'verify they work, then rerun --check',
+                             'Do not restart all Supervisor programs or stop Supervisor itself',
                              'Automatic updates remain blocked'):
                     self.assertIn(text, warning)
                 for pid in (4242, 4243):

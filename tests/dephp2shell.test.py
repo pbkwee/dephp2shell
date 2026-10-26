@@ -1,6 +1,6 @@
 """Offline tests of the shipped PHP2Shell functions; no package/service operations.
 
-Run: python3 tests/dephp2shell.test.py
+Run: python3 rimuhosting/test/dephp2shell.test.py
 Set DP2S_TEST_BASH to an older Bash binary to repeat compatibility fixtures.
 All administrative entry points are replaced with fixture functions before use.
 """
@@ -523,6 +523,53 @@ id() { printf '0\\n'; }; p2s_inventory_collect_and_assess; printf 'STATE=%s\\n' 
                 body += 'p2s_version_package_state ' + ' '.join(map(shlex.quote, (name, version, source)))
                 self.assertEqual(self.shell(body).strip(), expected)
 
+    def test_centos5_archived_stock_build_is_presumed_vulnerable(self):
+        version = '0:5.1.6-44.el5_10'
+        cases = [(name, value, 'CentOS', 'centos', '5', 'Y')
+                 for name in ('php', 'php-cli', 'php-common')
+                 for value in (version, version[2:])]
+        cases += [('php-cli', value, vendor, distro, major, '?')
+                  for value, vendor, distro, major in (
+                      (version + '.custom', 'CentOS', 'centos', '5'),
+                      ('1:5.1.6-44.el5_10', 'CentOS', 'centos', '5'),
+                      (version, 'Custom provider', 'centos', '5'),
+                      (version, 'CentOS', 'centos', '6'),
+                      (version, 'CentOS', 'rocky', '5'))]
+        cases.append(('alt-php51-cli', version, 'CentOS', 'centos', '5', '?'))
+        for name, value, vendor, distro, major, expected in cases:
+            with self.subTest(name=name, version=value, vendor=vendor, distro=distro, major=major):
+                body = f'P2S_BACKEND=rpm; P2S_DISTRO={distro}; P2S_MAJOR={major}\n'
+                body += 'p2s_version_package_state ' + ' '.join(map(shlex.quote, (name, value, vendor)))
+                self.assertEqual(self.shell(body).strip(), expected)
+
+    def test_centos5_presumption_reaches_markers_without_enabling_updates(self):
+        for mode in ('check', 'fix'):
+            with self.subTest(mode=mode):
+                out = self.shell(r'''
+p2s_distro_detect() { P2S_DISTRO=centos; P2S_RELEASE=5.11; P2S_MAJOR=5; }
+p2s_package_inventory_collect() {
+    P2S_BACKEND=rpm
+    printf '%s\n' 'php|0:5.1.6-44.el5_10|i386|CentOS' 'php-cli|0:5.1.6-44.el5_10|i386|CentOS' > "$P2S_WORK/packages"
+}
+p2s_repository_inventory_collect() { :; }; p2s_package_sources_collect() { :; }
+p2s_package_backport_evidence_collect() { :; }; p2s_panel_inventory_collect() { :; }
+p2s_process_inventory_collect() { :; }; p2s_runtime_inventory_collect() { :; }
+p2s_command_run() { case "$2:$3" in rpm:-ql|uname:-a) return 0;; *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97;; esac; }
+id() { printf '0\n'; }
+# Never create the production lock; fail if the unsupported OS reaches it.
+mkdir() { return 97; }
+(p2s_main --''' + mode + ')\n', status=0 if mode == 'check' else 1)
+                for phase in ('beforefix', 'afterfix'):
+                    self.assertIn('dss:isvulnerable:' + phase + ': CVE_2026_109618Y', out)
+                self.assertIn('presumed_affected_legacy_vendor_build|upstream=?', out)
+                self.assertIn('presumed vulnerable because this stock CentOS 5 PHP package predates the PHP2Shell fixes and has no verified backport.', out)
+                self.assertIn('Exploitability has not been tested.', out)
+                self.assertIn('No automatic update recipe for centos 5.11.', out)
+                self.assertNotIn("outside this detector's verified PHP2Shell coverage", out)
+                self.assertNotIn('Result: We could not verify', out)
+                if mode == 'fix':
+                    self.assertIn('package_install_attempted=false|service_restart_attempted=false', out)
+
     def test_rpm_nothing_to_do_explains_no_candidate_without_install(self):
         for pending in ('false', 'true'):
             with self.subTest(restart_pending=pending):
@@ -799,7 +846,7 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 advice = [row for row in out.splitlines() if 'PHP versions needing attention:' in row]
                 self.assertEqual(len(advice), 1 if unresolved else 0)
                 if unresolved:
-                    self.assertIn('If your provider cannot supply a fixed package', advice[0])
+                    self.assertIn('If your configured PHP package sources cannot supply a fixed package', advice[0])
                     self.assertIn('websites, applications and scheduled jobs', advice[0])
                     self.assertIn('Test them before removing old PHP packages.', advice[0])
                     self.assertIn('Changing the default PHP version alone', advice[0])
