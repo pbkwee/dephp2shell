@@ -105,6 +105,17 @@ APT::Architectures {{ "amd64"; }};
             apt(noop + current)
             self.assertNotEqual(states.read_text(), auto)
 
+            # A newer helper can conflict with a retained legacy selector without being needed by the engine.
+            available.append(package('php-common', '2') + 'Breaks: php-xml (<< 2)\n')
+            (root / 'var/lib/apt/lists/_fixture_dists_test_main_binary-amd64_Packages').write_text('\n'.join(available) + '\n')
+            conflict = subprocess.run(['apt-get'] + simulate + selected +
+                                      ['php-common=2', 'php-xml=1', 'php8.3-xml=8.3.1'],
+                                      env=env, text=True, capture_output=True, timeout=20)
+            self.assertNotEqual(conflict.returncode, 0)
+            self.assertIn('Breaks:', conflict.stdout + conflict.stderr)
+            self.assertEqual(set(changes(apt(simulate + selected + frozen))),
+                             {'php7.0-common', 'php7.0-json'})
+
 
 if __name__ == '__main__':
     unittest.main()

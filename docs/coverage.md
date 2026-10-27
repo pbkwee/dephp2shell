@@ -23,7 +23,9 @@ Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older 
 
 Configuration checks and service restarts require a recognised safe procedure. Unmapped launchers, incompatible panel setups, package conflicts or unverifiable transactions can block an automatic fix.
 
-Sury updates preserve non-Sury PHP packages and unrelated PHP selectors at their installed versions for that transaction. The tool adds no persistent pins or holds. It does not add Sury sources or replace native PHP with Sury. See [the bounded Sury evidence](sury-backport-evidence.md) for exact recognised older builds.
+Separate disruptive options cover bounded repository/package repairs and necessary upgrades of reviewed installed native libraries. These do not authorize general system repair. Check mode recommends matching options using installed/cached evidence. See [resolution options](resolution-options.md).
+
+Normal updates keep each PHP package with its existing provider and preserve unrelated PHP selectors. The tool adds no persistent pins or holds. A native-to-Sury provider change requires a separately enabled `--disruptive` method and a compatible proposed transaction. Adding the matching official source requires a further repository opt-in. See [resolution options](resolution-options.md) and [the bounded Sury evidence](sury-backport-evidence.md) for exact recognised older builds.
 
 ## Separate work
 

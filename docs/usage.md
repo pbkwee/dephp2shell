@@ -14,7 +14,14 @@ No arguments also selects `--check`. `--help` prints usage without inspecting th
 | --- | --- |
 | `--check` | Inspect PHP and report the result. Does not update packages or restart services. |
 | `--fix` | Check prerequisites, attempt supported updates and service restarts, then check again. |
-| `--disruptive` | Reserved. Reports that the action is unimplemented and makes no changes. |
+| `--disruptive` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
+| `--allow-sury-migration` | With `--disruptive`, allow a closely matched native-to-Sury PHP package change. |
+| `--allow-sury-repository` | With both options above, allow the matching official Sury/ondrej source to be added. |
+| `--repair-repository RECIPE` | With `--disruptive`, repair the standard Debian `sury-key`, or add a missing matching `native-security-source`. |
+| `--allow-pending-php-configuration` | With `--disruptive`, configure a verified set of pending standard PHP packages. |
+| `--allow-exact-php-reinstall` | With `--disruptive`, reinstall PHP from authenticated exact installed-version candidates to restore package metadata. |
+| `--allow-php-dependency-updates` | With `--disruptive`, permit proven necessary upgrades of reviewed installed native libraries. |
+| `--wait-for-package-lock SECONDS` | Wait up to 0–600 seconds before fix operations on APT systems with `fuser`; default 0. |
 | `--output human` | Show readable progress and results. This is the default. |
 | `--output machine` | Emit the structured line protocol for integrations. |
 | `--log-dir DIR` | Save this run's detailed diagnostics in a private subdirectory of `DIR`. |
@@ -85,6 +92,25 @@ sudo bash dephp2shell.sh --fix
 
 Fix mode uses the supported procedure for the detected setup. Package holds, pins, signing requirements and provider boundaries remain in effect. A blocked update reports the reason and the next step. Changes can already have occurred if a package operation or restart fails; there is no automatic rollback.
 
+Alternative methods require `--disruptive` and a separate opt-in. `DP2S_ALLOW_SURY_MIGRATION=true` and `DP2S_ALLOW_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable provider changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
+
+`--disruptive` selects an update attempt unless `--check` is explicit. Use `--check --disruptive` with the method options to inspect eligibility without adding sources or running package-manager network operations. A method option without `--disruptive`, `--disruptive` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
+
+`DP2S_ALLOW_PENDING_PHP_CONFIGURATION`, `DP2S_ALLOW_EXACT_PHP_REINSTALL`
+and `DP2S_ALLOW_PHP_DEPENDENCY_UPDATES` are Boolean defaults, initially false.
+`DP2S_REPOSITORY_REPAIR` defaults to `none`; supported values are `sury-key` and
+`native-security-source`. These method settings require `--disruptive`.
+`DP2S_PACKAGE_LOCK_WAIT_SECONDS` sets the independent 0–600 second wait default.
+Explicit command-line settings take precedence over the environment.
+
+`--check` now prints suggested options when installed or cached evidence supports
+a particular update or repair. Cached simulations do not refresh repositories,
+install packages or run repairs. A missing-source migration suggestion explicitly
+states that its candidates have not been checked. Suggestions do not establish
+that an update will succeed; fix mode repeats all applicable safety checks.
+The complete report retains `fix_recommendation` and cached `option_assessment`
+records, including reasons a potential method was refused.
+
 Afterwards, check important website and application functions. Existing scheduled PHP jobs can retain old code until they finish. The tool does not kill those jobs or restart cron to replace them. Arrange an application-aware rerun if needed, then check again.
 
 ## Results and exit status
@@ -95,8 +121,8 @@ Read the final result even when the command exits successfully. A completed chec
 | --- | --- |
 | `0` | Normal completion. Inspect the vulnerability result. |
 | `1` | A required operation failed, or an update was blocked or incomplete. |
-| `64` | Invalid command-line arguments. |
-| `69` | Unsupported or unidentified operating system, or the unimplemented `--disruptive` action. No check or update was started. |
+| `64` | Invalid arguments, option combinations or environment option values. |
+| `69` | Non-Linux or unidentified runtime platform. |
 
 ## Machine output
 
@@ -125,5 +151,16 @@ The script emits `beforefix` and `afterfix` phases in check mode too. Those labe
 ## Diagnostic privacy
 
 Detailed logs can contain hostnames, filesystem paths, process and user IDs, package versions and repository metadata. URL redaction removes some sensitive values; it does not anonymise a report.
+
+For follow-up investigation, keep the complete saved `output.log` or machine
+response from the check/update that reported the problem. The human console
+summary omits most manifest details. Additional package-audit and candidate-query
+evidence is collected automatically when the relevant step is reached; no extra
+debug flag is needed. A later check does not repeat fix-only candidate queries.
+
+For suspected cPanel leftovers, a check includes `panel_path`, `runtime_path`
+and `package_install_status` diagnostics. Compare missing core/updater files,
+broken links and package-only PHP entries before deciding whether panel repair
+or removal is appropriate. These observations do not enable automatic cleanup.
 
 For a bug report, describe the script revision, distribution, architecture, action, relevant PHP versions and warning. Review any excerpts before sharing. Keep complete logs private. Nothing is uploaded automatically.

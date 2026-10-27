@@ -6,6 +6,7 @@ Hardcoded system paths are redirected only in a temporary script copy.
 from pathlib import Path
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -16,6 +17,38 @@ BASH = os.environ.get('DP2S_TEST_BASH', '/bin/bash')
 
 
 class RuntimeInventoryTest(unittest.TestCase):
+    def test_missing_packaged_runtime_and_broken_link_keep_owner_and_file_evidence(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/opt/cpanel/ea-php81/root/usr/bin" "$P2S_WORK/usr/bin"
+missing="$P2S_WORK/opt/cpanel/ea-php81/root/usr/bin/php"
+link="$P2S_WORK/usr/bin/php"
+ln -s "$missing" "$link"
+printf '%s\n' "$missing" "$link" > "$P2S_WORK/paths.raw"
+p2s_package_owner_for_path() { printf 'ea-php81-php-cli\n'; }
+p2s_runtime_inventory_collect
+printf 'UNKNOWN=%s\n' "$P2S_UNKNOWN"
+''')
+        self.assertRegex(out, r'runtime_path:beforefix\|.*/root/usr/bin/php\|type=missing_or_inaccessible.*package_owner=ea-php81-php-cli')
+        self.assertRegex(out, r'runtime_path:beforefix\|.*/usr/bin/php\|type=dangling_or_inaccessible_symlink.*link_target=.*/root/usr/bin/php')
+        self.assertIn('inventory_gap:beforefix|runtime_file|', out)
+        self.assertIn('UNKNOWN=true', out)
+
+    def test_existing_launcher_with_exit_127_is_recorded_as_present(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/usr/bin"
+runtime="$P2S_WORK/usr/bin/php"
+printf '#!/missing/perl\n' > "$runtime"; chmod 700 "$runtime"
+printf 'ea-php-cli|1.0.0-1|amd64|cPanel\n' > "$P2S_WORK/packages"
+p2s_package_owner_for_path() { printf 'ea-php-cli\n'; }
+p2s_runtime_probe_version() { printf 'No such file or directory\n'; return 127; }
+p2s_runtime_inventory_collect
+printf 'UNKNOWN=%s\n' "$P2S_UNKNOWN"
+''')
+        self.assertRegex(out, r'runtime_path:beforefix\|.*/usr/bin/php\|type=regular_file\|readable=true\|executable=true.*package_owner=ea-php-cli')
+        self.assertIn('exit=127', out)
+        self.assertIn('UNKNOWN=true', out)
+        self.assertNotIn('missing_or_not_regular', out)
+
     def shell(self, body):
         with tempfile.TemporaryDirectory(prefix='dephp2shell-runtime-test-') as work:
             source = SCRIPT.read_text()
@@ -363,12 +396,14 @@ printf 'STATE=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_UNKNOWN" "$P2S_BLOC
                  ('plesk', 'plesk-php84-fpm.service', 'php-fpm', True),
                  ('plesk', 'sw-engine.service', 'sw-engine-fpm', True),
                  ('cpanel', 'sw-engine.service', 'sw-engine-fpm', True),
+                 ('plesk', 'plesk-web-socket.service', 'sw-engine', True),
                  ('plesk', 'plesk-web-socket.service', 'sw-engine', False),
                  ('', 'ea-php84-php-fpm.service', 'php-fpm', False),
                  ('plesk', 'custom-launcher.service', 'php-cgi', False)]
         for panel, unit, comm, supported in cases:
             with self.subTest(panel=panel, unit=unit):
-                out = self.shell('P2S_PANEL=' + repr(panel) + '; unit=' + unit + '; comm=' + comm + r"""
+                out = self.shell('P2S_PANEL=' + repr(panel) + '; unit=' + unit + '; comm=' + comm
+                                 + '; verified=' + str(supported).lower() + r"""
 mkdir -p "$P2S_WORK/proc/1" "$P2S_WORK/proc/4242"
 printf '1 (systemd) S 0\n' > "$P2S_WORK/proc/1/stat"
 printf '4242 (%s) S 1\n' "$comm" > "$P2S_WORK/proc/4242/stat"
@@ -377,6 +412,7 @@ ln -s "/fixture/$comm" "$P2S_WORK/proc/4242/exe"
 printf '0::/system.slice/%s\n' "$unit" > "$P2S_WORK/proc/4242/cgroup"
 : > "$P2S_WORK/proc/4242/maps"
 p2s_process_check_host_scope() { return 0; }
+p2s_service_plesk_web_socket_verified() { $verified; }
 p2s_process_inventory_collect
 printf 'BLOCKED=%s\n' "$P2S_BLOCKED"
 cat "$P2S_WORK/services"; cat "$P2S_WORK/fpm-masters"
@@ -385,9 +421,57 @@ cat "$P2S_WORK/services"; cat "$P2S_WORK/fpm-masters"
                 self.assertEqual('\n' + unit + '\n' in out, supported)
                 if supported and 'fpm' in comm:
                     self.assertIn('4242|/fixture/' + comm, out)
-                if unit == 'plesk-web-socket.service':
-                    self.assertIn('Ask support or your administrator to review this service', out)
+                if unit == 'plesk-web-socket.service' and not supported:
+                    self.assertIn('This script has no verified restart procedure for this service', out)
                     self.assertIn('safe restart method for sw-engine', out)
+
+    def test_plesk_web_socket_requires_reviewed_owned_unit_without_overrides(self):
+        vendor_unit = '''# Copyright 1999-2026. WebPros International GmbH. All rights reserved.
+
+[Unit]
+Description=Plesk Web Socket Service
+Wants=mariadb.service mysql.service
+After=network.target mariadb.service mysql.service
+
+[Service]
+Type=simple
+ExecStart=/opt/psa/bin/sw-engine-pleskrun /opt/psa/admin/plib/WebSocket/bin/ws-server.php
+User=psaadm
+Group=psaadm
+RuntimeDirectory=plesk-web-socket
+RuntimeDirectoryMode=0770
+
+[Install]
+WantedBy=multi-user.target
+'''
+        for change, allowed in [('', True), ('changed=true', False), ('fixture_overrides=/etc/custom.conf', False),
+                                ('fixture_owner=customer-package', False), ('P2S_PANEL=cpanel', False),
+                                ('P2S_BACKEND=rpm', False), ('missing_property=true', False)]:
+            with self.subTest(change=change):
+                out = self.shell('vendor_unit=' + shlex.quote(vendor_unit) + r'''
+P2S_PANEL=plesk; P2S_BACKEND=deb; fixture_owner=plesk-web-socket; fixture_overrides=; changed=false; missing_property=false
+''' + change + r'''
+mkdir -p "$P2S_WORK/usr/lib/systemd/system"
+fixture_fragment="$P2S_WORK/usr/lib/systemd/system/plesk-web-socket.service"
+printf '%s' "$vendor_unit" > "$fixture_fragment"
+if $changed; then printf '\nExecStart=/custom/app\n' >> "$fixture_fragment"; fi
+p2s_command_exists() { return 0; }
+p2s_command_run() {
+    case " $* " in
+        *' systemctl show '*)
+            printf 'FragmentPath=%s\n' "$fixture_fragment"
+            if ! $missing_property; then printf 'DropInPaths=%s\n' "$fixture_overrides"; fi ;;
+        *' systemctl restart plesk-web-socket.service '*) printf 'RESTARTED\n' ;;
+        *) return 97 ;;
+    esac
+}
+p2s_package_owner_for_path() { printf '%s\n' "$fixture_owner"; }
+p2s_service_plesk_web_socket_verified; printf 'VERIFIED_RC=%s\n' "$?"
+p2s_service_run plesk-web-socket.service restart; printf 'RESTART_RC=%s\n' "$?"
+''')
+                self.assertIn('VERIFIED_RC=' + ('0' if allowed else '1'), out)
+                self.assertIn('RESTART_RC=' + ('0' if allowed else '1'), out)
+                self.assertEqual('RESTARTED' in out, allowed)
 
     def test_cagefs_directory_requires_review_without_claiming_it_is_active(self):
         out = self.shell(r'''
@@ -397,7 +481,7 @@ p2s_panel_inventory_collect
 printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
 ''')
         self.assertIn('CageFS configuration was found', out)
-        self.assertIn('Ask support to check whether applications use separate PHP copies', out)
+        self.assertIn('This script cannot verify whether applications use separate PHP copies', out)
         self.assertIn('UNKNOWN=true|BLOCKED=true', out)
         self.assertNotIn('CageFS was detected', out)
 
@@ -445,7 +529,7 @@ printf 'STATE=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_UNKNOWN" "$P2S_BLOC
 ''')
         self.assertIn('STATE=N|UNKNOWN=false|BLOCKED=false', out)
         self.assertIn('fixes verified for both PHP2Shell vulnerabilities', out)
-        self.assertIn('Your provider added the security fixes without changing the PHP version', out)
+        self.assertIn('The PHP package provider added the security fixes without changing the PHP version', out)
         self.assertNotIn('dss:warn:', out)
         self.assertNotIn('No recognised web-server', out)
 
@@ -958,10 +1042,13 @@ p2s_package_is_engine php83-php && printf 'ENGINE\n'
 
     def test_panel_libraries_and_selectors_are_not_engine_versions(self):
         engines = ['cpanel-php84', 'cpanel-php84-common', 'lsphp84',
-                   'lsphp84-common', 'ea-php84-php-cli', 'php83-php']
+                   'lsphp84-common', 'ea-php84-php-cli', 'php83-php',
+                   'ea-php56-php-litespeed', 'ea-php83-php-litespeed']
         libraries = ['cpanel-php84-xml-serializer', 'cpanel-php84-pear',
                      'cpanel-php84-xml-common', 'lsphp84-xml',
-                     'lsphp84-xml-common', 'ea-php-cli', 'ea-php84']
+                     'lsphp84-xml-common', 'ea-php-cli', 'ea-php84',
+                     'ea-php83-php-litespeed-devel', 'ea-php83-litespeed',
+                     'ea-php83-php-litespeed-common-extra']
         out = self.shell('P2S_BACKEND=rpm\nfor name in ' + ' '.join(engines + libraries) + r''' ; do
     p2s_package_is_php "$name" && printf 'INVENTORY=%s\n' "$name"
     if p2s_package_is_engine "$name"; then printf 'ENGINE=%s\n' "$name"; fi
@@ -970,6 +1057,27 @@ done
         self.assertEqual([row[7:] for row in out.splitlines() if row.startswith('ENGINE=')], engines)
         self.assertEqual([row[10:] for row in out.splitlines() if row.startswith('INVENTORY=')],
                          engines + libraries)
+
+    def test_easyapache_litespeed_runtime_uses_its_engine_package_assessment(self):
+        out = self.shell(r'''
+P2S_BACKEND=rpm
+mkdir -p "$P2S_WORK/opt/cpanel/ea-php83/root/usr/bin"
+runtime="$P2S_WORK/opt/cpanel/ea-php83/root/usr/bin/lsphp"
+: > "$runtime"; chmod 700 "$runtime"
+printf 'ea-php83-php-litespeed|8.3.36-1.cpanel|x86_64|cPanel\n' > "$P2S_WORK/packages"
+p2s_package_backport_evidence_collect() { :; }
+p2s_version_package_state() { printf 'N\n'; }
+p2s_command_run() { [ "$2" = rpm ] && [ "$3" = -ql ] && printf '%s\n' "$runtime"; }
+p2s_package_owner_for_path() { printf 'ea-php83-php-litespeed\n'; }
+p2s_runtime_probe_version() { printf 'PHP 8.3.36 (litespeed)\n'; }
+p2s_package_inventory_assess
+p2s_runtime_inventory_collect
+printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
+''')
+        self.assertIn('package_assessment:beforefix|ea-php83-php-litespeed|', out)
+        self.assertIn('|N|engine_package_assessment|', out)
+        self.assertIn('UNKNOWN=false|BLOCKED=false', out)
+        self.assertNotIn('owner_is_not_an_assessed_engine', out)
 
     def test_selector_owner_keeps_independent_version_in_manifest(self):
         out = self.shell(r'''
@@ -1180,6 +1288,41 @@ cat "$P2S_WORK/paths.raw"
 ''')
         self.assertEqual(out.strip(), '/usr/bin/sw-engine')
 
+    def test_sysconfig_files_do_not_become_runtimes_or_verification_gaps(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/etc/sysconfig" "$P2S_WORK/opt/cpanel/ea-php83/root/etc/sysconfig" \
+    "$P2S_WORK/opt/cpanel/ea-php83/root/usr/sbin" "$P2S_WORK/usr/lib64/httpd/modules"
+standard_config="$P2S_WORK/etc/sysconfig/php-fpm"
+panel_config="$P2S_WORK/opt/cpanel/ea-php83/root/etc/sysconfig/php-fpm"
+runtime="$P2S_WORK/opt/cpanel/ea-php83/root/usr/sbin/php-fpm"
+module="$P2S_WORK/usr/lib64/httpd/modules/libphp.so"
+for file in "$standard_config" "$panel_config" "$runtime" "$module"; do
+    : > "$file"; chmod 700 "$file"
+done
+printf 'ea-php83-php-fpm|8.3.36-1.cpanel|x86_64|cPanel\n' > "$P2S_WORK/packages"
+P2S_BACKEND=rpm
+p2s_package_backport_evidence_collect() { :; }
+p2s_version_package_state() { printf 'N\n'; }
+p2s_command_run() {
+    [ "$2" = rpm ] && [ "$3" = -ql ] || return 97
+    printf '%s\n' "$standard_config" "$panel_config" "$runtime" "$module"
+}
+p2s_package_owner_for_path() { printf 'ea-php83-php-fpm\n'; }
+p2s_runtime_probe_version() {
+    [ "$1" = "$runtime" ] || { printf 'UNEXPECTED_CONFIG_PROBE\n'; return 97; }
+    printf 'PHP 8.3.36 (fpm-fcgi)\n'
+}
+p2s_package_inventory_assess
+p2s_runtime_inventory_collect
+printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
+''')
+        self.assertIn('UNKNOWN=false|BLOCKED=false', out)
+        self.assertNotIn('/etc/sysconfig/', out)
+        self.assertNotIn('UNEXPECTED_CONFIG_PROBE', out)
+        self.assertNotIn('inventory_gap:', out)
+        self.assertRegex(out, r'runtime_probe:beforefix\|.*/root/usr/sbin/php-fpm\|exit=0')
+        self.assertRegex(out, r'runtime_observation:beforefix\|.*/libphp[.]so\|module')
+
     def test_nonexecutable_engine_is_still_reported_as_a_verification_gap(self):
         out = self.shell(r'''
 mkdir -p "$P2S_WORK/usr/bin"
@@ -1250,18 +1393,14 @@ printf 'FIX_STATUS=%s|INSTALL=%s|RESTART=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
                 warnings = [row for row in out.splitlines() if row.startswith('dss:warn:')]
                 self.assertEqual(len(warnings), 1)
                 warning = warnings[0]
-                for text in ('2 processes', 'Supervisor manages these PHP applications',
-                             'Restarting PHP-FPM alone will not replace them',
-                             'service_mapping and process_parent', 'supervisorctl status',
-                             'RoadRunner (rr)', 'maintenance window', 'PHP children',
-                             'safely stop only the affected Supervisor programs',
-                             'PHP children have stopped and stay stopped',
-                             'Retry --fix while they are stopped',
-                             'all other package and safety checks still apply',
-                             'Restore the applications afterwards even if the update is blocked',
-                             'verify they work, then rerun --check',
-                             'Do not restart all Supervisor programs or stop Supervisor itself',
-                             'Automatic updates remain blocked'):
+                for text in ('2 processes', 'service ' + unit,
+                             'This script cannot safely restart these Supervisor-managed applications',
+                             'supervisorctl status with the correct configuration',
+                             'service_mapping/process_parent',
+                             'Stop only those programs', 'PHP children stop and stay stopped',
+                             'Retry --fix', 'restore the programs even if patching fails',
+                             'Verify the applications and rerun --check',
+                             'Do not stop Supervisor itself or all its programs'):
                     self.assertIn(text, warning)
                 for pid in (4242, 4243):
                     self.assertIn(f'process_parent:beforefix|{pid}|4200|rr|/fixture/rr|{unit}', out)

@@ -1,6 +1,6 @@
 # Sury backport evidence for the original PHP2Shell CVEs
 
-Reviewed 25 October 2026, New Zealand time. This review covers
+Reviewed 25 October 2026, with Debian 11 added 27 October 2026, New Zealand time. This review covers
 CVE-2026-109618 and CVE-2026-109619. It does not establish protection against
 other PHP vulnerabilities, including CVE-2026-115560.
 
@@ -9,9 +9,9 @@ other PHP vulnerabilities, including CVE-2026-115560.
 Use exact versions, source identity and package architecture together.
 Do not turn these observations into an unrestricted minimum-version rule.
 Only `amd64` binary indexes were verified in this review.
-The checked suites are Debian 12/13 and Ubuntu 22.04/24.04.
+The checked suites are Debian 11/12/13 and Ubuntu 22.04/24.04.
 
-For Debian, substitute `N=12` or `N=13` in the complete version below.
+For Debian, substitute `N=11`, `N=12` or `N=13` in the complete version below.
 The corresponding source package is `php` followed by the branch.
 The epoch is significant for PHP 7.4 and PHP 8.0.
 
@@ -44,7 +44,8 @@ Do not substitute one repository's version pattern for the other.
 A package name, Debian maintainer identity, version suffix or configured repository
 alone does not authenticate the installed binary.
 A new installation must use authenticated APT metadata and the exact reviewed
-source/version tuple. Require the existing provider and branch to remain unchanged.
+source/version tuple. Ordinary updates keep the existing provider and branch;
+provider migration requires its separate explicit opt-ins and keeps the branch.
 Keep ordinary runtime ownership, transaction-scope and service-restart checks.
 An already-installed package whose provenance cannot be established needs a
 separate provenance check; a copied version string is insufficient.
@@ -89,6 +90,7 @@ Repository metadata URLs:
 
 | Suite | Signed release |
 | --- | --- |
+| Debian 11 | [bullseye InRelease](https://packages.sury.org/php/dists/bullseye/InRelease) |
 | Debian 12 | [bookworm InRelease](https://packages.sury.org/php/dists/bookworm/InRelease) |
 | Debian 13 | [trixie InRelease](https://packages.sury.org/php/dists/trixie/InRelease) |
 | Ubuntu 22.04 | [jammy InRelease](https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/jammy/InRelease) |
@@ -100,10 +102,31 @@ inside those signed releases.
 
 | Suite | Release date UTC | Captured InRelease SHA256 |
 | --- | --- | --- |
+| bullseye | 2026-10-26 03:01:30 | `c917dacbe0326b1cf3b722db9a376d3dbeb0a41f632ef3cca6e48b67e4ed0024` |
 | bookworm | 2026-10-24 18:01:25 | `b6b61677fdba1bb7815c6182bbcdbb326c91fb162cbfba47aa559ab75b7d96d1` |
 | trixie | 2026-10-24 17:01:28 | `ef50e143a914304505a7a779c5577935ea4e30368235b9f94c4584c88e7bb7cc` |
 | jammy | 2026-10-22 14:42:33 | `5178c2db6914b9ea1fb0af7c06e7afdf7d4fe1bf354cfdb96dda05ba0978a4b7` |
 | noble | 2026-10-22 14:42:20 | `64dddef922a5c9c459bdea480a92ebdcd8d44b2faf38518b3a3c535793b40051` |
+
+## Debian 11 extension
+
+The bullseye review repeated the signed release, source-index and amd64 binary-index
+checks using the same expected signing key. All eight enabled PHP2Shell fix patches
+are byte-identical to the corresponding bookworm patches. The downloaded eight
+`phpX.Y-common` binaries matched their signed-index SHA256 and size, and their actual
+package control fields matched the expected source, version and architecture.
+The signed index also declares matching CLI, FPM, CGI and Apache-module packages
+for each reviewed branch.
+
+The bullseye compressed index SHA256 values were:
+
+- `main/source/Sources.gz`: `0b660d7c5e0dcb3a57fab9630e2a737b3efdceaec155a44d1ffb3c4e439d185c`.
+- `main/binary-amd64/Packages.gz`: `aab6e38bee9f5a95adadc960fea309264636e4761d81c2fb5d7c9c77a3832f50`.
+
+This establishes the listed PHP fixes, not ongoing support for the entire Debian 11
+system. Ordinary updates remain limited to existing Sury engines with candidate,
+package-source and restart checks. Native Debian PHP requires the separate explicit
+provider-migration opt-ins; another OS suite must never be substituted for bullseye.
 
 ## Comparison with PHP's own fixes
 
@@ -139,7 +162,7 @@ These adaptations require vendor trust; this review did not independently prove
 all possible old-branch execution paths safe.
 
 The fix patches for 5.6, 7.2, 7.3, 7.4, 8.0 and 8.1 are byte-identical across
-the four reviewed suites. PHP 7.0/7.1 PPA patch headers differ from Debian only
+the original four reviewed suites. PHP 7.0/7.1 PPA patch headers differ from Debian only
 in prose explaining the pre-existing multipart limit; their code hunks agree.
 An exact recognition rule therefore records an authenticated vendor backport,
 not a claim of new upstream support or an independent vulnerability proof.

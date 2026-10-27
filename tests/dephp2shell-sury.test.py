@@ -18,6 +18,7 @@ candidate='1:7.4.33-31+0~20261021.121+debian12~1.gbpe9c428'
 name=php7.4-cli; arch=amd64; proposed_arch=amd64; source=php7.4
 uri=https://packages.sury.org/php; origin=deb.sury.org; suite=bookworm
 extra_repo=false; extra_uri=https://deb.debian.org/debian; config='Dir "/";'; selected_source=php7.4; no_repo=false; mixed=true
+fixture_native_candidate=8.2.34-1~deb12u1
 selector='2:8.4+101+0~20261021.78+debian12~1.gbp53f25f'
 ''' + changes + r'''
 mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
@@ -36,6 +37,14 @@ p2s_command_exists() { case "$1" in apt-get|apt-cache|apt-config|dpkg) return 0;
 p2s_command_run() {
     local last
     for last in "$@"; do :; done
+    if $mixed; then
+        case " $* " in
+            *' apt-cache '*' policy php8.2-cli:amd64 '*)
+                printf 'php8.2-cli:\n  Installed: 8.2.34-1~deb12u1\n  Candidate: %s\n  Version table:\n     %s 500\n        500 https://deb.debian.org/debian bookworm/main amd64 Packages\n' "$fixture_native_candidate" "$fixture_native_candidate"; return ;;
+            *' apt-cache '*' show php8.2-cli:amd64='*)
+                printf 'Package: php8.2-cli\nVersion: %s\nArchitecture: amd64\nSource: php8.2\n' "$fixture_native_candidate"; return ;;
+        esac
+    fi
     case " $* " in
         *' --audit '*|*' --get-selections '*) return 0 ;;
         *' apt-config dump '*) printf '%s\n' "$fixture_config" ;;
@@ -52,7 +61,10 @@ p2s_command_run() {
         *' -s '*)
             printf 'SIMULATE:%s\n' "$*" >> "$P2S_WORK/calls"
 ''' + (simulation or r'''            printf 'Inst %s [%s] (%s repo [%s])
-' "$fixture_name" "$fixture_old" "$fixture_candidate" "$fixture_arch"''') + r''' ;;
+' "$fixture_name" "$fixture_old" "$fixture_candidate" "$fixture_arch"
+            if $mixed && [ "$fixture_native_candidate" != 8.2.34-1~deb12u1 ]; then
+                printf 'Inst php8.2-cli [8.2.34-1~deb12u1] (%s Debian [amd64])\n' "$fixture_native_candidate"
+            fi''') + r''' ;;
         *' install '*) printf 'INSTALL:%s\n' "$*" >> "$P2S_WORK/calls" ;;
         *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
     esac
@@ -80,6 +92,21 @@ printf 'RC=%s|ATTEMPTED=%s\n' "$?" "${P2S_TRANSACTION_ATTEMPTED:-false}"
         self.assertIn('no_candidate|', out)
         self.assertNotIn('SIMULATE:', out)
         self.assertNotIn('INSTALL:', out)
+
+    def test_mixed_native_and_sury_engines_are_both_updated_without_provider_switch(self):
+        out = self.shell(self.fixture('fixture_native_candidate=8.2.35-1~deb12u1'), isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+        self.assertIn('php8.2-cli:amd64=8.2.35-1~deb12u1', install)
+        self.assertIn('php7.4-cli:amd64=1:7.4.33-31+', install)
+
+    def test_unversioned_apache_selector_cannot_block_an_engine_update(self):
+        fixture = self.fixture().replace('p2s_package_deb_update\n',
+                                        'printf "%s\\n" "libapache2-mod-php|2:8.2+93|all|Debian" >> "$P2S_WORK/packages"\np2s_package_deb_update\n')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+        self.assertIn('libapache2-mod-php=2:8.2+93', install)
 
     def test_already_current_package_can_still_restart_stale_workers(self):
         out = self.shell(self.fixture('old=$candidate; P2S_RESTART_PENDING=true'), isolated_sources=True)
@@ -123,17 +150,24 @@ candidate=1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1'''
         self.assertIn('candidate_provider', out)
         self.assertNotIn('INSTALL:', out)
 
-    def test_extensions_and_architecture_all_packages_are_not_php_engine_versions(self):
-        for changes in (
-            '''name=php7.4-imagick; source=php-imagick; selected_source=php-imagick
+    def test_versioned_pecl_extensions_are_not_php_engine_versions(self):
+        changes = '''name=php7.4-imagick; source=php-imagick; selected_source=php-imagick
 old=3.8.1-1+0~20261010.1+debian12~1.gbpabcdef
-candidate=3.8.1-2+0~20261021.2+debian12~1.gbpabcdef''',
-            '''name=php-common; arch=all; proposed_arch=all; source=php-defaults; selected_source=php-defaults
-old=2:100+0~20261010.1+debian12~1.gbpabcdef
-candidate=2:101+0~20261021.78+debian12~1.gbp53f25f'''):
-            with self.subTest(changes=changes):
-                out = self.shell(self.fixture(changes), isolated_sources=True)
-                self.assertIn('RC=0|ATTEMPTED=true', out)
+candidate=3.8.1-2+0~20261021.2+debian12~1.gbpabcdef'''
+        out = self.shell(self.fixture(changes), isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+
+    def test_shared_helpers_and_older_extension_selectors_are_retained(self):
+        fixture = self.fixture().replace('p2s_package_deb_update\n', r'''
+printf '%s\n' 'php-common|2:96+0~20250402.56+debian12~1.gbp84a5b7|all|Debian' 'php-imap|2:8.3+95|all|Debian' 'php-pear|1:1.10.16|all|Debian' >> "$P2S_WORK/packages"
+p2s_package_deb_update
+''')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+        self.assertIn('php-common=2:96+0~20250402.56+debian12~1.gbp84a5b7', install)
+        self.assertIn('php-imap=2:8.3+95', install)
+        self.assertIn('php-pear=1:1.10.16', install)
 
     def test_existing_native_update_path_still_accepts_native_candidates(self):
         changes='''mixed=false; name=php8.2-cli; source=php8.2
@@ -217,7 +251,7 @@ cat "$P2S_WORK/package-states"
             ('8.0','1:8.0.30-25+0~20261021.88','abebea'),
             ('8.1','8.1.34-9+0~20261021.82','4e430a')]
         for branch, revision, checksum in debian:
-            for distro, releases in [('debian', ('12', '13')), ('ubuntu', ('22.04', '24.04'))]:
+            for distro, releases in [('debian', ('11', '12', '13')), ('ubuntu', ('22.04', '24.04'))]:
                 for release in releases:
                     version = f'{revision}+debian{release}~1.gbp{checksum}'
                     if distro == 'ubuntu':
@@ -233,6 +267,32 @@ cat "$P2S_WORK/package-states"
                             invalid = args.copy(); invalid[index] = bad
                             out = self.shell(setup+'p2s_version_package_state '+' '.join(map(shlex.quote,invalid)))
                             self.assertEqual(out.strip(), '?')
+
+    def test_bullseye_recipe_requires_existing_sury_engines(self):
+        sury = '1:7.4.33-30+0~20261010.120+debian11~1.gbpabcdef'
+        for packages, allowed in [
+                (f'php7.4-cli|{sury}|amd64|Sury\nphp-common|2:76|all|Debian', True),
+                (f'php7.4-cli|{sury}|amd64|Sury\nphp-cli|2:7.4|all|Debian', True),
+                (f'php7.4-cli|{sury}|amd64|Sury\nphp7.4|{sury}|all|Sury', True),
+                (f'php7.4-cli|{sury}|amd64|Sury\nphp7.4-common|7.4.33-1|amd64|Debian', False),
+                ('php7.4-cli|7.4.33-1|amd64|Debian', False),
+                (f'php7.4-cli|{sury}|i386|Sury', False),
+                ('php-common|2:76|all|Debian', False)]:
+            with self.subTest(packages=packages):
+                out = self.shell('P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_MAJOR=11; P2S_RELEASE=11\n'
+                                 + 'printf "%s\\n" ' + shlex.quote(packages) + ' > "$P2S_WORK/packages"\n'
+                                 + 'p2s_fix_check_distro_recipe\nprintf "BLOCKED=%s\\n" "$P2S_BLOCKED"')
+                self.assertIn('BLOCKED=' + str(not allowed).lower(), out)
+
+    def test_native_bullseye_recipe_needs_both_migration_opt_ins(self):
+        for disruptive, migration, allowed in [(False, False, False), (True, False, False),
+                                               (False, True, False), (True, True, True)]:
+            with self.subTest(disruptive=disruptive, migration=migration):
+                out = self.shell(f'P2S_DISRUPTIVE={str(disruptive).lower()}; P2S_ALLOW_SURY_MIGRATION={str(migration).lower()}\n'
+                                 + 'P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_MAJOR=11; P2S_RELEASE=11\n'
+                                 + 'printf "%s\\n" "php7.4-cli|7.4.33-1|amd64|Debian" > "$P2S_WORK/packages"\n'
+                                 + 'p2s_fix_check_distro_recipe\nprintf "BLOCKED=%s\\n" "$P2S_BLOCKED"')
+                self.assertIn('BLOCKED=' + str(not allowed).lower(), out)
 
 
 if __name__ == '__main__':

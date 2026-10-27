@@ -32,7 +32,7 @@ A check inventories installed PHP packages, discovered runtimes and relevant run
 Terminal output adapts to reported capabilities. Use `--no-color` to disable colour,
 or `--no-color --no-bold` for completely unstyled text.
 
-See [usage and logging](docs/usage.md), [coverage](docs/coverage.md) and [download help for old servers](docs/faq.md#downloading-on-an-old-server). Maintainers can read the [implementation reference](docs/maintainer-reference.md) and [security background](docs/security-background.md).
+See [usage and logging](docs/usage.md), [resolution options](docs/resolution-options.md), [coverage](docs/coverage.md) and [download help for old servers](docs/faq.md#downloading-on-an-old-server). Maintainers can read the [implementation reference](docs/maintainer-reference.md) and [security background](docs/security-background.md).
 
 ## Attempt an update
 
@@ -44,9 +44,9 @@ sudo bash dephp2shell.sh --fix
 
 The tool checks prerequisites, attempts supported package or panel updates, restarts supported services where needed, then checks again. Updates and restarts can interrupt applications. Plesk's component updater can also update databases, mail and web servers.
 
-Existing Sury/ondrej PHP can be updated to a recognised fixed package from the same configured provider and PHP branch. The script does not add repositories, replace another provider's PHP with Sury or select a different website PHP branch.
+Normal `--fix` preserves existing package providers and PHP branches. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
 
-`--disruptive` is reserved for future approaches such as explicitly approved provider changes. It currently reports that the action is unimplemented and makes no changes.
+A separate, explicitly enabled `--disruptive` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
 
 A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. It is not a website test, a compromise assessment or a general security audit. Older operating systems can still need migration even after PHP is fixed.
 
@@ -74,4 +74,4 @@ DePHP2Shell was developed by the team at [RimuHosting](https://rimuhosting.com/)
 
 Keeping a public server secure protects its users and everyone else who could be harmed if that server is taken over. We see that care as part of running a hosting service, and as a responsibility shared by everyone operating public services.
 
-If an old server needs more than a package update, RimuHosting can help plan a migration to a supported distribution on our current hosting platform. See the [migration guide](https://rimuhosting.com/knowledgebase/rimuhosting/migration), or contact [support@rimuhosting.com](mailto:support@rimuhosting.com) to discuss the setup and scope.
+RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or server migration options, including for servers hosted elsewhere. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.

@@ -45,6 +45,81 @@ systemctl() { return 97; }; service() { return 97; }; rpm() { return 97; }
             self.assertNotIn('UNEXPECTED administrative command:', run.stderr)
             return run.stdout
 
+    def test_failed_apt_policy_keeps_error_without_repository_credentials(self):
+        out = self.shell(r'''
+p2s_command_exists() { [ "$1" = apt-cache ]; }
+p2s_command_run() { printf 'E: failed https://login:private-token@repo.invalid/private-path\n' >&2; return 1; }
+p2s_package_deb_policy_collect php8.2-cli
+''')
+        self.assertIn('apt_policy_error:beforefix|E: failed [repository host=repo.invalid; path redacted]', out)
+        self.assertIn('APT package policy unavailable', out)
+        self.assertNotIn('private-token', out)
+        self.assertNotIn('private-path', out)
+
+    def test_failed_candidate_query_keeps_operation_exit_and_redacted_error(self):
+        out = self.shell(r'''
+p2s_command_run() { printf 'E: failed https://login:private-token@repo.invalid/private-path\n' >&2; return 124; }
+p2s_package_deb_candidate php8.2-cli 8.2.29-1 amd64 false
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+''')
+        self.assertIn('apt_candidate_error:beforefix|php8.2-cli|operation=policy|exit=124', out)
+        self.assertIn('E: failed [repository host=repo.invalid; path redacted]', out)
+        self.assertIn('RC=1|BLOCKED=true', out)
+        self.assertNotIn('private-token', out)
+        self.assertNotIn('private-path', out)
+
+    def test_audit_context_distinguishes_installed_metadata_and_pending_packages(self):
+        for scenario in ('metadata', 'pending_only'):
+            with self.subTest(scenario=scenario):
+                out = self.shell('scenario=' + scenario + r'''
+mkdir -p "$P2S_WORK/var/lib/dpkg/info"
+touch "$P2S_WORK/var/lib/dpkg/info/libfixture.list" "$P2S_WORK/var/lib/dpkg/info/php8.2-fpm:amd64.md5sums"
+p2s_command_exists() { [ "$1" = apt-get ] || [ "$1" = dpkg-query ]; }
+p2s_command_run() {
+    case "$2" in
+        dpkg)
+            if [ "$scenario" = metadata ]; then
+                printf 'The following packages are missing the md5sums control file:\n libfixture  Fixture library\n'
+            else printf 'dpkg: audit failed\n' >&2; return 1; fi ;;
+        dpkg-query)
+            printf '%s\n' 'libfixture|1.0-1|amd64|install ok installed' \
+                'php8.2-fpm|8.2.29-1|amd64|install ok unpacked' \
+                'php8.2-cli|8.2.29-1|amd64|install ok installed' \
+                'removed-lib|1.0-1|amd64|deinstall ok config-files' ;;
+        *) printf 'UNEXPECTED_DIAGNOSTIC\n'; return 97 ;;
+    esac
+}
+p2s_package_deb_preflight
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+''', isolated_sources=True)
+                self.assertIn('RC=1|BLOCKED=true', out)
+                self.assertIn('package_audit_status:beforefix|php8.2-fpm|8.2.29-1|amd64|install ok unpacked', out)
+                self.assertIn('php8.2-fpm|list=missing_or_unreadable|md5sums=readable', out)
+                self.assertNotIn('package_audit_status:beforefix|php8.2-cli', out)
+                self.assertNotIn('package_audit_status:beforefix|removed-lib', out)
+                self.assertNotIn('UNEXPECTED_', out)
+                if scenario == 'metadata':
+                    self.assertIn('package_audit_status:beforefix|libfixture|1.0-1|amd64|install ok installed', out)
+                    self.assertIn('libfixture|list=readable|md5sums=missing_or_unreadable', out)
+                else:
+                    self.assertNotIn('package_audit_status:beforefix|libfixture', out)
+
+    def test_audit_context_query_failure_preserves_block_and_redacts_error(self):
+        out = self.shell(r'''
+p2s_command_exists() { [ "$1" = apt-get ] || [ "$1" = dpkg-query ]; }
+p2s_command_run() {
+    if [ "$2" = dpkg ]; then printf 'audit warning\n'; return 0; fi
+    printf 'https://login:private-token@repo.invalid/private-path\n' >&2; return 124
+}
+p2s_package_deb_preflight
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+''')
+        self.assertIn('package_audit_gap:beforefix|status_query_exit=124', out)
+        self.assertIn('[repository host=repo.invalid; path redacted]', out)
+        self.assertIn('RC=1|BLOCKED=true', out)
+        self.assertNotIn('private-token', out)
+        self.assertNotIn('private-path', out)
+
     def test_provider_hints_do_not_confuse_sury_with_debian_maintainer(self):
         cases = [
             ('php8.3-cli', 'Debian PHP Maintainers', '8.3.36-1+0~20261021.88+debian13~1.gbp250f7c', 'Sury/ondrej PHP (revision hint)'),
@@ -564,7 +639,7 @@ mkdir() { return 97; }
                 self.assertIn('presumed_affected_legacy_vendor_build|upstream=?', out)
                 self.assertIn('presumed vulnerable because this stock CentOS 5 PHP package predates the PHP2Shell fixes and has no verified backport.', out)
                 self.assertIn('Exploitability has not been tested.', out)
-                self.assertIn('No automatic update recipe for centos 5.11.', out)
+                self.assertIn('No automatic update recipe for centos 5.11 is implemented in this script.', out)
                 self.assertNotIn("outside this detector's verified PHP2Shell coverage", out)
                 self.assertNotIn('Result: We could not verify', out)
                 if mode == 'fix':
@@ -685,7 +760,7 @@ p2s_summary_print_versions
                 self.assertTrue(all('Initial check: PHP ' in row for row in customer[:2]))
                 self.assertEqual(sum('After update attempt:' in row for row in customer), 2 if transaction or restart else 0)
                 self.assertIn('Package label: Sury/ondrej PHP.', customer[0])
-                self.assertIn('Your provider added the security fixes without changing the PHP version.', customer[0])
+                self.assertIn('The PHP package provider added the security fixes without changing the PHP version.', customer[0])
                 self.assertIn('fixes verified for both PHP2Shell vulnerabilities', customer[0])
                 self.assertIn('Package label: cPanel internal.', customer[1])
                 self.assertIn('patch status not verified', customer[1])
@@ -713,7 +788,7 @@ p2s_summary_print_versions
         self.assertIn('Checked installed packages; no PHP executable or Apache module was matched.', rows[0])
         self.assertIn('patch status not verified', rows[2])
         self.assertIn('A version number alone cannot confirm a vulnerability', rows[2])
-        self.assertIn('ask support to verify or update this build', rows[2])
+        self.assertIn('this script could not verify whether this build includes the fixes', rows[2])
 
     def test_package_detail_stays_in_manifest(self):
         records = '\n'.join(name + '|8.4.27-1|amd64|install ok installed|Debian PHP Maintainers'
@@ -827,7 +902,12 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                                  + '\np2s_summary_print_result')
                 self.assertIn('Result:', out)
                 self.assertIn(phrase, out)
-                self.assertEqual(len(out.splitlines()), 1)
+                self.assertEqual(out.count('RimuHosting offers a no-cost, no-obligation investigation'),
+                                 0 if state == 'N' else 1)
+                self.assertEqual(len(out.splitlines()), 1 if state == 'N' else 2)
+                if state != 'N':
+                    self.assertIn('including for servers hosted elsewhere', out)
+                    self.assertIn('Any changes or further work are agreed separately.', out)
 
     def test_mixed_php_branches_get_conditional_migration_guidance(self):
         cases = [
@@ -1009,7 +1089,9 @@ cat "$P2S_WORK/packages"
 printf 'UNKNOWN=%s\\n' "$P2S_UNKNOWN"
 ''')
         self.assertIn('php8.4-cli|', out)
-        self.assertNotIn('php8.3-cli|', out)
+        self.assertNotRegex(out, r'(?m)^php8[.]3-cli[|]')
+        self.assertNotIn('package:beforefix|deb|php8.3-cli|', out)
+        self.assertIn('package_install_status:beforefix|deb|php8.3-cli|amd64|deinstall ok config-files', out)
         self.assertNotIn('other|', out)
         self.assertIn('UNKNOWN=true', out)
 
@@ -1020,6 +1102,7 @@ printf 'UNKNOWN=%s\\n' "$P2S_UNKNOWN"
 
     def test_patchability_is_separate_from_vulnerability_and_never_promises_success(self):
         cases = [('N', 'unused', 'not_needed'), ('Y', 'pass', 'eligible_to_attempt'),
+                 ('Y', 'sury_migration', 'eligible_to_attempt'),
                  ('?', 'pass', 'unknown'), ('Y', 'no_disk_probe', 'unknown'),
                  ('Y', 'unverified_companion', 'unknown'),
                  ('Y', 'blocked', 'blocked'), ('?', 'blocked', 'blocked'),
@@ -1028,6 +1111,7 @@ printf 'UNKNOWN=%s\\n' "$P2S_UNKNOWN"
             with self.subTest(state=state, scenario=scenario):
                 out = self.shell('P2S_STATE=' + shlex.quote(state) + '; scenario=' + scenario + r'''
 P2S_BACKEND=rpm
+[ "$scenario" != sury_migration ] || { P2S_DISRUPTIVE=true; P2S_ALLOW_SURY_MIGRATION=true; }
 [ "$scenario" != unverified_companion ] || P2S_UNKNOWN=true
 p2s_command_exists() { [ "$1" = df ] && [ "$scenario" != no_disk_probe ]; }
 p2s_fix_preflight() {
@@ -1047,8 +1131,10 @@ printf 'STATE=%s\n' "$P2S_STATE"
                 if assessment == 'eligible_to_attempt':
                     self.assertIn('appears suitable for an update attempt', out)
                     self.assertIn('whether patched packages are available', out)
+                    self.assertIn('explicitly enabled Sury migration method' if scenario == 'sury_migration'
+                                  else 'existing PHP package sources', out)
                 elif assessment == 'blocked':
-                    self.assertIn('cannot complete a fix on this server as it stands', out)
+                    self.assertIn('cannot proceed under the reported conditions', out)
                 elif assessment == 'unknown':
                     self.assertIn('cannot predict whether an update will resolve', out)
 
@@ -1186,7 +1272,7 @@ p2s_fix_run
 printf 'RC=%s|ATTEMPTED=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
 """)
         self.assertIn('RC=1|ATTEMPTED=false', out)
-        self.assertIn('dpkg reports an incomplete package operation', out)
+        self.assertIn('dpkg reports package-state or metadata warnings', out)
 
     def test_webpros_fpm_validates_its_actual_master_configuration(self):
         out = self.shell(r"""
@@ -1486,7 +1572,7 @@ p2s_fix_run() { printf 'UNEXPECTED_FIX\n'; return 97; }
 p2s_command_run() { return 0; }
 (p2s_main --''' + mode + ')\n')
                 skipped = state == 'N' and count == 0
-                self.assertEqual('No automatic update recipe for debian 11.' in out, not skipped)
+                self.assertEqual('No automatic update recipe for debian 11 is implemented in this script.' in out, not skipped)
                 self.assertEqual('dss:manifest:update_recipe:beforefix|not_needed|no_php_detected_in_checked_scope' in out, skipped)
                 self.assertNotIn('UNEXPECTED_FIX', out)
                 self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618' + state, out)
@@ -1836,6 +1922,7 @@ mkdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
 rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
 (p2s_main --fix)
 """, status=1)
+                self.assertEqual(out.count('RimuHosting offers a no-cost, no-obligation investigation'), 1)
                 if transaction == restart == 'false':
                     self.assertIn('No PHP package installation or service restart was attempted.', out)
                     self.assertIn('fix_outcome:afterfix|blocked|', out)

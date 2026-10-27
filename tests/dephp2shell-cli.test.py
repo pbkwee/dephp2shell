@@ -12,6 +12,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'dephp2shell.sh'
+if not SCRIPT.exists():
+    SCRIPT = ROOT / 'scripts/serverpatch/dephp2shell.sh'
 BASH = os.environ.get('DP2S_TEST_BASH', '/bin/bash')
 RAW = ('dss:info: Checking PHP.\n'
        'dss:manifest:example:beforefix|private evidence\n'
@@ -124,8 +126,8 @@ p2s_main() {
         cases = [(['--help'], 0), (['-h'], 0), (['--unknown'], 64),
                  (['--output'], 64), (['--output=xml'], 64),
                  (['--log-dir'], 64), (['--log-dir='], 64),
-                 (['--check', '--fix'], 64), (['--disruptive'], 69),
-                 (['--fix', '--disruptive'], 69)]
+                 (['--check', '--fix'], 64), (['--disruptive'], 64),
+                 (['--fix', '--disruptive'], 64)]
         for arguments, status in cases:
             with self.subTest(arguments=arguments):
                 run = self.run_cli(*arguments)

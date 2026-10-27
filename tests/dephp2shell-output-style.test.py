@@ -13,6 +13,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'dephp2shell.sh'
+if not SCRIPT.exists():
+    SCRIPT = ROOT / 'scripts/serverpatch/dephp2shell.sh'
 BASH = os.environ.get('DP2S_TEST_BASH', '/bin/bash')
 RAW = ('dss:info: Checking PHP.\n'
        'dss:warn: Review PHP.\n'

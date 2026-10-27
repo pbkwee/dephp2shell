@@ -490,7 +490,7 @@ Keep observation dates separate from publication dates. Distinguish authenticate
 - Add offline positive and negative fixtures for the exact provider rule and transaction boundaries. Include lookalike versions from another provider, unsupported architectures, partial failures and surviving workers.
 - Check application behaviour on a representative instance. A package checksum or successful updater command cannot establish application compatibility.
 
-Provider migrations need their own explicit operator choice and rollback plan. The reserved `--disruptive` action currently performs no such migration. Keep sensitive server evidence private when proposing a new recipe.
+Provider migrations need their own explicit operator choice and recovery plan. The bounded native-to-Sury method requires `--disruptive` and its separate method opt-in; it does not establish application compatibility. See [resolution options](resolution-options.md). Keep sensitive server evidence private when proposing a new recipe.
 
 ## Source confidence
 

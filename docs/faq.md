@@ -45,9 +45,9 @@ Distribution and vendor packages can backport security fixes while retaining an 
 
 ## Will it replace my PHP packages with Sury?
 
-No. Existing Sury/ondrej PHP can use a recognised fixed package from the same configured source and branch. Adding repositories or replacing another provider's binaries requires a separate reviewed plan.
+Normal `--fix` preserves package providers. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source and branch.
 
-The reserved `--disruptive` action currently makes no changes.
+An explicitly enabled `--disruptive` method can attempt a closely matched native-to-Sury change. Read the [resolution options](resolution-options.md) before using it. Unsupported setups remain blocked; application compatibility still needs testing.
 
 ## Why is the result still unverified after an update?
 
