@@ -10,18 +10,25 @@ No arguments also selects `--check`. `--help` prints usage without inspecting th
 
 ## Options
 
+For repair and provider permissions, read the
+[option effects and risks](resolution-options.md#compare-the-options) before selecting
+one. The guide explains repository/key changes, download locations, package setup,
+service interruption and what happens after failure. These permissions add to a
+fix attempt; a successful repair can be followed by ordinary PHP updates.
+
 | Option | Behaviour |
 | --- | --- |
 | `--check` | Inspect PHP and report the result. Does not update packages or restart services. |
 | `--fix` | Check prerequisites, attempt supported updates and service restarts, then check again. |
-| `--disruptive` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
-| `--allow-sury-migration` | With `--disruptive`, allow a closely matched native-to-Sury PHP package change. |
-| `--allow-sury-repository` | With both options above, allow the matching official Sury/ondrej source to be added. |
-| `--repair-repository RECIPE` | With `--disruptive`, repair the standard Debian `sury-key`, or add a missing matching `native-security-source`. |
-| `--allow-pending-php-configuration` | With `--disruptive`, configure a verified set of pending standard PHP packages. |
-| `--allow-exact-php-reinstall` | With `--disruptive`, reinstall PHP from authenticated exact installed-version candidates to restore package metadata. |
-| `--allow-php-dependency-updates` | With `--disruptive`, permit proven necessary upgrades of reviewed installed native libraries. |
-| `--wait-for-package-lock SECONDS` | Wait up to 0–600 seconds before fix operations on APT systems with `fuser`; default 0. |
+| `--enable-extra-fixes` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
+| [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | With `--enable-extra-fixes`, allow a closely matched native-to-Sury PHP package change. |
+| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | With both options above, allow the matching official Sury/ondrej source to be added. |
+| [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | With `--enable-extra-fixes`, replace the standard Debian Sury signing key and save a backup; source definitions stay unchanged. |
+| [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | With `--enable-extra-fixes`, add a missing matching Debian/Ubuntu `main` security source using the installed archive keyring. |
+| [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | With `--enable-extra-fixes`, configure a verified set of pending standard PHP packages. |
+| [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | With `--enable-extra-fixes`, reinstall PHP from authenticated exact installed-version candidates to restore package metadata. |
+| [`--upgrade-required-php-libraries`](resolution-options.md#allow-the-native-libraries-php-needs) | With `--enable-extra-fixes`, permit proven necessary upgrades of reviewed installed native libraries. |
+| [`--wait-for-package-lock SECONDS`](resolution-options.md#wait-for-another-package-operation) | Wait up to 0–600 seconds before fix operations on APT systems with `fuser`; default 0. |
 | `--output human` | Show readable progress and results. This is the default. |
 | `--output machine` | Emit the structured line protocol for integrations. |
 | `--log-dir DIR` | Save this run's detailed diagnostics in a private subdirectory of `DIR`. |
@@ -92,15 +99,17 @@ sudo bash dephp2shell.sh --fix
 
 Fix mode uses the supported procedure for the detected setup. Package holds, pins, signing requirements and provider boundaries remain in effect. A blocked update reports the reason and the next step. Changes can already have occurred if a package operation or restart fails; there is no automatic rollback.
 
-Alternative methods require `--disruptive` and a separate opt-in. `DP2S_ALLOW_SURY_MIGRATION=true` and `DP2S_ALLOW_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable provider changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
+Alternative methods require `--enable-extra-fixes` and a separate opt-in. `DP2S_MIGRATE_PHP_TO_SURY=true` and `DP2S_ADD_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable provider changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
 
-`--disruptive` selects an update attempt unless `--check` is explicit. Use `--check --disruptive` with the method options to inspect eligibility without adding sources or running package-manager network operations. A method option without `--disruptive`, `--disruptive` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
+`--enable-extra-fixes` selects an update attempt unless `--check` is explicit. Use `--check --enable-extra-fixes` with the method options to inspect eligibility without adding sources or running package-manager network operations. A method option without `--enable-extra-fixes`, `--enable-extra-fixes` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
 
-`DP2S_ALLOW_PENDING_PHP_CONFIGURATION`, `DP2S_ALLOW_EXACT_PHP_REINSTALL`
-and `DP2S_ALLOW_PHP_DEPENDENCY_UPDATES` are Boolean defaults, initially false.
-`DP2S_REPOSITORY_REPAIR` defaults to `none`; supported values are `sury-key` and
-`native-security-source`. These method settings require `--disruptive`.
-`DP2S_PACKAGE_LOCK_WAIT_SECONDS` sets the independent 0–600 second wait default.
+`DP2S_CONFIGURE_PENDING_PHP_PACKAGES`, `DP2S_REINSTALL_PHP_SAME_VERSION`
+and `DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES` are Boolean defaults, initially false.
+`DP2S_REFRESH_SURY_SIGNING_KEY` and `DP2S_ADD_OS_SECURITY_REPOSITORY` are also
+Boolean defaults, initially false. Choose only one of these two repository methods
+per attempt. All method settings require command-line `--enable-extra-fixes`;
+the consent gate has no environment equivalent.
+`DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS` sets the independent 0–600 second wait default.
 Explicit command-line settings take precedence over the environment.
 
 `--check` now prints suggested options when installed or cached evidence supports

@@ -47,7 +47,7 @@ Distribution and vendor packages can backport security fixes while retaining an 
 
 Normal `--fix` preserves package providers. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source and branch.
 
-An explicitly enabled `--disruptive` method can attempt a closely matched native-to-Sury change. Read the [resolution options](resolution-options.md) before using it. Unsupported setups remain blocked; application compatibility still needs testing.
+An explicitly enabled `--enable-extra-fixes` method can attempt a closely matched native-to-Sury change. Read the [resolution options](resolution-options.md) before using it. Unsupported setups remain blocked; application compatibility still needs testing.
 
 ## Why is the result still unverified after an update?
 

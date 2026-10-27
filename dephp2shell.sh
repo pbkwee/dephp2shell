@@ -1466,7 +1466,7 @@ p2s_repository_maintenance_report() {
         fi
         case "$provider:$layout" in
             sury:extrepo*)
-                p2s_message_print info "Sury PHP source in $file uses an extrepo-managed layout. If repository repair is needed, review 'extrepo update sury' and reconcile duplicate definitions first. Do not use --repair-repository sury-key for this layout."
+                p2s_message_print info "Sury PHP source in $file uses an extrepo-managed layout. If repository repair is needed, review 'extrepo update sury' and reconcile duplicate definitions first. Do not use --refresh-sury-signing-key for this layout."
                 p2s_manifest_record repository_guidance "$file|sury|extrepo_managed|manual_review=extrepo update sury|not_executed" ;;
             sury:legacy_or_custom)
                 p2s_message_print warn "Legacy or custom Sury PHP source in $file. Review https://packages.sury.org/php/README.txt for the supported OS suite and debsuryorg-archive-keyring package. Correct the existing definition after review instead of adding a duplicate; retain signature verification."
@@ -1602,7 +1602,7 @@ p2s_disruptive_repository_apply_recipe() {
     local recipe=${P2S_REPOSITORY_REPAIR:-none} keyring temp backup observed key_dir
     [ "$recipe" != none ] || return 0
     if [ "${P2S_MODE:-check}" != fix ] || ! ${P2S_DISRUPTIVE:-false}; then
-        p2s_fix_block repository_repair 'Repository repair requires fix mode and --disruptive.'; return 1
+        p2s_fix_block repository_repair 'Repository repair requires fix mode and --enable-extra-fixes.'; return 1
     fi
     if ! p2s_repository_repair_assess "$recipe"; then
         p2s_fix_block repository_repair "$P2S_REPOSITORY_REPAIR_REASON"; return 1
@@ -1753,7 +1753,7 @@ p2s_disruptive_package_configure_pending_php() {
     targets=()
     if [ "${P2S_MODE:-}" != fix ] || ! ${P2S_DISRUPTIVE:-false} ||
         ! ${P2S_ALLOW_PENDING_PHP_CONFIGURATION:-false} || ! ${P2S_PACKAGE_REPAIR_SAFETY_VERIFIED:-false}; then
-        p2s_fix_block package_repair_consent "Pending PHP configuration requires --fix --disruptive --allow-pending-php-configuration and verified runtime, restart and filesystem safety."; return 1
+        p2s_fix_block package_repair_consent "Pending PHP configuration requires --fix --enable-extra-fixes --configure-pending-php-packages and verified runtime, restart and filesystem safety."; return 1
     fi
     p2s_package_deb_repair_assess
     if ! $P2S_PENDING_PHP_REPAIR_ELIGIBLE; then
@@ -1833,7 +1833,7 @@ p2s_disruptive_package_reinstall_exact_php() {
     targets=()
     if [ "${P2S_MODE:-}" != fix ] || ! ${P2S_DISRUPTIVE:-false} ||
         ! ${P2S_ALLOW_EXACT_PHP_REINSTALL:-false} || ! ${P2S_PACKAGE_REPAIR_SAFETY_VERIFIED:-false}; then
-        p2s_fix_block package_repair_consent "Exact PHP reinstallation requires --fix --disruptive --allow-exact-php-reinstall and verified runtime, restart and filesystem safety."; return 1
+        p2s_fix_block package_repair_consent "Exact PHP reinstallation requires --fix --enable-extra-fixes --reinstall-php-same-version and verified runtime, restart and filesystem safety."; return 1
     fi
     p2s_package_deb_repair_assess
     if ! $P2S_EXACT_PHP_REPAIR_ELIGIBLE; then
@@ -1900,7 +1900,7 @@ p2s_disruptive_package_reinstall_exact_php() {
 p2s_disruptive_php_dependency_approve_plan() {
     local log="$1" name old candidate arch installed_source record target suite origin file parent dep op required installed_version candidate_version maintainer plan_arch
     if [ "$P2S_BACKEND" != deb ] || ! ${P2S_DISRUPTIVE:-false} || ! ${P2S_ALLOW_PHP_DEPENDENCY_UPDATES:-false}; then
-        p2s_fix_block dependency_permission "Native PHP dependency upgrades require --disruptive --allow-php-dependency-updates."; return 1
+        p2s_fix_block dependency_permission "Native PHP dependency upgrades require --enable-extra-fixes --upgrade-required-php-libraries."; return 1
     fi
     case "$P2S_DISTRO:$P2S_RELEASE" in
         debian:11|debian:11.*) suite=bullseye; origin=Debian ;;
@@ -3618,12 +3618,12 @@ p2s_fix_recommend_options() {
         p2s_package_deb_repair_audit_collect
         if ${P2S_REPAIR_AUDIT_NEEDED:-false}; then
             if ${P2S_PENDING_PHP_REPAIR_ELIGIBLE:-false}; then
-                p2s_fix_recommendation_print pending_php '--fix --disruptive --allow-pending-php-configuration' 'Only recognized pending PHP package configuration was identified; unrelated package repair remains excluded.'
+                p2s_fix_recommendation_print pending_php '--fix --enable-extra-fixes --configure-pending-php-packages' 'Only recognized pending PHP package configuration was identified; unrelated package repair remains excluded.'
             elif ${P2S_EXACT_PHP_REPAIR_ELIGIBLE:-false}; then
                 while IFS='|' read -r name version arch; do
                     if ! p2s_package_deb_repair_exact_candidate_validate "$name" "$version" "$arch"; then exact=false; break; fi
                 done < "$P2S_WORK/repair-reinstall"
-                if $exact; then p2s_fix_recommendation_print exact_php '--fix --disruptive --allow-exact-php-reinstall' 'Cached metadata has an equivalent exact installed-version PHP candidate; repair alone does not establish a CVE fix.'; fi
+                if $exact; then p2s_fix_recommendation_print exact_php '--fix --enable-extra-fixes --reinstall-php-same-version' 'Cached metadata has an equivalent exact installed-version PHP candidate; repair alone does not establish a CVE fix.'; fi
             fi
             return 0
         fi
@@ -3633,10 +3633,10 @@ p2s_fix_recommend_options() {
     if p2s_repository_repair_assess sury-key && p2s_command_exists gpg &&
         { p2s_command_exists curl || p2s_command_exists wget; } && p2s_repository_sury_key_needs_refresh; then
         if p2s_fix_blockers_match '|repositories|source_authentication|'; then
-        p2s_fix_recommendation_print repository_repair '--fix --disruptive --repair-repository sury-key' 'The standard Sury source uses an expired or mismatched installed key; this recipe replaces only its verified package keyring.'
+        p2s_fix_recommendation_print repository_repair '--fix --enable-extra-fixes --refresh-sury-signing-key' 'The standard Sury source uses an expired or mismatched installed key; this recipe replaces only its verified package keyring.'
         return 0
         fi
-        migration_repair=' --repair-repository sury-key'
+        migration_repair=' --refresh-sury-signing-key'
     fi
     # Prefer a normal update. Library permission is tested against the exact cached simulation.
     if ! ${P2S_BLOCKED:-false} && (
@@ -3647,7 +3647,7 @@ p2s_fix_recommend_options() {
         p2s_manifest_record option_assessment "existing_provider_and_dependencies|cached_only
 $(cat "$P2S_WORK/recommend-plan.log")"
         if [ -s "$P2S_WORK/dependency-approved" ]; then
-            p2s_fix_recommendation_print php_dependencies '--fix --disruptive --allow-php-dependency-updates' 'The cached PHP plan requires only verified upgrades from the reviewed native shared-library list.'
+            p2s_fix_recommendation_print php_dependencies '--fix --enable-extra-fixes --upgrade-required-php-libraries' 'The cached PHP plan requires only verified upgrades from the reviewed native shared-library list.'
         else
             p2s_fix_recommendation_print existing_provider '--fix' 'The cached PHP plan uses existing package sources; fix mode will refresh and revalidate candidates.'
         fi
@@ -3666,7 +3666,7 @@ $(cat "$P2S_WORK/recommend-plan.log")"
     fi
     if $native_php && p2s_fix_blockers_match '|repositories|source_authentication|' && p2s_repository_repair_assess native-security-source &&
         [ "${P2S_REPOSITORY_REPAIR_STATE:-needed}" = needed ]; then
-        p2s_fix_recommendation_print repository_repair '--fix --disruptive --repair-repository native-security-source' 'A matching native security source is missing; fresh repository access and fixed candidates still need verification.'
+        p2s_fix_recommendation_print repository_repair '--fix --enable-extra-fixes --add-os-security-repository' 'A matching native security source is missing; fresh repository access and fixed candidates still need verification.'
         return 0
     fi
     if ! ${P2S_BLOCKED:-false}; then
@@ -3682,12 +3682,12 @@ $(cat "$P2S_WORK/recommend-plan.log")"
             P2S_ALLOW_PHP_DEPENDENCY_UPDATES=true; p2s_package_deb_update
         ) > "$P2S_WORK/recommend-migration-plan.log" 2>&1; then
             if [ -s "$P2S_WORK/dependency-approved" ]; then
-                p2s_fix_recommendation_print sury_migration "--fix --disruptive --allow-sury-migration --allow-php-dependency-updates$migration_repair" 'Cached candidates pass the equivalent-package and necessary native-library checks.'
+                p2s_fix_recommendation_print sury_migration "--fix --enable-extra-fixes --migrate-php-to-sury --upgrade-required-php-libraries$migration_repair" 'Cached candidates pass the equivalent-package and necessary native-library checks.'
             else
-                p2s_fix_recommendation_print sury_migration "--fix --disruptive --allow-sury-migration$migration_repair" 'Cached candidates pass equivalent-package checks for the configured Sury source.'
+                p2s_fix_recommendation_print sury_migration "--fix --enable-extra-fixes --migrate-php-to-sury$migration_repair" 'Cached candidates pass equivalent-package checks for the configured Sury source.'
             fi
         elif (p2s_repository_sury_source_present; [ "$?" -eq 1 ]); then
-            p2s_fix_recommendation_print sury_source '--fix --disruptive --allow-sury-migration --allow-sury-repository' 'Optional provider change: local package identities fit the reviewed migration scope, but candidates from the missing source have not been checked.'
+            p2s_fix_recommendation_print sury_source '--fix --enable-extra-fixes --migrate-php-to-sury --add-sury-repository' 'Optional provider change: local package identities fit the reviewed migration scope, but candidates from the missing source have not been checked.'
         fi
     fi
     if [ -f "$P2S_WORK/recommend-migration.log" ]; then
@@ -3792,7 +3792,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command script_revision=2026-10-27.6
+    local mode=check result=0 command script_revision=2026-10-27.9
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -3880,6 +3880,20 @@ p2s_main() {
     fi
     printf 'dss:isvulnerable:afterfix: CVE_2026_109618%s\n' "$P2S_STATE"
     if [ "$mode" = fix ] && [ "$P2S_STATE" != N ]; then
+        # Reassess current blockers without carrying consent or stale failures into retry advice.
+        (
+            P2S_MODE=check; P2S_BLOCKED=false; : > "$P2S_WORK/blocker-keys"
+            P2S_DISRUPTIVE=false; P2S_ALLOW_SURY_MIGRATION=false; P2S_ALLOW_SURY_REPOSITORY=false
+            P2S_ALLOW_PENDING_PHP_CONFIGURATION=false; P2S_ALLOW_EXACT_PHP_REINSTALL=false
+            P2S_ALLOW_PHP_DEPENDENCY_UPDATES=false; P2S_REPOSITORY_REPAIR=none
+            P2S_PHASE=afterfix
+            p2s_inventory_collect_and_assess
+            p2s_fix_check_distro_recipe
+            if p2s_fix_preflight; then
+                if [ "$P2S_BACKEND" = deb ]; then p2s_package_deb_preflight; fi
+            fi
+            p2s_fix_recommend_options
+        )
         if ! $P2S_TRANSACTION_ATTEMPTED && ! $P2S_RESTART_ATTEMPTED; then
             if ${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false} && p2s_state_has_only_fixed_versions; then
                 p2s_message_print warn "Automatic changes were skipped. The assessed host PHP versions have verified fixes, but containers or separate application environments still require review. No PHP package installation or service restart was attempted. Review those environments and any other reported blockers; rerunning a host package update alone will not resolve the separate-environment check."
@@ -3905,27 +3919,49 @@ p2s_main() {
 
 p2s_usage_print() {
     cat <<'EOF'
-Usage: dephp2shell.sh [--check|--fix] [--disruptive] [options]
+Usage: dephp2shell.sh [--check|--fix] [--enable-extra-fixes] [options]
 
   --check           Check PHP without package changes or service restarts (default).
-  --fix             Attempt supported updates through existing package sources or panels.
-  --disruptive      Enable explicitly selected migration methods (implies --fix unless --check).
-  --allow-sury-migration
-                    Permit equivalent native Debian/Ubuntu PHP packages to use a configured Sury source.
-  --allow-sury-repository
-                    Also permit adding the matching official Sury source and dedicated signing key.
-                    Requires --disruptive and --allow-sury-migration; both methods default off.
-  --repair-repository RECIPE
-                    Repair sury-key or add a missing native-security-source for the same OS suite.
-  --allow-pending-php-configuration
-                    Configure only verified pending PHP packages; unrelated repairs stay blocked.
-  --allow-exact-php-reinstall
-                    Restore PHP packages from authenticated exact installed-version candidates.
-  --allow-php-dependency-updates
-                    Permit necessary upgrades of reviewed, already-installed native shared libraries.
-                    All repair/provider permissions require --disruptive and default off.
+  --fix             Refresh package lists, attempt allowed PHP updates and restart supported services.
+                    Use existing sources/providers by default; panel updaters can have broader effects.
+  --enable-extra-fixes
+                    Permit only the extra methods selected below; it does not bypass safety checks.
+                    Implies --fix unless --check is explicit. Extra methods are disabled by default.
+  --migrate-php-to-sury
+                    Change eligible PHP packages to Sury (Debian) or the ondrej PHP PPA (Ubuntu).
+                    Keep the PHP branch; download through an existing authenticated APT source.
+                    This flag adds no source. Provider changes still need application testing.
+  --add-sury-repository
+                    Also allow a new matching Sury/PPA source file and dedicated verified signing key.
+                    Sources: packages.sury.org/php or ppa.launchpadcontent.net/ondrej/php/ubuntu.
+                    Requires --migrate-php-to-sury. New files remain after a transaction attempt,
+                    including failure; they are removed on exit if no transaction was attempted.
+  --refresh-sury-signing-key
+                    Restore access to Sury updates by replacing the key that verifies their source.
+                    Download and replace the standard Debian Sury signing key; retain a backup.
+                    Source definitions stay unchanged. Extrepo/custom layouts need separate review.
+  --add-os-security-repository
+                    Let the server look for security updates from its operating-system provider.
+                    Add the matching Debian/Ubuntu main security source using its installed archive keyring.
+                    The new source persists after failure. Choose only one repository repair per attempt.
+  --configure-pending-php-packages
+                    Finish a PHP installation that was interrupted or did not complete.
+                    Finish setup of explicitly identified pending PHP packages; no configure-all.
+                    This repair downloads no packages, but setup scripts can change files/services.
+  --reinstall-php-same-version
+                    Repair PHP installation records by installing the same version again.
+                    Repair identified missing dpkg file-list/checksum metadata using the same PHP version.
+                    APT fetches its exact candidate. Package files are replaced and setup scripts run again;
+                    the installed version may still be vulnerable.
+  --upgrade-required-php-libraries
+                    Update supporting software PHP needs so its security update can proceed.
+                    Install necessary upgrades of reviewed, already-installed native shared libraries.
+                    Other applications may use these libraries. No new packages or broad OS upgrade.
+                    All repair/provider permissions require --enable-extra-fixes and are disabled by default.
   --wait-for-package-lock SECONDS
-                    Wait 0..600 seconds on APT systems with fuser (default 0); never force unlock.
+                    Give another software update time to finish before starting this one.
+                    Wait 0..600 seconds on APT systems with an existing fuser (default 0).
+                    No locks are deleted or processes stopped; an expired/inconclusive wait stops the fix.
   --output FORMAT   human (default) or machine (structured records for integrations).
   --log-dir DIR     Save full diagnostics in a private timestamped subdirectory of DIR.
   --color WHEN      auto (default), always or never; only human console accents.
@@ -3936,11 +3972,12 @@ Usage: dephp2shell.sh [--check|--fix] [--disruptive] [options]
 
 Linux only. Other operating systems exit before inventory or log creation.
 DP2S_OUTPUT, DP2S_LOG_DIR, DP2S_COLOR and DP2S_BOLD set defaults.
-DP2S_ALLOW_SURY_MIGRATION, DP2S_ALLOW_SURY_REPOSITORY,
-DP2S_ALLOW_PENDING_PHP_CONFIGURATION, DP2S_ALLOW_EXACT_PHP_REINSTALL and
-DP2S_ALLOW_PHP_DEPENDENCY_UPDATES accept true/false, yes/no or 1/0 (default false).
-DP2S_REPOSITORY_REPAIR defaults to none; DP2S_PACKAGE_LOCK_WAIT_SECONDS to 0.
-Method settings require --disruptive. Explicit --check stays read-only and
+DP2S_MIGRATE_PHP_TO_SURY, DP2S_ADD_SURY_REPOSITORY,
+DP2S_CONFIGURE_PENDING_PHP_PACKAGES, DP2S_REINSTALL_PHP_SAME_VERSION and
+DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES accept true/false, yes/no or 1/0 (default false).
+DP2S_REFRESH_SURY_SIGNING_KEY and DP2S_ADD_OS_SECURITY_REPOSITORY are also Boolean defaults (false).
+DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS defaults to 0. --enable-extra-fixes is command-line consent only.
+Method settings require --enable-extra-fixes. Explicit --check stays read-only and
 recommends applicable options from installed/cached evidence without refreshing sources.
 Nonempty NO_COLOR disables colour by default; explicit options take precedence.
 Auto styling leaves pipes plain; machine output is always unstyled.
@@ -3948,13 +3985,20 @@ Human output saves logs under $HOME/dephp2shellinfo/runs by default.
 Machine output creates no persistent logs unless a log directory is specified.
 
 Updates and service restarts can interrupt applications. Plesk's updater can
-also update non-PHP components. Ordinary --fix adds no repositories or PHP providers.
+also update non-PHP components. The ordinary APT PHP path adds no repositories or PHP providers.
 Opted-in Sury migration keeps package names, PHP branches, architecture and extension
 API, and rejects removals or unrelated changes. Reviewed native library upgrades need
 their separate permission. Package repairs may execute PHP package scripts and
-verified PHP triggers. Repository repairs retain their changes and key backups
+verified PHP triggers. A successful repair can be followed by ordinary PHP updates.
+For APT methods, PHP packages come through APT rather than hard-coded .deb URLs.
+Public signing keys have separate direct downloads.
+Repository repairs retain their changes and key backups
 even if later patching fails. Only reviewed OS releases are eligible.
+Package scripts can change configuration/services; failed attempts have no automatic rollback.
 No operating systems are upgraded and no reboots are performed by this tool.
+
+Before granting a method, read its file changes, download sources, benefits and risks:
+https://github.com/pbkwee/dephp2shell/blob/main/docs/resolution-options.md
 EOF
 }
 
@@ -4016,11 +4060,13 @@ p2s_cli() {
     local mode=check action='' output="${DP2S_OUTPUT:-human}" log_root="${DP2S_LOG_DIR:-}"
     local option value run_directory log_file stamp status permissions log_requested=false disruptive=false
     local color="${DP2S_COLOR:-auto}" bold="${DP2S_BOLD:-auto}"
-    local P2S_DISRUPTIVE=false P2S_ALLOW_SURY_MIGRATION="${DP2S_ALLOW_SURY_MIGRATION:-false}" P2S_ALLOW_SURY_REPOSITORY="${DP2S_ALLOW_SURY_REPOSITORY:-false}"
-    local P2S_ALLOW_PENDING_PHP_CONFIGURATION="${DP2S_ALLOW_PENDING_PHP_CONFIGURATION:-false}"
-    local P2S_ALLOW_EXACT_PHP_REINSTALL="${DP2S_ALLOW_EXACT_PHP_REINSTALL:-false}"
-    local P2S_ALLOW_PHP_DEPENDENCY_UPDATES="${DP2S_ALLOW_PHP_DEPENDENCY_UPDATES:-false}"
-    local P2S_REPOSITORY_REPAIR="${DP2S_REPOSITORY_REPAIR:-none}" P2S_PACKAGE_LOCK_WAIT_SECONDS="${DP2S_PACKAGE_LOCK_WAIT_SECONDS:-0}"
+    local P2S_DISRUPTIVE=false P2S_ALLOW_SURY_MIGRATION="${DP2S_MIGRATE_PHP_TO_SURY:-false}" P2S_ALLOW_SURY_REPOSITORY="${DP2S_ADD_SURY_REPOSITORY:-false}"
+    local P2S_ALLOW_PENDING_PHP_CONFIGURATION="${DP2S_CONFIGURE_PENDING_PHP_PACKAGES:-false}"
+    local P2S_ALLOW_EXACT_PHP_REINSTALL="${DP2S_REINSTALL_PHP_SAME_VERSION:-false}"
+    local P2S_ALLOW_PHP_DEPENDENCY_UPDATES="${DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES:-false}"
+    local refresh_sury_signing_key="${DP2S_REFRESH_SURY_SIGNING_KEY:-false}"
+    local add_os_security_repository="${DP2S_ADD_OS_SECURITY_REPOSITORY:-false}"
+    local P2S_REPOSITORY_REPAIR=none P2S_PACKAGE_LOCK_WAIT_SECONDS="${DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS:-0}"
     local -a pipeline_status
     if [ -n "${NO_COLOR:-}" ]; then color=never; fi
     while [ "$#" -gt 0 ]; do
@@ -4032,22 +4078,25 @@ p2s_cli() {
                     printf '%s\n' 'Choose either --check or --fix.' >&2; return 64
                 fi
                 action=$value; mode=$value ;;
-            --disruptive) disruptive=true ;;
-            --allow-sury-migration) P2S_ALLOW_SURY_MIGRATION=true ;;
-            --allow-sury-repository) P2S_ALLOW_SURY_REPOSITORY=true ;;
-            --allow-sury-migration=*) P2S_ALLOW_SURY_MIGRATION=${1#--allow-sury-migration=} ;;
-            --allow-sury-repository=*) P2S_ALLOW_SURY_REPOSITORY=${1#--allow-sury-repository=} ;;
-            --allow-pending-php-configuration) P2S_ALLOW_PENDING_PHP_CONFIGURATION=true ;;
-            --allow-exact-php-reinstall) P2S_ALLOW_EXACT_PHP_REINSTALL=true ;;
-            --allow-php-dependency-updates) P2S_ALLOW_PHP_DEPENDENCY_UPDATES=true ;;
-            --allow-pending-php-configuration=*) P2S_ALLOW_PENDING_PHP_CONFIGURATION=${1#--allow-pending-php-configuration=} ;;
-            --allow-exact-php-reinstall=*) P2S_ALLOW_EXACT_PHP_REINSTALL=${1#--allow-exact-php-reinstall=} ;;
-            --allow-php-dependency-updates=*) P2S_ALLOW_PHP_DEPENDENCY_UPDATES=${1#--allow-php-dependency-updates=} ;;
-            --repair-repository=*) P2S_REPOSITORY_REPAIR=${1#--repair-repository=} ;;
+            --enable-extra-fixes) disruptive=true ;;
+            --migrate-php-to-sury) P2S_ALLOW_SURY_MIGRATION=true ;;
+            --add-sury-repository) P2S_ALLOW_SURY_REPOSITORY=true ;;
+            --migrate-php-to-sury=*) P2S_ALLOW_SURY_MIGRATION=${1#--migrate-php-to-sury=} ;;
+            --add-sury-repository=*) P2S_ALLOW_SURY_REPOSITORY=${1#--add-sury-repository=} ;;
+            --configure-pending-php-packages) P2S_ALLOW_PENDING_PHP_CONFIGURATION=true ;;
+            --reinstall-php-same-version) P2S_ALLOW_EXACT_PHP_REINSTALL=true ;;
+            --upgrade-required-php-libraries) P2S_ALLOW_PHP_DEPENDENCY_UPDATES=true ;;
+            --configure-pending-php-packages=*) P2S_ALLOW_PENDING_PHP_CONFIGURATION=${1#--configure-pending-php-packages=} ;;
+            --reinstall-php-same-version=*) P2S_ALLOW_EXACT_PHP_REINSTALL=${1#--reinstall-php-same-version=} ;;
+            --upgrade-required-php-libraries=*) P2S_ALLOW_PHP_DEPENDENCY_UPDATES=${1#--upgrade-required-php-libraries=} ;;
+            --refresh-sury-signing-key) refresh_sury_signing_key=true ;;
+            --refresh-sury-signing-key=*) refresh_sury_signing_key=${1#--refresh-sury-signing-key=} ;;
+            --add-os-security-repository) add_os_security_repository=true ;;
+            --add-os-security-repository=*) add_os_security_repository=${1#--add-os-security-repository=} ;;
             --wait-for-package-lock=*) P2S_PACKAGE_LOCK_WAIT_SECONDS=${1#--wait-for-package-lock=} ;;
             --no-color) color=never ;;
             --no-bold) bold=never ;;
-            --output|--log-dir|--color|--bold|--repair-repository|--wait-for-package-lock)
+            --output|--log-dir|--color|--bold|--wait-for-package-lock)
                 option=$1
                 if [ "$#" -lt 2 ] || [ -z "$2" ]; then
                     printf '%s needs a value. See --help.\n' "$option" >&2; return 64
@@ -4058,7 +4107,6 @@ p2s_cli() {
                     --log-dir) log_root=$value; log_requested=true ;;
                     --color) color=$value ;;
                     --bold) bold=$value ;;
-                    --repair-repository) P2S_REPOSITORY_REPAIR=$value ;;
                     --wait-for-package-lock) P2S_PACKAGE_LOCK_WAIT_SECONDS=$value ;;
                 esac ;;
             --color=*) color=${1#--color=} ;;
@@ -4079,12 +4127,16 @@ p2s_cli() {
         ! P2S_ALLOW_SURY_REPOSITORY=$(p2s_option_boolean "$P2S_ALLOW_SURY_REPOSITORY") ||
         ! P2S_ALLOW_PENDING_PHP_CONFIGURATION=$(p2s_option_boolean "$P2S_ALLOW_PENDING_PHP_CONFIGURATION") ||
         ! P2S_ALLOW_EXACT_PHP_REINSTALL=$(p2s_option_boolean "$P2S_ALLOW_EXACT_PHP_REINSTALL") ||
-        ! P2S_ALLOW_PHP_DEPENDENCY_UPDATES=$(p2s_option_boolean "$P2S_ALLOW_PHP_DEPENDENCY_UPDATES"); then
+        ! P2S_ALLOW_PHP_DEPENDENCY_UPDATES=$(p2s_option_boolean "$P2S_ALLOW_PHP_DEPENDENCY_UPDATES") ||
+        ! refresh_sury_signing_key=$(p2s_option_boolean "$refresh_sury_signing_key") ||
+        ! add_os_security_repository=$(p2s_option_boolean "$add_os_security_repository"); then
         printf '%s\n' 'Method settings must be true/false, yes/no or 1/0.' >&2; return 64
     fi
-    case "$P2S_REPOSITORY_REPAIR" in none|sury-key|native-security-source) ;;
-        *) printf '%s\n' 'Repository recipe must be sury-key, native-security-source or none.' >&2; return 64 ;;
-    esac
+    if $refresh_sury_signing_key && $add_os_security_repository; then
+        printf '%s\n' 'Choose only one of --refresh-sury-signing-key and --add-os-security-repository per attempt.' >&2; return 64
+    fi
+    if $refresh_sury_signing_key; then P2S_REPOSITORY_REPAIR="sury-key"; fi
+    if $add_os_security_repository; then P2S_REPOSITORY_REPAIR=native-security-source; fi
     case "$P2S_PACKAGE_LOCK_WAIT_SECONDS" in ''|*[!0-9]*)
         printf '%s\n' 'Package-lock wait must be an integer from 0 to 600 seconds.' >&2; return 64 ;;
     esac
@@ -4093,13 +4145,13 @@ p2s_cli() {
     fi
     P2S_PACKAGE_LOCK_WAIT_SECONDS=$((10#$P2S_PACKAGE_LOCK_WAIT_SECONDS))
     if $P2S_ALLOW_SURY_REPOSITORY && ! $P2S_ALLOW_SURY_MIGRATION; then
-        printf '%s\n' '--allow-sury-repository also requires --allow-sury-migration.' >&2; return 64
+        printf '%s\n' '--add-sury-repository also requires --migrate-php-to-sury.' >&2; return 64
     fi
     if $P2S_ALLOW_SURY_MIGRATION || $P2S_ALLOW_PENDING_PHP_CONFIGURATION ||
         $P2S_ALLOW_EXACT_PHP_REINSTALL || $P2S_ALLOW_PHP_DEPENDENCY_UPDATES || [ "$P2S_REPOSITORY_REPAIR" != none ]; then
-        if ! $disruptive; then printf '%s\n' 'Alternative update and repair methods also require --disruptive.' >&2; return 64; fi
+        if ! $disruptive; then printf '%s\n' 'Alternative update and repair methods also require --enable-extra-fixes.' >&2; return 64; fi
     elif $disruptive; then
-        printf '%s\n' '--disruptive requires a selected migration or repair method.' >&2; return 64
+        printf '%s\n' '--enable-extra-fixes requires a selected migration or repair method.' >&2; return 64
     fi
     if $disruptive; then
         P2S_DISRUPTIVE=true

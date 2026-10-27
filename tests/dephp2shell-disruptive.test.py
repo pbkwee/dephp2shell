@@ -12,7 +12,7 @@ class DisruptiveTest(unittest.TestCase):
 
     def cli(self, args, env='', status=0):
         body = r'''
-unset DP2S_ALLOW_SURY_MIGRATION DP2S_ALLOW_SURY_REPOSITORY DP2S_LOG_DIR
+unset DP2S_MIGRATE_PHP_TO_SURY DP2S_ADD_SURY_REPOSITORY DP2S_LOG_DIR
 p2s_main() { printf 'INVENTORY:%s|disruptive=%s|migration=%s|repository=%s\n' "$*" "${P2S_DISRUPTIVE:-false}" "${P2S_ALLOW_SURY_MIGRATION:-false}" "${P2S_ALLOW_SURY_REPOSITORY:-false}"; }
 ''' + env + '\np2s_cli --output machine ' + args + r'''
 cli_status=$?
@@ -24,28 +24,33 @@ exit "$cli_status"
         return out
 
     def test_disruptive_and_method_have_separate_consent(self):
-        out = self.cli('--disruptive --allow-sury-migration')
+        out = self.cli('--enable-extra-fixes --migrate-php-to-sury')
         self.assertIn('INVENTORY:--fix|disruptive=true|migration=true|repository=false', out)
-        out = self.cli('--disruptive', 'DP2S_ALLOW_SURY_MIGRATION=true')
+        out = self.cli('--enable-extra-fixes', 'DP2S_MIGRATE_PHP_TO_SURY=true')
         self.assertIn('INVENTORY:--fix|disruptive=true|migration=true', out)
-        out = self.cli('--check --disruptive --allow-sury-migration')
+        out = self.cli('--check --enable-extra-fixes --migrate-php-to-sury')
         self.assertIn('INVENTORY:--check|', out)
-        out = self.cli('--disruptive --allow-sury-migration --allow-sury-repository')
+        out = self.cli('--enable-extra-fixes --migrate-php-to-sury --add-sury-repository')
         self.assertIn('repository=true', out)
+        out = self.cli('--enable-extra-fixes --migrate-php-to-sury', 'DP2S_ADD_SURY_REPOSITORY=true')
+        self.assertIn('repository=true', out)
+        out = self.cli('--check --migrate-php-to-sury=false --add-sury-repository=false',
+                       'DP2S_MIGRATE_PHP_TO_SURY=true; DP2S_ADD_SURY_REPOSITORY=true')
+        self.assertIn('INVENTORY:--check|disruptive=false|migration=false|repository=false', out)
 
     def test_invalid_consent_fails_before_inventory_or_logs(self):
-        for args, env in [('--disruptive', ''), ('--allow-sury-migration', ''),
-                          ('--disruptive --allow-sury-repository', ''),
-                          ('--disruptive', 'DP2S_ALLOW_SURY_MIGRATION=perhaps'),
-                          ('--disruptive --allow-sury-migration',
-                           'DP2S_ALLOW_SURY_REPOSITORY=perhaps')]:
+        for args, env in [('--enable-extra-fixes', ''), ('--migrate-php-to-sury', ''),
+                          ('--enable-extra-fixes --add-sury-repository', ''),
+                          ('--enable-extra-fixes', 'DP2S_MIGRATE_PHP_TO_SURY=perhaps'),
+                          ('--enable-extra-fixes --migrate-php-to-sury',
+                           'DP2S_ADD_SURY_REPOSITORY=perhaps')]:
             with self.subTest(args=args, env=env):
                 out = self.cli(args, env + '\nDP2S_LOG_DIR="$P2S_WORK/must-not-exist"', status=64)
                 self.assertNotIn('INVENTORY:', out)
 
     def test_help_does_not_inspect_server_even_with_invalid_method_environment(self):
-        out = self.cli('--help', 'DP2S_ALLOW_SURY_MIGRATION=invalid')
-        self.assertIn('--allow-sury-migration', out)
+        out = self.cli('--help', 'DP2S_MIGRATE_PHP_TO_SURY=invalid')
+        self.assertIn('--migrate-php-to-sury', out)
         self.assertNotIn('INVENTORY:', out)
 
     def fixture(self, changes='', plan=None):

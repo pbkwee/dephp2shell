@@ -301,10 +301,10 @@ record distinguishes the guarded Sury path from those remaining boundaries.
 
 ### Explicit equivalent-package migration
 
-`--disruptive --allow-sury-migration` permits versioned native Debian/Ubuntu PHP
+`--enable-extra-fixes --migrate-php-to-sury` permits versioned native Debian/Ubuntu PHP
 packages to use the normal candidate from an already configured official Sury
-source. `DP2S_ALLOW_SURY_MIGRATION=true` is the environment equivalent of the
-method flag, but still requires `--disruptive`. Use ordinary `--fix` first.
+source. `DP2S_MIGRATE_PHP_TO_SURY=true` is the environment equivalent of the
+method flag, but still requires `--enable-extra-fixes`. Use ordinary `--fix` first.
 The disruptive flag implies fix mode unless the operator explicitly selects
 `--check`; check mode remains observational. Missing method consent, malformed
 booleans and inconsistent option combinations exit 64 before inventory or logs.
@@ -320,7 +320,7 @@ transaction/restart safeguards still apply. Reject cPanel/Plesk-managed PHP, unk
 engine owners, missing equivalents, removals, additions and unrelated dependency changes.
 This is not an automatic PHP branch upgrade or a guarantee of application compatibility.
 
-`--allow-sury-repository` / `DP2S_ALLOW_SURY_REPOSITORY=true` additionally permits
+`--add-sury-repository` / `DP2S_ADD_SURY_REPOSITORY=true` additionally permits
 one matching official repository, only with both migration consents. It uses an
 existing `curl` or `wget` and `gpg`; it does not install prerequisite tooling.
 A dedicated source and `Signed-By` keyring are created without overwriting existing
@@ -450,7 +450,7 @@ No method guarantees application compatibility or a complete-server fix.
 and architecture, with verified service replacement. These updates can still
 interrupt requests or workers. Routine does not mean zero downtime.
 
-`--disruptive` permits only a separately selected method. Persistent repository
+`--enable-extra-fixes` permits only a separately selected method. Persistent repository
 or trust changes, provider changes, extra dependency changes and package-state
 repairs belong here. The flag never bypasses a failed safety check.
 Waiting, read-only diagnosis and correcting an inventory defect do not require it.
@@ -486,20 +486,33 @@ and [checksum-file scope](https://manpages.debian.org/bookworm/dpkg-dev/deb-md5s
 
 ### Method flags
 
+For an operator deciding whether to grant permission, use the
+[option effects and risks](resolution-options.md#compare-the-options). It explains
+file changes, package/key download sources, benefits, interruption risks and recovery.
+The table below retains the implementation limits; those checks do not establish
+that package setup scripts or applications will succeed on a particular server.
+
 The options below are implemented. Each method has a bounded supported subset;
 selecting an option does not authorize general system repair.
-Every Boolean method defaults to false and requires `--disruptive`.
+Every Boolean method defaults to false and requires command-line
+`--enable-extra-fixes`. Environment names match their action flags with `DP2S_`
+and uppercase underscores. The two repository methods are mutually exclusive,
+including selections combined across environment and command line. Explicit
+`--option=false` overrides its environment default. Private `P2S_` settings and
+manifest method identifiers retain their existing internal names.
 
 | Method option | Environment setting | Status and limit |
 | --- | --- | --- |
-| `--allow-sury-migration` | `DP2S_ALLOW_SURY_MIGRATION=true` | Implemented. Keep reviewed package names, PHP branches, architecture and extension APIs; use authenticated normal candidates. |
-| `--allow-sury-repository` | `DP2S_ALLOW_SURY_REPOSITORY=true` | Implemented. Also requires migration consent; add only the matching official source and verified dedicated key. |
-| `--repair-repository RECIPE` | `DP2S_REPOSITORY_REPAIR=RECIPE` | Default none. `sury-key` refreshes only the standard package-owned Debian Sury keyring, with a verified fingerprint and persistent backup. `native-security-source` adds only matching main security metadata using the existing packaged archive keyring. No Virtualmin or general source rewrite recipe exists. Unknown recipes fail. |
-| `--allow-pending-php-configuration` | `DP2S_ALLOW_PENDING_PHP_CONFIGURATION=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching source/provider identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
-| `--allow-exact-php-reinstall` | `DP2S_ALLOW_EXACT_PHP_REINSTALL=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged provider, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
-| `--allow-php-dependency-updates` | `DP2S_ALLOW_PHP_DEPENDENCY_UPDATES=true` | Prove versioned non-alternative PHP dependency requirements, including transitive edges, before allowing installed native amd64 library upgrades: libpcre2-8-0, libonig5, libargon2-1, libxml2, libzip4/libzip5 and libsodium23. Pin normal candidates from matching official native sources, rerun simulation and recheck scope, versions and architecture. No additions, removals, replacements, downgrades, RPM or base-system library changes. |
+| [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | `DP2S_MIGRATE_PHP_TO_SURY=true` | Implemented. Keep reviewed package names, PHP branches, architecture and extension APIs; use authenticated normal candidates. |
+| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | `DP2S_ADD_SURY_REPOSITORY=true` | Implemented. Also requires migration consent; add only the matching official source and verified dedicated key. |
+| [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | `DP2S_REFRESH_SURY_SIGNING_KEY=true` | Refresh only the standard package-owned Debian Sury signing keyring, with a verified fingerprint and persistent backup. No source rewrite; custom and extrepo layouts stay blocked. |
+| [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | `DP2S_ADD_OS_SECURITY_REPOSITORY=true` | Add only matching main security metadata using the existing packaged archive keyring. No Virtualmin or general source rewrite method exists. |
+| [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching source/provider identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
+| [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | `DP2S_REINSTALL_PHP_SAME_VERSION=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged provider, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
+| [`--upgrade-required-php-libraries`](resolution-options.md#allow-the-native-libraries-php-needs) | `DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES=true` | Prove versioned non-alternative PHP dependency requirements, including transitive edges, before allowing installed native amd64 library upgrades: libpcre2-8-0, libonig5, libargon2-1, libxml2, libzip4/libzip5 and libsodium23. Pin normal candidates from matching official native sources, rerun simulation and recheck scope, versions and architecture. No additions, removals, replacements, downgrades, RPM or base-system library changes. |
 
-`--wait-for-package-lock SECONDS` / `DP2S_PACKAGE_LOCK_WAIT_SECONDS`
+`--wait-for-package-lock SECONDS` / `DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS`
+has its [operator explanation](resolution-options.md#wait-for-another-package-operation) in the option guide. It
 waits before fix operations on APT systems with `fuser`. The bound is 0–600 seconds. Default zero preserves current behavior.
 The open-file probe is conservative; a file can exist without being held. Unknown
 probe results stop an explicitly requested wait. No locks or processes are removed.

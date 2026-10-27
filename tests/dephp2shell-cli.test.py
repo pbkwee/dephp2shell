@@ -126,8 +126,8 @@ p2s_main() {
         cases = [(['--help'], 0), (['-h'], 0), (['--unknown'], 64),
                  (['--output'], 64), (['--output=xml'], 64),
                  (['--log-dir'], 64), (['--log-dir='], 64),
-                 (['--check', '--fix'], 64), (['--disruptive'], 64),
-                 (['--fix', '--disruptive'], 64)]
+                 (['--check', '--fix'], 64), (['--enable-extra-fixes'], 64),
+                 (['--fix', '--enable-extra-fixes'], 64)]
         for arguments, status in cases:
             with self.subTest(arguments=arguments):
                 run = self.run_cli(*arguments)

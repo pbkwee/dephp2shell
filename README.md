@@ -46,7 +46,7 @@ The tool checks prerequisites, attempts supported package or panel updates, rest
 
 Normal `--fix` preserves existing package providers and PHP branches. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
 
-A separate, explicitly enabled `--disruptive` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
+A separate, explicitly enabled `--enable-extra-fixes --migrate-php-to-sury` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
 
 A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. It is not a website test, a compromise assessment or a general security audit. Older operating systems can still need migration even after PHP is fixed.
 
