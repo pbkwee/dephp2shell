@@ -1,8 +1,8 @@
 # Sury backport evidence for the original PHP2Shell CVEs
 
 Reviewed 25 October 2026, with Debian 11 added 27 October 2026, New Zealand time. This review covers
-CVE-2026-109618 and CVE-2026-109619. It does not establish protection against
-other PHP vulnerabilities, including CVE-2026-115560.
+CVE-2026-109618 and CVE-2026-109619. Other PHP vulnerabilities, including
+CVE-2026-115560, require separate assessment.
 
 ## Bounded recognition rules
 
@@ -41,14 +41,15 @@ Do not substitute one repository's version pattern for the other.
 | 8.0 | `1:8.0.30-25+ubuntuU.1+deb.sury.org+1` |
 | 8.1 | `8.1.34-9+ubuntuU.1+deb.sury.org+1` |
 
-A package name, Debian maintainer identity, version suffix or configured repository
-alone does not authenticate the installed binary.
+Authenticate the installed binary through its package provenance and reviewed
+source/version tuple. Record package names, maintainer identities, version
+suffixes and configured repositories as supporting observations.
 A new installation must use authenticated APT metadata and the exact reviewed
-source/version tuple. Ordinary updates keep the existing provider and branch;
-provider migration requires its separate explicit opt-ins and keeps the branch.
+source/version tuple. Ordinary updates keep the existing package publisher and branch;
+switching PHP package publishers requires its separate explicit opt-ins and keeps the branch.
 Keep ordinary runtime ownership, transaction-scope and service-restart checks.
-An already-installed package whose provenance cannot be established needs a
-separate provenance check; a copied version string is insufficient.
+An already-installed package with unresolved provenance needs a separate
+provenance check, including when its version string matches a reviewed build.
 
 ## Authentication and source-to-binary chain
 
@@ -56,7 +57,7 @@ The review used downloaded metadata without installing keys or packages or chang
 
 Debian metadata used the keyring extracted from the
 [official archive keyring package](https://packages.sury.org/debsuryorg-archive-keyring.deb),
-as linked by the [provider's setup instructions](https://packages.sury.org/php/README.txt).
+as linked by the [Sury's setup instructions](https://packages.sury.org/php/README.txt).
 `gpgv` returned `VALIDSIG` for fingerprint
 `15058500A0235D97F5D10063B188E2B695BD4743` on both Debian `InRelease` files.
 Trust was bootstrapped through the official HTTPS endpoint, not an independent
@@ -123,10 +124,10 @@ The bullseye compressed index SHA256 values were:
 - `main/source/Sources.gz`: `0b660d7c5e0dcb3a57fab9630e2a737b3efdceaec155a44d1ffb3c4e439d185c`.
 - `main/binary-amd64/Packages.gz`: `aab6e38bee9f5a95adadc960fea309264636e4761d81c2fb5d7c9c77a3832f50`.
 
-This establishes the listed PHP fixes, not ongoing support for the entire Debian 11
-system. Ordinary updates remain limited to existing Sury engines with candidate,
+This verifies the listed PHP fixes. Check ongoing support for the rest of the
+Debian 11 system separately. Ordinary updates remain limited to existing Sury engines with candidate,
 package-source and restart checks. Native Debian PHP requires the separate explicit
-provider-migration opt-ins; another OS suite must never be substituted for bullseye.
+opt-ins for switching PHP package publishers; another OS suite must never be substituted for bullseye.
 
 ## Comparison with PHP's own fixes
 
@@ -158,14 +159,15 @@ PHP 5.6 uses its older hash-table and TSRM APIs.
 PHP 7.0-7.2 use `zend_API.c` for singleton array creation.
 PHP 7.0/7.1 place handler resets after their older shutdown cleanup blocks.
 PHP 7.2/7.3 account for their different object-store shutdown order.
-These adaptations require vendor trust; this review did not independently prove
-all possible old-branch execution paths safe.
+The review authenticated and inspected these vendor adaptations. Their
+correctness across all old-branch execution paths relies on vendor assurance.
 
 The fix patches for 5.6, 7.2, 7.3, 7.4, 8.0 and 8.1 are byte-identical across
 the original four reviewed suites. PHP 7.0/7.1 PPA patch headers differ from Debian only
 in prose explaining the pre-existing multipart limit; their code hunks agree.
-An exact recognition rule therefore records an authenticated vendor backport,
-not a claim of new upstream support or an independent vulnerability proof.
+An exact recognition rule therefore records an authenticated vendor backport.
+The older branches remain EOL upstream, and independent exploit validation
+remains outside this review.
 
 The minimal backport has observable behavior changes: allocation failure can
 terminate a worker immediately, and session upload-progress handling is disabled.
@@ -174,7 +176,9 @@ OOM request cleanup or preservation of session upload-progress functionality.
 
 ## Review limits
 
-The review did not include exploit testing, package builds, application compatibility testing or service restarts. Binary index/source identity authenticates
-the provider's declared build relationship; it is not reproducible-build proof.
-Other architectures, suites, version revisions and provider mirrors remain
+The review authenticated Sury's declared source-to-binary relationship
+through signed indexes and package identity. Exploit testing, package builds,
+reproducible-build verification, application compatibility testing and service
+restarts remain outside its scope.
+Other architectures, suites, version revisions and repository mirrors remain
 outside this bounded review. New revisions need renewed evidence.

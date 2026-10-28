@@ -12,7 +12,7 @@ class DependencyRepairTest(unittest.TestCase):
     def fixture(self, changes=''):
         return r'''
 P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12
-P2S_DISRUPTIVE=true; P2S_ALLOW_PHP_DEPENDENCY_UPDATES=true
+P2S_DISRUPTIVE=false
 lib=libxml2; old=2.9.14-1; candidate=2.9.15-1; arch=amd64; installed_arch=amd64
 source=libxml2; installed_source=libxml2; maintainer='Debian XML Team'
 uri=https://deb.debian.org/debian; suite=bookworm; origin=Debian
@@ -48,7 +48,7 @@ p2s_command_run() {
 
     def run_plan(self, changes='', before=''):
         return self.shell(self.fixture(changes) + before + r'''
-p2s_disruptive_php_dependency_approve_plan "$P2S_WORK/plan"
+p2s_package_deb_dependency_approve_plan "$P2S_WORK/plan"
 printf 'RC=%s\n' "$?"
 printf 'APPROVED\n'; cat "$P2S_WORK/apt-approved"
 printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
@@ -62,12 +62,26 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
         self.assertIn('libxml2:amd64=2.9.15-1', out)
         self.assertNotIn('UNEXPECTED_', out)
 
-    def test_permissions_default_to_refusal(self):
-        for changes in ('P2S_DISRUPTIVE=false', 'P2S_ALLOW_PHP_DEPENDENCY_UPDATES=false',
-                        'unset P2S_ALLOW_PHP_DEPENDENCY_UPDATES', 'P2S_BACKEND=rpm',
-                        'P2S_RELEASE=10'):
+    def test_required_pcre_upgrade_is_approved_without_extra_permissions(self):
+        out = self.run_plan("lib=libpcre2-8-0; source=pcre2; installed_source=pcre2; "
+                            "old=10.42-1; candidate=10.42-2; normal_candidate=10.42-2; "
+                            "dependency='libpcre2-8-0 (>= 10.42-2)'")
+        self.assertIn('RC=0', out)
+        self.assertIn('libpcre2-8-0:amd64=10.42-2', out)
+        self.assertNotIn('UNEXPECTED_', out)
+
+    def test_unsupported_platforms_are_refused(self):
+        for changes in ('P2S_BACKEND=rpm', 'P2S_RELEASE=10'):
             with self.subTest(changes=changes):
                 self.assertIn('RC=1', self.run_plan(changes))
+
+    def test_held_libraries_are_refused(self):
+        for name in ('libxml2', 'libxml2:amd64'):
+            with self.subTest(name=name):
+                out = self.run_plan(before='printf "%s\\n" ' + name + ' > "$P2S_WORK/holds"\n')
+                self.assertIn('RC=1', out)
+                self.assertIn('held_package', out)
+                self.assertNotIn('dependency_approval:', out)
 
     def test_unsafe_candidates_do_not_expand_approved_scope(self):
         cases = ('lib=libc6', 'lib=libssl3', 'lib=systemd', 'lib=libcurl4',
@@ -117,7 +131,7 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
         body = body.replace('"$fixture_arch" "$source" ;;', '"$fixture_arch" "$source"; printf "Depends: libonig5 (>= 2.0)\\n" ;;')
         out = self.shell(body + r'''
 printf 'Inst libonig5 [1.0-1] (2.0-1 Debian:12 [amd64])\n' >> "$P2S_WORK/plan"
-p2s_disruptive_php_dependency_approve_plan "$P2S_WORK/plan"
+p2s_package_deb_dependency_approve_plan "$P2S_WORK/plan"
 printf 'RC=%s\n' "$?"
 cat "$P2S_WORK/apt-approved"
 ''')

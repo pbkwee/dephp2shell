@@ -1,6 +1,6 @@
 # Maintainer reference
 
-Implementation details and evidence requirements for `dephp2shell.sh`. Start with [usage](usage.md) and [coverage](coverage.md) for operator instructions. Vulnerability mechanisms and research are in [security background](security-background.md).
+Implementation details and evidence requirements for `dephp2shell.sh`. Diagnostic prose states the observed result, any unmeasured scope and the practical next check. Start with [usage](usage.md) and [coverage](coverage.md) for operator instructions. Vulnerability mechanisms and research are in [security background](security-background.md).
 
 ## Script organisation
 
@@ -17,7 +17,7 @@ exit statuses form the integration contract.
 | `p2s_command_*`, `p2s_work_directory_*` | Command lookup, deadlines and private temporary directories. |
 | `p2s_distro_*` | Read distribution identity from release files. |
 | `p2s_version_*`, `p2s_state_*` | Version/backport rules and aggregate patch evidence. |
-| `p2s_package_*` | Package classification, ownership, provider/source evidence and diagnostics. |
+| `p2s_package_*` | Package classification, ownership, publisher and repository evidence and diagnostics. |
 | `p2s_package_deb_*`, `p2s_package_rpm_*` | Backend-specific policy checks and guarded package updates. |
 | `p2s_disruptive_*` | Explicitly selected method checks and repository changes; shared transaction guards still apply. |
 | `p2s_repository_*` | Read repository definitions. |
@@ -47,7 +47,7 @@ See [terminal readability](usage.md#terminal-readability) for controls and prece
 The script inventories Debian/RPM PHP packages, package-owned executables and
 Apache modules, conventional alternate PHP paths, control panels, and relevant
 running processes. The readable summary groups core components by PHP version,
-provider and patch state, with a plain explanation of verified backports.
+package publisher and patch state, with a plain explanation of verified backports.
 Main-process start times are shown in UTC. Different conclusions for the same PHP
 version remain separate. Aliases and extension packages do not create repeated readable messages. Full package
 revisions, paths, version output and individual worker details stay in the manifest.
@@ -62,19 +62,16 @@ names, other ports, firewall reachability and separate network namespaces limit
 what can be inferred about whether a website is serving requests.
 After a package installation or service restart attempt, a `dss:warn:` identifies
 each previously observed web-server type no longer detected. Worker PID changes
-and Apache's `apache`/`httpd` names do not count as a stopped server. A missing
-process inventory cannot establish disappearance. The `web_server_missing`
+and Apache's `apache`/`httpd` names do not count as a stopped server. An unavailable process inventory leaves disappearance unverified. The `web_server_missing`
 manifest record preserves the comparison; it does not change the PHP CVE state
 or trigger an automatic restart. Check service logs and website availability.
 
 Each version group distinguishes installed-package evidence from discovered
 executables or Apache modules. A running-process reference is matched by runtime
 path, including resolved executable aliases, rather than by version number alone.
-These observations do not identify the websites using PHP or prove that a running
-process loaded the current files on disk. Package-only entries can be leftovers;
+Website routing and the code loaded by each process require separate checks. Package-only entries can be leftovers;
 check their dependencies before removal. Failed version probes do not supply
-executable-version evidence. Finding no deleted executables/modules does not prove
-that the running PHP code contains the security fixes.
+executable-version evidence. CVE assessment uses the full package revision or executable version as well as running-process observations.
 Package directories named `php` and cron, init and logrotate definitions are excluded
 from runtime paths. Those configuration files can share executable basenames such
 as `php-fpm` or `sw-engine`, even when the definitions have execute permissions. Missing runtime
@@ -108,9 +105,7 @@ compatibility before updating or removing old PHP packages. See
 When parallel PHP branches remain vulnerable or unverified, the final summary
 names the versions needing attention. It recommends migrating their websites,
 applications and scheduled jobs if no supported security update is available.
-Test those workloads before removing unused older packages. Changing the default
-PHP version does not necessarily switch individual websites. The advice is
-conditional: an unverified vendor backport does not establish lack of support.
+Test those workloads before removing unused older packages. Review and change each website's PHP selection explicitly. Check vendor support for unverified backports before selecting migration.
 
 One aggregate marker is emitted per phase:
 
@@ -123,23 +118,21 @@ dss:isvulnerable:afterfix: CVE_2026_109618N
 official package below its verified fixed revision or an affected unpackaged
 runtime. `N` means no vulnerable PHP was found within the inspected scope.
 `?` means a specific inventory, vendor-backport or running-worker check is incomplete.
-An unfamiliar publisher, missing automatic-update recipe or unmapped restart target
-alone does not make fixed PHP unknown. Those restrictions still block automatic
+Verified fixed PHP keeps its fixed assessment when the publisher is unfamiliar, an update recipe is missing or a restart target is unmapped. Those restrictions still block automatic
 changes when an update is needed. Deleted PHP files, failed version probes,
 package/runtime mismatches and unreadable process details remain verification gaps.
 Recognised fixed upstream releases count as fixed for packages and executable
 versions, including custom and selector-owned executables. An embedded product's
 package revision is kept separate: sw-engine/FrankenPHP require an actual PHP
 version probe, and missing probes remain unknown.
-An older upstream number alone does not establish the status of a vendor package;
-unrecognised backports remain unknown and cannot clear the server.
+Vendor packages can retain older upstream numbers. Assess their full revisions against reviewed backport rules; unrecognised backports remain unknown.
 A vulnerable runtime wins over every other result; otherwise an unknown runtime prevents clearance.
 A failed fix cannot produce an after-fix `N`, even if packages appear current.
 Unpatched packages remain a problem even if PHP is currently stopped.
 When a complete check finds no PHP engine, no PHP update recipe is needed.
 The script records `update_recipe` as `not_needed` in the manifest and suppresses
 OS update-recipe warnings. Incomplete inventories still show those warnings.
-This scoped PHP result does not establish that the operating system receives security updates.
+Operating-system security-update coverage requires a separate check.
 Each engine package retains its own fixed, vulnerable or unknown manifest result;
 readable messages group only matching versions and conclusions. For
 example, fixed PHP 8.3/8.4 alongside vulnerable PHP 8.2 still produces aggregate
@@ -147,13 +140,13 @@ example, fixed PHP 8.3/8.4 alongside vulnerable PHP 8.2 still produces aggregate
 aggregate `N` but does not override a known vulnerable result.
 
 Fixed upstream floors are 8.2.35, 8.3.36, 8.4.27 and 8.5.12, separately by branch.
-Build dates are displayed but are not proof of a fix. Prereleases and unrecognised
+Build dates are displayed as package metadata; fix classification uses reviewed version and backport rules. Prereleases and unrecognised
 versions are unknown. Debian PHP metapackages are inventoried but not mistaken
 for engine versions, including the unversioned `libapache*-mod-php` selectors.
 Panel and LiteSpeed extension/library package versions are not PHP engine versions.
-For example, `cpanel-php84-xml-serializer` version `0.21.0` does not mean PHP 0.21.0.
+For example, `cpanel-php84-xml-serializer` version `0.21.0` is the extension's version; query the PHP executable for its engine version.
 Supporting packages stay in the manifest. Bundled-runtime warnings are grouped by
-provider, and unmapped service warnings by process name, executable and service.
+package publisher, and unmapped service warnings by process name, executable and service.
 Each unmapped PID remains in the manifest and prevents an automatic update that needs its restart.
 CGI/FastCGI warnings explain that the launcher or supervisor needs identifying;
 restarting PHP-FPM alone may not replace CGI workers. `process_parent` records
@@ -165,24 +158,20 @@ separately when the executable belongs to an inventoried CLI engine package.
 They do not block package updates or become service restart targets. The script
 never terminates those tasks or restarts cron to replace them. CGI/FPM, custom
 binaries and unverified owners keep their existing restart restrictions.
-This classification does not prove that a task is finite: cron can launch a
-long-running application as well as a short scheduled job.
+Cron can launch long-running applications as well as short scheduled jobs; inspect each task's lifetime before planning replacement.
 
 `scheduled_php` records each task's PID, owning package, cron unit, numeric user ID,
 start time and kernel start ticks. Command arguments are omitted because they
 can contain credentials. Before changes, the script saves task PID/start-tick
 identities separately from web-service workers. If an original task still exists
 or its identity is unreadable afterwards, `verification_gap` keeps the result
-unknown unless a vulnerable installation already makes it vulnerable. A reused
-PID with different start ticks does not identify the old task. Deleted PHP files
+unknown unless a vulnerable installation already makes it vulnerable. A reused PID with different start ticks identifies a different process. Deleted PHP files
 remain independent evidence that a task needs replacement.
 
 The readable message explains that installed PHP can be updated while an already
 running task retains old code. Let original jobs finish, or arrange an
 application-aware stop/rerun, then use check mode again. Restarting Apache or
-PHP-FPM does not replace unrelated CLI jobs. A newer `php -v` result verifies the
-on-disk CLI executable; it does not prove that existing jobs or Apache workers
-were replaced. `/etc/cron.d/php` is a package-owned schedule definition and is
+PHP-FPM does not replace unrelated CLI jobs. A newer `php -v` result verifies the on-disk CLI executable. Verify existing jobs and Apache workers separately using their process identities and loaded files. `/etc/cron.d/php` is a package-owned schedule definition and is
 excluded from runtime paths.
 Whether stopping a service kills its children depends on its
 [systemd KillMode configuration](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html#KillMode=).
@@ -192,24 +181,21 @@ Pre-5.4 PHP stays unknown without a reviewed rule. The archived CentOS 5 stock
 engine packages `php`, `php-cli` and `php-common` at `5.1.6-44.el5_10`, with vendor
 `CentOS` and no epoch or epoch zero, are presumed vulnerable. This bounded rule
 uses the [PHP2Shell advisory](https://cert.europa.eu/publications/security-advisories/2026-018/)
-including end-of-life PHP and the obsolete vendor build. It does not claim tested
-exploitability. Its package assessment records
+including end-of-life PHP and the obsolete vendor build. Exploit testing was outside this review's scope. Its package assessment records
 `presumed_affected_legacy_vendor_build`, the summary explains the presumption,
 and both machine markers emit `Y`. Custom revisions, other vendors and other
 unreviewed builds remain unknown. CentOS 5 automatic updates remain blocked.
-Build dates alone do not classify arbitrary PHP builds. Previously saved results
+Classify PHP builds using their exact package revisions and reviewed version/backport rules. Previously saved results
 need a fresh check to change.
 
 `function_checksum` records POSIX `cksum` output for the loaded shell functions,
-or `unavailable` if that optional command is absent. It fingerprints delivered
-code even when SSH supplies source on stdin; it is not an integrity check.
+or `unavailable` if that optional command is absent. It fingerprints delivered code for run comparison even when SSH supplies source on stdin. Verify download integrity separately.
 Compare equivalent invocations and Bash versions: shell formatting and other
 loaded functions can affect it. Integrations must deploy the updated script and rerun the check to obtain new results.
 
 Actual PHP output is compared with assessed engine-owner packages; unexpected
 differences require manual review. Selector packages such as `ea-php-cli` can have
-independent versions. Their revisions do not establish the launched PHP version
-or its patch status. Assess the launched executable's PHP version independently;
+independent versions. Assess the launched executable's PHP version independently of the selector package revision;
 a recognised fixed PHP release can establish its patch status.
 
 The exact local Jessie revision `5.6.40+dfsg-0+deb8u23+rhphp2shell1` is recognised
@@ -224,15 +210,15 @@ Vendor backport rules cover matching official Debian 12/13 packages and the
 Ubuntu releases in USN-8948-1/-2, using `dpkg --compare-versions`. AlmaLinux 8/9/10
 rules accept the exact builds published in its advisory. RPM versions are never
 compared lexically or with Debian ordering. Unlisted RPM backports, unknown
-providers and later Alma builds below the upstream floor need further evidence.
+package publishers and later Alma builds below the upstream floor need further evidence.
 Rocky Linux 9's official `0:8.0.30-8.el9_8.1` engine packages are verified by
 [RLSA-2026:87151](https://errata.rockylinux.org/RLSA-2026:87151), covering both CVEs.
 The rule matches the distro, vendor, package name and exact revision; it does not
 clear another vendor or a custom rebuild with a similar version. The readable
 summary explains verified backports that retain an older upstream PHP number.
-Unknown results identify the package provider and explain when a vendor fix
+Unknown results identify the package publisher and explain when a vendor fix
 has not been verified. Full revisions remain in the manifest.
-Package metadata and version checks are not a forensic integrity check.
+Package metadata and version checks classify the reported builds. Review binary integrity and compromise indicators separately.
 
 The exact stock AlmaLinux 10 build `8.3.31-1.el10_2` (no epoch or epoch zero)
 is identified as affected for the `php`, `php-cli`, `php-common`, `php-fpm` and
@@ -252,19 +238,23 @@ Sources:
 - [AlmaLinux builds](https://almalinux.org/blog/2026-10-21-php2shell-cve-2026-109618-cve-2026-109619/)
 - [Rocky Linux 9 PHP backport](https://errata.rockylinux.org/RLSA-2026:87151)
 
-## Package providers and repository evidence
+## Package publishers and repository evidence
 
-Preserve the installed PHP provider during an ordinary security update. Switching
-between distro packages, third-party providers, control-panel builds or custom
+Machine record and blocker names containing `provider` refer to PHP package
+publishers or repositories. Their identifiers stay unchanged for integrations.
+
+Preserve the installed PHP package publisher during an ordinary security update. Switching
+between distro packages, third-party package publishers, control-panel builds or custom
 builds is a migration requiring an explicit operator choice. Never treat an
 unverified source as permission to replace it with the distro default. Keep PHP
 branches, extensions, configuration, application compatibility, licences and
 service restarts in that migration review.
 
-**Enforcement boundary:** Ordinary Sury APT updates use a bounded provider-preserving path. Mixed native and Sury engines are assessed per package; finding Sury no longer leaves the native engines outside the update. Unversioned branch selectors remain frozen.
+**Enforcement boundary:** Ordinary Sury APT updates use a bounded path that preserves the package publisher. Mixed native and Sury engines are assessed per package; finding Sury no longer leaves the native engines outside the update. Unversioned branch selectors remain frozen.
 Versioned PHP packages can be selected. Keep `php-common`/`php-pear` at their
 installed versions: an unnecessary helper upgrade can break older extension
-selectors. A genuinely required dependency change still blocks the plan. Mixed panel-vendor and Sury Debian updates are refused before
+selectors. Verified necessary upgrades of reviewed installed native libraries are included by default;
+other dependency changes still block the plan. Mixed panel-vendor and Sury Debian updates are refused before
 either updater runs.
 
 Every selected Sury package must use its normal APT candidate. The candidate
@@ -273,7 +263,7 @@ suite. Its package architecture and source-package name must match the installed
 package. Engine candidates must retain the PHP branch and have a reviewed fix
 for both CVEs. Duplicate candidate versions from another origin are refused.
 The exact approved `name:architecture=version` is passed to both simulation and
-installation. The ordinary transaction cannot add or remove packages, change providers,
+installation. The ordinary transaction cannot add or remove packages, change package publishers,
 override pins or trust settings, or install an unreviewed dependency.
 The existing supported-OS guard remains in place.
 
@@ -294,8 +284,7 @@ can terminate a worker immediately on allocation failure and disables session
 upload-progress handling.
 
 Ordinary non-Sury APT/DNF/YUM paths still have their separate transaction guards.
-Ordinary APT mode also refuses a proposed switch from non-Sury packages to Sury. These checks
-do not establish provider continuity for every other vendor. Panel updaters retain
+Ordinary APT mode also refuses a proposed switch from non-Sury packages to Sury. Package publisher continuity checks for other vendors remain specific to their package/update paths. Panel updaters retain
 the broader scope described under panel update planning. The `source_preservation`
 record distinguishes the guarded Sury path from those remaining boundaries.
 
@@ -318,7 +307,7 @@ and after for every selected engine branch. The common package does not itself
 provide that API marker. Exact fixed Sury engine candidates and all existing
 transaction/restart safeguards still apply. Reject cPanel/Plesk-managed PHP, unknown
 engine owners, missing equivalents, removals, additions and unrelated dependency changes.
-This is not an automatic PHP branch upgrade or a guarantee of application compatibility.
+Migration retains the PHP branch. Test application compatibility with the selected publisher's PHP packages.
 
 `--add-sury-repository` / `DP2S_ADD_SURY_REPOSITORY=true` additionally permits
 one matching official repository, only with both migration consents. It uses an
@@ -338,47 +327,40 @@ no automatic package rollback. An issue-specific fix does not restore OS support
 See [resolution options](resolution-options.md) for the customer-facing choices.
 
 The check collects source evidence without refreshing indexes, installing query
-tools or contacting providers:
+tools or contacting package publishers:
 
-- `package_provider`: name, full revision, architecture, inferred packaging
-  provider, evidence type, unverified historical download origin and a static
-  public provider URL when recognised. Namespaces take precedence over revision
+- `package_provider`: name, full revision, architecture, inferred package
+  publisher, evidence type, unverified historical download origin and a static
+  public package publisher URL when recognised. Namespaces take precedence over revision
   hints, then vendor/maintainer metadata. Sury-style revisions are identified
   before the Debian maintainer field; that field can be shared by Debian and
-  third-party builds. A generic PPA revision does not identify its owner.
+  third-party builds. Generic PPA revisions leave publisher identity unspecified; inspect the source metadata.
 - `repository_file` and `repository_definition`: conventional APT `.list` and
   deb822 `.sources` paths, suites, components, enabled flags and repository
   hosts; conventional YUM/DNF configuration paths, repo IDs, URLs reduced to
-  hosts and configured signature-check flags. Configured does not mean enabled,
-  reachable, trusted or used by the installed package. Missing flags retain the
+  hosts and configured signature-check flags. Enabled state is reported where specified; repository reachability, effective trust and historical package origin require separate checks. Missing flags retain the
   package manager's defaults; the script does not infer their effective values.
 - `apt_repository_cache`: offline APT release metadata, including Origin, Label,
   Suite and Codename where retained. `o=Debian`, `n=trixie` and a repository host
   describe different things: publisher, release and download endpoint.
 - `package_repository_match`: package, version, match role and cached repository
   entry. Roles distinguish installed-version matches, candidate matches, matches
-  to both and other available versions. An identical version in a repository is
-  availability evidence, **not proof it was downloaded there**. Missing matches
-  can mean stale/removed indexes or a local `.deb`; they do not prove a manual
-  installation. Cache output may reflect custom APT paths not covered by the
+  to both and other available versions. An identical version in a cached repository entry records availability at that source. Historical download origin remains unverified. Missing matches can follow stale/removed indexes or local `.deb` installation. Cache output may reflect custom APT paths not covered by the
   conventional configuration-file inventory.
 - `rpm_package_build`: name, version-release, architecture, vendor, packager,
-  source-RPM filename, build time and install time (Unix seconds). Source RPM
-  identifies a build input, not a download repository or proof of source-built
-  PHP. Retained YUM `from_repo` files produce `package_repository_record` with the
+  source-RPM filename, build time and install time (Unix seconds). The source-RPM field identifies the source package used to build the binary RPM; repository history comes from retained installation metadata. Retained YUM `from_repo` files produce `package_repository_record` with the
   exact metadata path; cache-only YUM/DNF installed-package info produces
   `rpm_repository_cache`, including `From repo` when supported. `@System` or
-  `installed` is not a provider. These records can be missing after history or
+  `installed` is not a package publisher. These records can be missing after history or
   metadata cleanup. Old tools that lack a query simply produce `source_gap`.
 - `deb_source_package`: binary name, full binary version, package architecture,
   source name, source version and evidence type. An explicit `Source` version
   preserves the distinction between source and binary-only rebuild revisions.
   An omitted source name/version falls back to the binary name/version, as
   defined by Debian package metadata. This local query needs no APT indexes.
-  It identifies installed build inputs; it does not authenticate a source archive.
+  It identifies installed build inputs. Authenticate the corresponding source archive separately.
 - `runtime_source`: an executable with no verified package owner has an unknown
-  installation method. It might be source-built, copied, bundled or managed by
-  another environment; lack of ownership does not distinguish these cases.
+  installation method. Possible installation methods include source builds, copied binaries, bundled runtimes and management by another environment; the method remains unknown.
 
 Package-cache semantics: [APT policy](https://manpages.debian.org/bookworm/apt/apt-cache.8.en.html),
 [APT cache paths](https://manpages.debian.org/bookworm/apt/apt.conf.5.en.html#DIRECTORIES)
@@ -391,12 +373,12 @@ are omitted: URL userinfo, paths, queries and fragments are removed, including
 subscription identifiers embedded in paths. Authentication/proxy fields and
 inline signing keys are not collected. All observations remain manifest data,
 not additional per-module readable warnings. A metadata failure does not change
-the PHP vulnerability verdict; origin evidence is not proof of security fixes.
+the PHP vulnerability verdict; security-fix assessment uses the package revision and reviewed fix rules.
 
-For fleet planning, group engine packages by provider hint plus repository host,
+For fleet planning, group engine packages by package publisher hint plus repository host,
 suite and RPM repo ID; retain the full package revision, architecture and evidence
-level. Investigate conflicts rather than assigning a VM one provider: a VM can
-mix distro PHP, Sury streams and panel-internal PHP. Check candidate provider
+level. Investigate conflicts rather than assigning a VM one package publisher: a VM can
+mix distro PHP, Sury streams and panel-internal PHP. Check candidate package publisher
 continuity, support entitlement, architecture and exact fixes for both CVEs before
 choosing a future update recipe.
 
@@ -417,23 +399,21 @@ URL-redacted stderr in `apt_candidate_error`. These records are emitted before
 the relevant rejection, where that query was reached. Check mode does not run
 fix-only queries or refresh repositories to obtain more evidence.
 
-### Providers to investigate
+### Package publishers to investigate
 
-Provider research checked 23 October 2026. These links identify packaging/support
-options; they do not authorise repository changes or certify every listed build.
+Package publisher research checked 23 October 2026. These links identify packaging/support
+options. Obtain approval for repository changes and verify the selected package build before installation.
 
-| Provider | Relevant scope and caveat |
+| Package publisher | Relevant scope and caveat |
 | --- | --- |
-| [Sury / ondrej PHP](https://sury.org/) | Debian PHP repository and Ubuntu `ondrej/php` PPA; alternate parallel branches. A version signature is a hint, not proof of a particular repository or support contract. |
+| [Sury / ondrej PHP](https://sury.org/) | Debian PHP repository and Ubuntu `ondrej/php` PPA; alternate parallel branches. The revision format supplies a package publisher hint; repository identity and support entitlement require their own checks. |
 | [Freexian PHP LTS](https://www.freexian.com/lts/php/) | Commercial extended PHP security maintenance for specific Debian/Ubuntu and PHP combinations, working with the Sury maintainer. Check its platform/architecture matrix and subscription terms. |
 | [Remi](https://rpms.remirepo.net/) | PHP RPM repositories and stream/parallel-install choices for supported RPM platforms. Check its configuration wizard and release-specific support; archived repositories alone do not supply ongoing fixes. |
-| [TuxCare / alt-PHP](https://docs.tuxcare.com/els-for-runtimes/php/) | Commercial maintenance of EOL PHP with distro/PHP/architecture-specific availability. alt-PHP is also associated with CloudLinux, so namespace alone does not identify the supplier or licence. |
+| [TuxCare / alt-PHP](https://docs.tuxcare.com/els-for-runtimes/php/) | Commercial maintenance of EOL PHP with distro/PHP/architecture-specific availability. CloudLinux also uses the alt-PHP namespace; check supplier metadata and licence entitlement separately. |
 | [Ubuntu security / Pro](https://ubuntu.com/security/notices) | Distro updates and extended support where the package/release is covered; ESM entitlement is separate from merely having an Ubuntu package. |
 
 TuxCare publishes trackers for [109618](https://tuxcare.com/cve-tracker/cve/details/cve-2026-109618/)
-and [109619](https://tuxcare.com/cve-tracker/cve/details/cve-2026-109619/). Use the
-exact product advisory and package build for verification; shared page widgets or
-an ELS product name are insufficient. Panel integrations need their own recipes:
+and [109619](https://tuxcare.com/cve-tracker/cve/details/cve-2026-109619/). Verify the installed package against the exact product advisory and build; record the specific product and support entitlement. Panel integrations need their own recipes:
 [cPanel's TuxCare ELS documentation](https://docs.cpanel.net/knowledge-base/third-party/tuxcare-extended-lifecycle-support-els-php/)
 and [Plesk's extension](https://www.plesk.com/extensions/tuxcare-php/).
 None of these discoveries clears an installed package without an assessed fix rule.
@@ -442,16 +422,16 @@ None of these discoveries clears an installed package without an assessed fix ru
 
 Methods reviewed 27 October 2026. This section distinguishes implemented bounded
 methods from unresolved setup-specific work. A reported blocker is a diagnosis, not a repair recipe.
-No method guarantees application compatibility or a complete-server fix.
+Test application compatibility and verify all affected server components after the selected method runs.
 
 ### Routine and disruptive operations
 
-`--fix` covers a reviewed update of the existing PHP packages, provider, branch
+`--fix` covers a reviewed update of the existing PHP packages, package publisher, branch
 and architecture, with verified service replacement. These updates can still
-interrupt requests or workers. Routine does not mean zero downtime.
+interrupt requests or workers. Plan for request or worker interruption during routine updates.
 
 `--enable-extra-fixes` permits only a separately selected method. Persistent repository
-or trust changes, provider changes, extra dependency changes and package-state
+or trust changes, package publisher changes, extra dependency changes and package-state
 repairs belong here. The flag never bypasses a failed safety check.
 Waiting, read-only diagnosis and correcting an inventory defect do not require it.
 
@@ -459,38 +439,48 @@ Waiting, read-only diagnosis and correcting an inventory defect do not require i
 
 | Blocker | Reliable automated path and next step | Classification |
 | --- | --- | --- |
-| Missing OS update recipe | Verify a maintained same-release, same-architecture package route first. Existing Sury on reviewed Debian 11 is one implemented case. Otherwise investigate a cohort-specific backport or plan OS/server migration. | Routine where the existing provider has a reviewed fix; otherwise disruptive or outside this script. No universal repair. |
-| No approved candidate | Diagnose missing security sources, holds, entitlement, unavailable builds and unreviewed fix evidence separately. Retry the current provider first; consider the explicit Sury method only when equivalent packages exist. | Diagnosis first. Candidate absence alone does not authorize any change. |
+| Missing OS update recipe | Verify a maintained same-release, same-architecture package route first. Existing Sury on reviewed Debian 11 is one implemented case. Otherwise investigate a cohort-specific backport or plan OS/server migration. | Routine where the existing package publisher has a reviewed fix; otherwise disruptive or outside this script. No universal repair. |
+| No approved candidate | Diagnose missing security sources, holds, entitlement, unavailable builds and unreviewed fix evidence separately. Retry the current package publisher first; consider the explicit Sury method only when equivalent packages exist. | Diagnosis first. Obtain approval for the specific repair or migration after diagnosing candidate availability. |
 | Repository access or trust | Retry a transient failure within a bound. A persistent repair must identify one known vendor key or same-release source definition and verify its replacement. DNS, TLS, subscription and retired-source failures need different remedies. | Persistent source/trust repair is disruptive. No generic repair-all method. |
 | Incomplete package configuration or metadata | Read exact package states and audit categories. Distinguish pending configuration, missing checksum metadata and genuine database damage. Configure or reinstall only a reviewed package set. | Disruptive repair; unrelated broken packages need a separate system-maintenance procedure. |
-| Candidate provider unverified | Retain policy errors; identify suite, source identity and every origin of the exact candidate. A recognized parser defect can be fixed without changing package policy. Wrong-suite or ambiguous candidates stay blocked until their source definitions are reviewed. | Diagnosis is routine. Source edits or migration are disruptive. Never relabel a candidate as trusted. |
+| Candidate package publisher unverified | Retain policy errors; identify suite, source identity and every origin of the exact candidate. A recognized parser defect can be fixed without changing package policy. Wrong-suite or ambiguous candidates stay blocked until their source definitions are reviewed. | Diagnosis is routine. Source edits or migration are disruptive. Never relabel a candidate as trusted. |
 | Script transfer or launcher failed | Fix the runner to capture transfer and exit errors and invoke an installed compatible Bash. Retry check mode first. Do not change the customer's login shell. | Runner correction; no PHP repair flag. |
 | Restart mapping unavailable | Add support only for an identified standard package service with verified configuration. Application-specific Supervisor workers still need the documented stop, fix, restore and check procedure. | Verified standard restarts are routine but interrupt service. Custom application shutdown needs a separate procedure. |
 | Package-manager lock | Wait for a bounded time, then repeat inventory and preflight. If still busy, report the owner and stop. Never delete a lock or kill the other package job. | Waiting is not disruptive. |
 | Insufficient space | Report affected mounts and distinguish reclaimable cache from a disk/filesystem needing growth. Do not delete arbitrary files or cached recovery packages. | No general automatic repair. Disk growth or selected cleanup needs a separate reviewed procedure. |
 | Fixed host PHP with isolated PHP unverified | Identify the container/chroot/image and its deployment owner. Update or rebuild that environment, then verify its PHP separately. | Disruptive application deployment outside the host-package method. Repeating host updates does not fix it. |
 | Runtime or package ownership unverified | Extend detection for a proven standard package layout. Custom builds need their own reproducible update and restart procedure. | Detection can be routine; arbitrary runtime replacement is not supported. |
-| Dependency transaction exceeds scope | First avoid unnecessary helper/selector updates. If extra dependencies remain necessary, identify their complete exact change set and impact before allowing a bounded dependency method. | Disruptive; removals, replacements and broad system upgrades remain separate decisions. |
+| Dependency transaction exceeds scope | Avoid unnecessary helper/selector updates. Normal APT fixes include verified necessary upgrades of reviewed installed native libraries from matching official OS sources. Other dependency changes need manual review. | Removals, additions, replacements and broad system upgrades remain separate decisions. |
 | Partial update or restart | Reinventory package state and running workers before retrying. Verify applications and continue only from the observed state. Do not infer rollback from a failed command. | Recovery; classify each remaining operation separately. |
 | Panel, CageFS or other isolated PHP | Use a verified vendor procedure for that product, version and entitlement. Check the host and isolated copies afterwards. | Potentially broader than PHP; no blanket permission to edit panel or tenant configuration. |
 | Other incomplete inventory | Retry a transient process race; retain unreadable evidence as unknown. Diagnose persistent failures before selecting an update method. | Read-only diagnosis. No force-clear option. |
 
 A missing `md5sums` file is different from an unpacked package awaiting
-configuration. Old packages may lack checksum metadata. It is not sufficient
-reason to run package scripts or reinstall unrelated libraries. Review that
+configuration. Old packages may lack checksum metadata. Select a repair from the exact package state and audit category; keep unrelated libraries outside that repair. Review that
 classification against real package states and historical fixtures first.
-Do not create integrity metadata by hashing the current files and then treat
-those hashes as proof of the original package contents.
+Hashes of current files record their present contents. Compare them with authenticated package metadata when verifying original package contents.
 See [Debian package metadata](https://www.debian.org/doc/manuals/debian-handbook/sect.package-meta-information.en.html)
 and [checksum-file scope](https://manpages.debian.org/bookworm/dpkg-dev/deb-md5sums.5.en.html).
+
+### Default native-library upgrades
+
+Ordinary APT `--fix` includes upgrades of reviewed installed native amd64 libraries:
+`libpcre2-8-0`, `libonig5`, `libargon2-1`, `libxml2`, `libzip4`/`libzip5`
+and `libsodium23`. Each upgrade needs versioned, non-alternative PHP dependency
+proof, including transitive edges, plus matching binary/source/architecture,
+a newer normal candidate exclusively from matching official OS sources and no
+library hold. Pin exact approved candidates, repeat the simulation and recheck
+scope, versions and architecture before installation. Additions, removals,
+replacements, downgrades, RPM and base-system library changes remain excluded.
+Check-mode assessments use cached metadata only and perform no package mutations.
+See the [operator limits and risks](resolution-options.md#allow-the-native-libraries-php-needs).
 
 ### Method flags
 
 For an operator deciding whether to grant permission, use the
 [option effects and risks](resolution-options.md#compare-the-options). It explains
 file changes, package/key download sources, benefits, interruption risks and recovery.
-The table below retains the implementation limits; those checks do not establish
-that package setup scripts or applications will succeed on a particular server.
+The table below describes implementation limits. Package setup scripts and applications still require verification on the target server.
 
 The options below are implemented. Each method has a bounded supported subset;
 selecting an option does not authorize general system repair.
@@ -507,9 +497,8 @@ manifest method identifiers retain their existing internal names.
 | [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | `DP2S_ADD_SURY_REPOSITORY=true` | Implemented. Also requires migration consent; add only the matching official source and verified dedicated key. |
 | [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | `DP2S_REFRESH_SURY_SIGNING_KEY=true` | Refresh only the standard package-owned Debian Sury signing keyring, with a verified fingerprint and persistent backup. No source rewrite; custom and extrepo layouts stay blocked. |
 | [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | `DP2S_ADD_OS_SECURITY_REPOSITORY=true` | Add only matching main security metadata using the existing packaged archive keyring. No Virtualmin or general source rewrite method exists. |
-| [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching source/provider identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
-| [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | `DP2S_REINSTALL_PHP_SAME_VERSION=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged provider, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
-| [`--upgrade-required-php-libraries`](resolution-options.md#allow-the-native-libraries-php-needs) | `DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES=true` | Prove versioned non-alternative PHP dependency requirements, including transitive edges, before allowing installed native amd64 library upgrades: libpcre2-8-0, libonig5, libargon2-1, libxml2, libzip4/libzip5 and libsodium23. Pin normal candidates from matching official native sources, rerun simulation and recheck scope, versions and architecture. No additions, removals, replacements, downgrades, RPM or base-system library changes. |
+| [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching repository and package publisher identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
+| [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | `DP2S_REINSTALL_PHP_SAME_VERSION=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged package publisher, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
 
 `--wait-for-package-lock SECONDS` / `DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS`
 has its [operator explanation](resolution-options.md#wait-for-another-package-operation) in the option guide. It
@@ -536,8 +525,8 @@ They form one contiguous group in the delivered script.
 The package methods are `p2s_disruptive_package_configure_pending_php` and
 `p2s_disruptive_package_reinstall_exact_php`. Repository methods dispatch through
 `p2s_disruptive_repository_apply_recipe`. The shared-library approval function is
-`p2s_disruptive_php_dependency_approve_plan`; its actual installation uses the
-shared APT backend and repeats the permission checks.
+`p2s_package_deb_dependency_approve_plan`; its actual installation uses the
+shared APT backend and requires fix mode after the pinned transaction checks.
 
 Keep `p2s_package_deb_update` and the package candidate/transaction validators
 shared. They serve routine and explicitly enabled methods, so a `regular` prefix
@@ -553,9 +542,14 @@ Function names are a review aid, not authorization.
 preflight. A cached call to the shared APT backend sets `P2S_MODE=check`, disables
 binary cache paths, skips refresh and source addition, and returns before install.
 Alternative assessments run in subshells and do not change current blocker keys.
-Only a proven dependency plan recommends library permission. Standard Sury key
+A proven dependency plan recommends ordinary `--fix`, including required native-library upgrades. Standard Sury key
 replacement requires local expiry/fingerprint evidence before recommendation.
 Missing-source suggestions remain explicitly conditional on future candidates.
+
+After an unresolved fix, plain `--fix` recommendations are suppressed in both readable output and machine
+records. Fresh checks can still recommend a specific additional repair. When no
+additional method is identified, the result directs the operator to the detailed
+log, remaining PHP findings and a check after resolving the blocker.
 
 Repairs may handle only their matching persisted blocker keys. Other OS, runtime,
 service or ownership blockers cannot be cleared by selecting repair flags. The
@@ -571,7 +565,7 @@ No automatic package rollback is provided.
 
 1. Refine package-audit categories and candidate diagnostics; fix runner failures.
    Retry checks and measure remaining blockers before estimating new coverage.
-2. Validate routine fixes and existing-provider updates on disposable matching
+2. Validate routine fixes and updates from existing package publishers on disposable matching
    systems, including old interpreters. Verify fixed packages, worker replacement
    and application health. No source changes are needed for this stage.
 3. Extend repository repair only through named recipes from captured evidence.
@@ -593,22 +587,17 @@ No automatic package rollback is provided.
 
 For every method, report diagnosis, selected operation, remaining prerequisites,
 actual package/service changes and final verification separately. State when no
-verified automatic repair exists. Never treat a successful command as proof that
-all PHP installations or applications are healthy.
+verified automatic repair exists. After a successful command, verify the affected PHP installations and applications.
 
 ## Automatic fix scope
 
 The ordinary update strategies use APT for recognised Debian/Ubuntu releases,
 DNF/YUM for recognised RPM-based releases, the existing Sury source when installed
 Sury PHP is detected, and the recognised cPanel/Plesk vendor updater where required.
-They do not add repositories, migrate PHP providers or perform an OS upgrade.
+They do not add repositories, switch PHP package publishers or perform an OS upgrade.
 The separately opted-in Sury migration is described above.
 Each path still requires its package, transaction and restart checks to pass.
-A missing update recipe means this script has no implemented procedure for that
-OS release; it does not establish the OS support status or the absence of fixes
-elsewhere. No approved candidate means no package met this script's checks in the
-configured sources, rather than proof that no fixed package exists. An unverified
-build means the available evidence cannot establish whether it includes the fixes.
+A missing update recipe means this script has no implemented procedure for that OS release; check package publisher support and maintained package routes separately. No approved candidate means no package met this script's checks in the configured sources. An unverified build has an unknown backport status and needs exact revision or build evidence.
 Keep these limitations and the specific blockers factual in public messages;
 do not assign the work to a hosting provider or an unspecified support service.
 Separately, the final unresolved result offers an optional no-cost, no-obligation
@@ -622,7 +611,7 @@ CVE result. `not_needed` means no PHP update is needed within the checked scope.
 `blocked` means the current script's local prerequisites fail or inventory has
 already identified a blocker. `eligible_to_attempt` means the inventory identifies
 vulnerable PHP, has no unresolved inventory gaps, and passes local prerequisites.
-`unknown` means no local blocker was found but a complete fix cannot be predicted.
+`unknown` means no local blocker was found and fix feasibility remains unresolved.
 These assessments appear as readable messages and `dss:manifest:patchability`
 records, including the inventory state and evidence limits.
 
@@ -661,7 +650,7 @@ Dependency additions, removals, unknown plan formats and failed test transaction
 require manual review. Metadata refresh and package operations have time limits.
 DNF's successful `Nothing to do.` result is recorded as `no_updates`, with no
 install requested. It permits pending restart work; otherwise an unverified build
-gets a no-update-candidate warning. No available upgrade is not proof of a fix.
+gets a no-update-candidate warning. The installed build retains its assessed fixed, vulnerable or unknown status when no upgrade is available.
 Automatic mutation requires a timeout implementation with a kill-after option;
 alternatively, an embedded Bash/sleep watchdog supervises the command's process
 group, with TERM followed by KILL. Perl is an inspection-only last resort when
@@ -697,8 +686,7 @@ web-server processes that map PHP modules. A replaced nginx or Apache executable
 with successfully inspected mappings and no PHP module produces a separate
 maintenance advisory. It does not force an unknown PHP result or trigger a
 PHP-FPM restart. Failed/unreadable map inspections remain unknown; deleted PHP
-modules and PHP executables retain their restart requirement. Anonymous mappings
-such as `/dev/zero (deleted)` do not establish that PHP code needs replacement.
+modules and PHP executables retain their restart requirement. Anonymous mappings such as `/dev/zero (deleted)` are excluded from PHP replacement requirements.
 If a process disappears during inspection, its exit is recorded without creating
 a verification gap. An unreadable process that remains present still needs review.
 `web_restart_advisory` preserves each affected PID, process name and executable;
@@ -718,17 +706,27 @@ lock name is retained so old and renamed scripts cannot patch concurrently.
 
 ## APT locks and index-download space
 
+Before check/fix results and before fix operations, the script warns when an
+APT/dpkg kernel write lock has an owner running for at least one hour. It matches
+`/proc/locks` device/inode records to the four standard APT/dpkg lock paths.
+`package_manager_long_running_lock` records the path, PID, parent PID, process
+name and elapsed runtime. Arguments are omitted. Runtime is measured from process
+start; lock acquisition time is unavailable. The warning includes commands to
+recheck the owner and send `kill -TERM PID` after confirming it is stuck. No job
+is stopped, no lock file is removed and warning collection leaves update eligibility
+unchanged. Missing/unreadable process or lock metadata yields no age warning;
+APT/dpkg still enforce locking. Existing wait and failure diagnostics remain active.
+
 `package_manager_busy` identifies lock contention separately from repository or
 network failures. When APT reports a numeric holder PID, `package_manager_lock_holder`
 records its parent, elapsed time, UTC start time, state and command name when `ps` supports
 that query. `package_manager_lock_service` records a readable service association.
-Arguments are omitted because they can contain credentials. Inspect the owner
-and age before stopping a job; a held lock does not by itself establish a hang.
+Arguments are omitted because they can contain credentials. Inspect the owner's age and progress before stopping a job; the lock record identifies its current owner.
 The script never kills competing package operations or removes lock files.
 See the [Debian dpkg lock guidance](https://wiki.debian.org/Teams/Dpkg/FAQ#What_can_be_done_when_the_dpkg_lock_is_held.3F).
 
 `disk_full` identifies write failures caused by space, inode or quota exhaustion.
-A minimum free-space preflight cannot predict all metadata download/unpack costs.
+Actual metadata downloads and unpacked files can require more space than the preflight minimum.
 APT `Contents` maps support file searches, for example through apt-file. They
 can be hundreds of megabytes each and are not required to select PHP updates.
 The fix refresh uses command-only `DefaultEnabled=false` settings for standard
@@ -749,7 +747,7 @@ vacuuming, disk growth and stopping scheduled APT jobs are outside this recipe.
 APT preferences can block a security update even when the correct repository and
 newer PHP versions are visible. A reported version priority of `-1` prohibits
 installing that matching version; the repository row underneath can still say
-`500`. An empty `apt-mark showhold` does not rule out pinning.
+`500`. Inspect APT preferences for pins separately from the `apt-mark showhold` result.
 
 One observed Virtualmin setup had this rule in
 `/etc/apt/preferences.d/debian-virtualmin-restricted-packages`:
@@ -764,8 +762,8 @@ With mod_php already installed, its exact-version dependency on `php8.2-common`
 prevented other PHP components from upgrading. APT proposed removing the Apache
 module instead. `--no-remove` correctly rejected that plan. The same APT mechanism
 applies to Ubuntu and other APT-based systems; it is not specific to Virtualmin.
-A pin can also freeze a version, favour another provider or release, or affect
-unrelated security updates. Its filename alone does not establish its effective scope.
+A pin can also freeze a version, favour another package publisher or release, or affect
+unrelated security updates. Read the pin's package and release selectors to determine its effective scope.
 
 The script reports `apt_package_candidate` and `apt_version_priority` separately
 from repository matches. Installed PHP packages with no candidate produce a
@@ -788,12 +786,11 @@ Truncation and unreadable files are identified. Password/proxy fields are omitte
 URLs are redacted. No plugins run for the static policy inspection.
 
 Do not remove pins, clear version locks, disable exclusions or switch module streams
-automatically. These may protect the application's handler, provider or compatibility.
+automatically. These may protect the application's handler, package publisher or compatibility.
 If an installed Apache PHP module is still used, review a narrowly scoped policy
 change and simulate updates to the matching installed PHP package set without removals.
 If it is unused, verify every site's PHP handler before planning removal and
-retaining/restoring the desired panel policy. Having FPM installed does not prove
-that no site uses mod_php. These policy or handler changes require operator review.
+retaining/restoring the desired panel policy. FPM and mod_php can serve different sites on the same server; inspect every site's PHP handler. These policy or handler changes require operator review.
 The `php` metapackage is not the engine version; `apt-get upgrade php` can also update
 many unrelated system packages. Use explicit installed package names for a PHP-only plan.
 
@@ -803,7 +800,7 @@ as `php_startup_warning` and a readable warning, separately from CVE state.
 After an installation attempt, active service configurations are validated again
 using the newly observed FPM masters. A failed validation prevents a clean fix result.
 The `-n` engine version probes intentionally skip php.ini and configured extensions;
-these checks do not establish that every application or CLI extension works.
+test applications and CLI extensions with their actual configuration after maintenance.
 
 References, checked 24 October 2026 NZDT:
 [Debian APT preferences](https://manpages.debian.org/trixie/apt/apt_preferences.5.en.html),
@@ -816,18 +813,17 @@ and [Virtualmin PHP execution modes](https://www.virtualmin.com/docs/server-comp
 
 Fix mode supports these panel paths when the OS, panel version, installed updater
 and remaining safety checks permit an attempt. Check mode inventories the panel
-and updater without running the updater. A panel directory can be a leftover;
-its presence alone does not establish a working or supported installation.
+and updater without running the updater. A panel directory can be a leftover. Check its installed updater, version and support status before choosing a panel update path.
 
 | Panel | Automatic fix path and scope |
 | --- | --- |
-| cPanel 110 and later | Run the installed `upcp --security` without `--force`, then update the explicit installed website PHP package set, including EasyApache. Exclude `cpanel-php*` and `sw-engine*` from that ordinary package pass: the panel updater owns those internal components. Respect update preferences. An update attempt does not establish that the installed cPanel release still receives security fixes. |
+| cPanel 110 and later | Run the installed `upcp --security` without `--force`, then update the explicit installed website PHP package set, including EasyApache. Exclude `cpanel-php*` and `sw-engine*` from that ordinary package pass: the panel updater owns those internal components. Respect update preferences. Check the installed cPanel release's security-support status before planning the update. |
 | Plesk 18 | Run the installed `plesk installer --select-release-current --upgrade-installed-components`. Do not follow it with an ordinary APT/DNF/YUM PHP transaction. The installer can update databases, web servers and other installed components. This is broader than PHP-only maintenance. |
 | Virtualmin | Permit the ordinary explicit PHP package update and supported service restarts. Virtualmin's presence alone is not a blocker or a verification gap. Check each virtual server's PHP selection before removing or migrating old PHP branches. |
 
 `--select-release-current` retains the selected Plesk release instead of requesting
 the latest release. It does not make the component update security-only or promise
-that every dependency, provider or PHP branch remains unchanged. The ordinary panel path does
+that every dependency, package publisher or PHP branch remains unchanged. The ordinary panel path does
 not rewrite package sources or website PHP selections. Vendor dependency decisions
 and enabled-repository candidates still require review.
 
@@ -835,8 +831,7 @@ CloudLinux, CageFS, LiteSpeed, unsupported operating systems, custom PHP and
 unmapped service restarts retain their existing blockers. Other detected panels
 without a reviewed recipe remain blocked. Vendor commands can fail after partial
 changes, so retain their output and inspect service health before retrying.
-Successful updater exit status is not proof of a fix: the post-update PHP and
-running-process inventory determines the result. Panel-internal PHP, WP Toolkit
+The post-update PHP and running-process inventory determines the fix result; updater exit status is recorded separately. Panel-internal PHP, WP Toolkit
 and independent-version `sw-engine` builds can still require separate verification.
 cPanel output containing an explicit fatal update error or a nonzero child-command
 error also fails the attempt, even when `upcp` returns zero. Routine certificate
@@ -859,7 +854,7 @@ Primary references, checked 24 October 2026 NZDT:
 - [cPanel PHP2Shell advisory](https://support.cpanel.net/hc/en-us/articles/44397389677335-Critical-PHP-Security-Release-CVE-2026-109618-and-CVE-2026-109619)
   and [EA4 change log](https://docs.cpanel.net/changelogs/easyapache-4-change-log-25/)
   confirm backports for EA PHP 7.4, 8.0 and 8.1. These streams are not automatically
-  unfixable because their upstream version is old. Verify the full provider build.
+  unfixable because their upstream version is old. Verify the full package publisher build.
 - [cPanel upcp options](https://docs.cpanel.net/whm/scripts/the-upcp-script/)
   and [update configuration](https://docs.cpanel.net/knowledge-base/cpanel-product/the-cpanel-update-configuration-file-cpupdate-conf/)
   describe update scope and preferences.
@@ -879,7 +874,7 @@ Primary references, checked 24 October 2026 NZDT:
 in `embedded_runtime_package` and uses executable output for the PHP summary.
 It does not emit PHP 6.61.1 or compare that product number with the embedded PHP
 version. `runtime_assessment` keeps both values and the independent-version reason.
-A `sw-engine` package alone does not prove that Plesk is installed. See
+Both Plesk and cPanel WP Toolkit use `sw-engine`; identify the panel from its installation paths and updater. See
 [cPanel's sw-engine explanation](https://support.cpanel.net/hc/en-us/articles/1500011785822-How-To-Enable-Debug-Level-Logging-In-sw-engine).
 
 Disk preflight records the checked `df -Pk` output as `disk_preflight`. Low-space
@@ -925,8 +920,7 @@ includes panel-internal PHP (`cpanel-php*`, `sw-engine`), EasyApache, alt-PHP,
 Software Collections, DirectAdmin/aaPanel paths, bare `lsphp`, and FrankenPHP's
 embedded PHP version. A package owner outside the PHP inventory requires a
 separate update procedure; its executable's PHP version is assessed independently.
-Finding `/etc/cagefs` requires a separate review; the directory alone does not
-establish that CageFS is active. If applications use CageFS PHP copies, those
+Finding `/etc/cagefs` requires a separate review of CageFS activity and the applications using it. If applications use CageFS PHP copies, those
 copies need refresh and verification as well as the host packages.
 
 Supervisor-managed PHP applications and workers remain blocked because the script
@@ -971,7 +965,7 @@ warnings are grouped by executable/process type and detected container platform;
 per-PID `process_scope_review` and `verification_gap` records remain available.
 Container image enumeration is outside the check. Package-owned Software
 Collection paths are inventoried. An unmapped service blocks an automatic update
-that needs its restart; a missing provider backport rule keeps that PHP version
+that needs its restart; a missing package publisher backport rule keeps that PHP version
 unknown. These are separate restrictions.
 
 Installed RPM/DEB changelog mentions of either CVE are collected as supporting
@@ -980,10 +974,9 @@ those mentions nor build dates change the verified package rules. See the
 [public automation research](security-background.md#public-automation-research-22-october-2026)
 for sources and recipes still needing work.
 
-Bounded discovery cannot establish the absence of PHP in every home directory,
-chroot, mounted image or renamed embedded application. `N` is not a compromise
+Discovery covers the configured paths and process scope. Review other home directories, chroots, mounted images and renamed embedded applications separately. `N` is not a compromise
 assessment or an application health check. Check actual websites, APIs and panels
-after maintenance; a running process alone does not establish application health.
+after maintenance; verify actual application responses as well as process health.
 
 ## Machine manifest
 
@@ -1004,7 +997,7 @@ Records include `schema`, `observed_at`, `kernel`, `hostname`, `uptime`, `disk`,
 `backport_mention`, `bash`, `capability`, `command`, `blocker` and `aggregate`.
 Additional diagnostic records preserve the reasons behind readable summaries:
 
-- `repository_layout`: source file, recognised provider, layout, enabled state
+- `repository_layout`: source file, recognised package publisher, layout, enabled state
   and whether a Sury suite matches a reviewed installed Debian release. APT list
   lines, Deb822 continuation fields and Virtualmin RPM definitions are inspected.
   The classification omits URLs, credentials and inline signing keys.
@@ -1012,27 +1005,25 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   a disabled/unknown-state review marker. Modern sources get no legacy warning.
   Extrepo is recognised by `extrepo_sury.sources` or its
   `/var/lib/extrepo/keys/sury.asc` signing path; edited layouts still exclude
-  package-owned Sury key repair. Detection does not establish a working manager
-  installation. See [repository repair advice](resolution-options.md#repository-repair-advice).
+  package-owned Sury key repair. Review the detected manager's installed tools and configuration before running repository repair. See [repository repair advice](resolution-options.md#repository-repair-advice).
 - `panel_path`: cPanel core and updater paths, plus a detected CloudLinux selector
   directory. Records include file type, readability, executability, symlink target
   and resolved path when `readlink` is available. Missing and inaccessible paths
-  share a status; directory presence alone does not establish an active panel.
+  share a status; panel activity requires a separate process and updater check.
 - `runtime_path`: the same file metadata and queried package owner for missing,
   non-executable or failed-probe PHP files. An existing executable returning 127
-  can have a missing interpreter, loader or wrapper target; the exit alone does
-  not identify which component is absent.
+  can have a missing interpreter, loader or wrapper target; inspect the startup diagnostic to identify the missing component.
 - `package_install_status`: backend, PHP package name, architecture and package
   installation status, including records retained only for configuration files.
   RPM inventory reports installed packages; the limited `dpkg -l` fallback does
   not expose removed or incomplete package states.
 - `package_classification`: package name, supporting/selector classification and reason.
-- `package_assessment`: name, full version, architecture, vendor, provider, state,
+- `package_assessment`: name, full version, architecture, vendor, package publisher, state,
   rule reason and upstream-only state. `package_state` retains its existing format.
 - `runtime_identity`: observed path, resolved path, owner, full package version,
-  provider and ownership reason. The original `runtime` record is unchanged.
+  package publisher and ownership reason. The original `runtime` record is unchanged.
 - `runtime_assessment`: path, owner, reported PHP version, package version,
-  provider, assessed state, reason and upstream-only state.
+  package publisher, assessed state, reason and upstream-only state.
 - `runtime_probe` and `runtime_error`: executable path, version-probe exit status
   and separately prefixed startup diagnostics when the probe fails.
 - `runtime_observation`: path and observed evidence type (`executable`, `module`
@@ -1046,8 +1037,7 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   cgroup (or `unidentified`) and the cgroup evidence. Readable warnings name a
   container product only when that process's cgroup supports the identification.
   Filesystem and mount-namespace details remain in `process_scope`. PHP in these
-  separate environments requires its own update and restart review; host package
-  updates cannot establish its safety.
+  separate environments requires its own update and restart review; verify the PHP packages and workers inside each affected environment after its update.
 - `service_mapping`: PID, process name, executable, observed service and missing-restart reason.
 - `process_summary`: matching process count and pending deleted-file restart flag.
 - `inventory_gap`: missing package-manager support or unavailable package inventory.
@@ -1090,4 +1080,4 @@ DP2S_TEST_BASH=/path/to/bash DP2S_TEST_AWK=/path/to/awk \
 
 The compatibility suite starts harmless child processes to test command deadlines and cleanup, including a child that ignores TERM. Tests for old interpreters need those interpreters to be installed separately; they are development dependencies only.
 
-Before release, review the selected source files and history for credentials and identifying server data. Keep the deliverable self-contained. Record a release version and checksum; the function checksum in a run is diagnostic, not a download signature. Run check-only canaries on the actual distribution/runtime families and verify fixes on disposable instances before unattended deployment.
+Before release, review the selected source files and history for credentials and identifying server data. Keep the deliverable self-contained. Record a release version and checksum; use the function checksum to compare runs, and verify download authenticity separately. Run check-only canaries on the actual distribution/runtime families and verify fixes on disposable instances before unattended deployment.

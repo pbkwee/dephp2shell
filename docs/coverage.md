@@ -6,7 +6,7 @@ DePHP2Shell assesses CVE-2026-109618 and CVE-2026-109619 in the PHP installation
 
 The inventory includes Debian/RPM PHP packages, package-owned executables and Apache modules, conventional alternative paths, recognised hosting-panel paths, and relevant running processes. It also reports operating-system identity, control-panel observations and web listeners on ports 80 and 443.
 
-`php -v` alone is insufficient: command-line PHP can differ from the PHP serving a website. Each discovered PHP branch is assessed separately. A recent build date or process start time does not establish that the security fixes are present.
+`php -v` reports command-line PHP, which can differ from the PHP serving a website. Each discovered PHP branch is assessed separately against reviewed version and vendor-backport rules. Build dates and process start times describe when files were built and processes launched; fix status uses the reviewed rules.
 
 Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older distribution or vendor versions need a matching reviewed backport rule. Unrecognised older builds remain unverified.
 
@@ -15,7 +15,7 @@ Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older 
 | Setup | Automatic update approach |
 | --- | --- |
 | Supported Debian/Ubuntu | Refresh APT metadata and simulate a targeted installed-PHP update. Reject removals and unapproved new dependencies. Preserve local package configuration. |
-| Existing Sury/ondrej PHP | Use an authenticated, recognised fixed candidate from the existing provider, retaining the source package, branch and architecture. |
+| Existing Sury/ondrej PHP | Use an authenticated, recognised fixed candidate from the existing package publisher, retaining the source package, branch and architecture. |
 | Supported RPM systems | Check the proposed transaction, then use DNF or YUM. |
 | Compatible Virtualmin | Use the existing package-manager procedure. |
 | Supported cPanel | Request critical panel security updates, then update installed website PHP packages separately. |
@@ -23,13 +23,15 @@ Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older 
 
 Configuration checks and service restarts require a recognised safe procedure. Unmapped launchers, incompatible panel setups, package conflicts or unverifiable transactions can block an automatic fix.
 
-Separate disruptive options cover bounded repository/package repairs and necessary upgrades of reviewed installed native libraries. These do not authorize general system repair. Check mode recommends matching options using installed/cached evidence. See [resolution options](resolution-options.md).
+Ordinary APT fixes include proven necessary upgrades of reviewed installed native
+libraries from matching official OS sources. Separate disruptive options cover
+bounded repository/package repairs. These do not authorize general system repair. Check mode recommends matching options using installed/cached evidence. See [resolution options](resolution-options.md).
 
-Normal updates keep each PHP package with its existing provider and preserve unrelated PHP selectors. The tool adds no persistent pins or holds. A native-to-Sury provider change requires a separately enabled `--enable-extra-fixes` method and a compatible proposed transaction. Adding the matching official source requires a further repository opt-in. See [resolution options](resolution-options.md) and [the bounded Sury evidence](sury-backport-evidence.md) for exact recognised older builds.
+Normal updates keep each PHP package with its existing package publisher and preserve unrelated PHP selectors. The tool adds no persistent pins or holds. A native-to-Sury package publisher change requires a separately enabled `--enable-extra-fixes` method and a compatible proposed transaction. Adding the matching official source requires a further repository opt-in. See [resolution options](resolution-options.md) and [the bounded Sury evidence](sury-backport-evidence.md) for exact recognised older builds.
 
 ## Separate work
 
-Custom PHP builds, unsupported package branches, CloudLinux/CageFS/LiteSpeed combinations and embedded runtimes can need a separate vendor or administrator procedure. Detecting a panel or distribution does not guarantee that an automatic fix exists.
+Custom PHP builds, unsupported package branches, CloudLinux/CageFS/LiteSpeed combinations and embedded runtimes can need a separate vendor or administrator procedure. Automatic fixes require a supported update procedure for the detected setup.
 
 PHP running inside containers or isolated environments needs checking and updating there. Installed container software alone is an observation. The script does not inventory all container images or rebuild them.
 

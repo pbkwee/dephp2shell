@@ -41,11 +41,11 @@ bash /root/dephp2shell.sh --check
 
 ## Why does an old PHP version count as patched?
 
-Distribution and vendor packages can backport security fixes while retaining an older upstream version number. The complete package revision and its provenance matter. DePHP2Shell recognises reviewed fixes; it does not infer a fix from a build date or provider name alone.
+Distribution and vendor packages can backport security fixes while retaining an older upstream version number. The complete package revision and its provenance matter. DePHP2Shell recognises fixes through reviewed version and vendor-backport rules. Build dates and package publisher names are supporting observations.
 
 ## Will it replace my PHP packages with Sury?
 
-Normal `--fix` preserves package providers. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source and branch.
+Normal `--fix` preserves package publishers. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source and branch.
 
 An explicitly enabled `--enable-extra-fixes` method can attempt a closely matched native-to-Sury change. Read the [resolution options](resolution-options.md) before using it. Unsupported setups remain blocked; application compatibility still needs testing.
 

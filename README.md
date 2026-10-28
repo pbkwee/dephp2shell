@@ -44,11 +44,14 @@ sudo bash dephp2shell.sh --fix
 
 The tool checks prerequisites, attempts supported package or panel updates, restarts supported services where needed, then checks again. Updates and restarts can interrupt applications. Plesk's component updater can also update databases, mail and web servers.
 
-Normal `--fix` preserves existing package providers and PHP branches. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
+Normal `--fix` preserves existing package publishers and PHP branches. APT updates
+include proven necessary upgrades of reviewed, already-installed native libraries
+from matching official OS sources. Other applications may share those libraries
+and need testing afterwards. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
 
 A separate, explicitly enabled `--enable-extra-fixes --migrate-php-to-sury` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
 
-A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. It is not a website test, a compromise assessment or a general security audit. Older operating systems can still need migration even after PHP is fixed.
+A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. Website testing, compromise assessment and a general security audit remain separate work. Older operating systems can still need migration even after PHP is fixed.
 
 ## Development
 
@@ -74,4 +77,4 @@ DePHP2Shell was developed by the team at [RimuHosting](https://rimuhosting.com/)
 
 Keeping a public server secure protects its users and everyone else who could be harmed if that server is taken over. We see that care as part of running a hosting service, and as a responsibility shared by everyone operating public services.
 
-RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or server migration options, including for servers hosted elsewhere. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.
+RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or migration to a server with a supported OS and PHP, including for servers hosted elsewhere. A server migration can stay with your current hosting provider. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.

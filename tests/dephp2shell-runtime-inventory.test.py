@@ -529,7 +529,7 @@ printf 'STATE=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_UNKNOWN" "$P2S_BLOC
 ''')
         self.assertIn('STATE=N|UNKNOWN=false|BLOCKED=false', out)
         self.assertIn('fixes verified for both PHP2Shell vulnerabilities', out)
-        self.assertIn('The PHP package provider added the security fixes without changing the PHP version', out)
+        self.assertIn('The PHP package publisher added the security fixes without changing the PHP version', out)
         self.assertNotIn('dss:warn:', out)
         self.assertNotIn('No recognised web-server', out)
 
@@ -1136,7 +1136,7 @@ printf 'UNKNOWN=%s|BLOCKED=%s|VULNERABLE=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED" "$P
         self.assertIn('dss:manifest:php_version:beforefix|', out)
         self.assertIn('Jun 3 2026 14:41:23', out)
         self.assertRegex(out, r'dss:manifest:runtime_assessment:beforefix\|.*\|8[.]5[.]7\|.*\|[?]\|.*\|upstream=Y')
-        self.assertIn('A version number alone cannot confirm a vulnerability', out)
+        self.assertIn('The upstream version is in the affected range', out)
         self.assertNotIn('bundled or custom build', out)
 
     def test_process_read_failure_explains_unknown_without_claiming_update_failed(self):

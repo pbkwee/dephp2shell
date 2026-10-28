@@ -10,7 +10,12 @@ No arguments also selects `--check`. `--help` prints usage without inspecting th
 
 ## Options
 
-For repair and provider permissions, read the
+PHP package publishers supply PHP builds: the Linux distribution, a third-party
+repository such as Sury/ondrej, or a control-panel vendor. Switching PHP package
+sources changes installed software and future updates. Server hosting is a
+separate choice; a vulnerable PHP package calls for reviewing its update path.
+
+For repair and PHP package source permissions, read the
 [option effects and risks](resolution-options.md#compare-the-options) before selecting
 one. The guide explains repository/key changes, download locations, package setup,
 service interruption and what happens after failure. These permissions add to a
@@ -27,7 +32,6 @@ fix attempt; a successful repair can be followed by ordinary PHP updates.
 | [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | With `--enable-extra-fixes`, add a missing matching Debian/Ubuntu `main` security source using the installed archive keyring. |
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | With `--enable-extra-fixes`, configure a verified set of pending standard PHP packages. |
 | [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | With `--enable-extra-fixes`, reinstall PHP from authenticated exact installed-version candidates to restore package metadata. |
-| [`--upgrade-required-php-libraries`](resolution-options.md#allow-the-native-libraries-php-needs) | With `--enable-extra-fixes`, permit proven necessary upgrades of reviewed installed native libraries. |
 | [`--wait-for-package-lock SECONDS`](resolution-options.md#wait-for-another-package-operation) | Wait up to 0–600 seconds before fix operations on APT systems with `fuser`; default 0. |
 | `--output human` | Show readable progress and results. This is the default. |
 | `--output machine` | Emit the structured line protocol for integrations. |
@@ -97,14 +101,21 @@ Review the check first. Ensure backups, console access and a maintenance window 
 sudo bash dephp2shell.sh --fix
 ```
 
-Fix mode uses the supported procedure for the detected setup. Package holds, pins, signing requirements and provider boundaries remain in effect. A blocked update reports the reason and the next step. Changes can already have occurred if a package operation or restart fails; there is no automatic rollback.
+Fix mode uses the supported procedure for the detected setup. APT updates include
+proven necessary upgrades of reviewed, already-installed native shared libraries
+from matching official OS sources. These need no extra option. Other applications
+may use those libraries and need testing. See [library update limits](resolution-options.md#allow-the-native-libraries-php-needs). Package holds, pins, signing requirements and package publisher boundaries remain in effect. A blocked update reports the reason and the next step. Changes can already have occurred if a package operation or restart fails; there is no automatic rollback.
 
-Alternative methods require `--enable-extra-fixes` and a separate opt-in. `DP2S_MIGRATE_PHP_TO_SURY=true` and `DP2S_ADD_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable provider changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
+The former `--upgrade-required-php-libraries` flag and
+`DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES` setting have been removed. Use `--fix`;
+old command lines containing that flag are rejected.
+
+Alternative methods require `--enable-extra-fixes` and a separate opt-in. `DP2S_MIGRATE_PHP_TO_SURY=true` and `DP2S_ADD_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable package publisher changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
 
 `--enable-extra-fixes` selects an update attempt unless `--check` is explicit. Use `--check --enable-extra-fixes` with the method options to inspect eligibility without adding sources or running package-manager network operations. A method option without `--enable-extra-fixes`, `--enable-extra-fixes` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
 
-`DP2S_CONFIGURE_PENDING_PHP_PACKAGES`, `DP2S_REINSTALL_PHP_SAME_VERSION`
-and `DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES` are Boolean defaults, initially false.
+`DP2S_CONFIGURE_PENDING_PHP_PACKAGES` and `DP2S_REINSTALL_PHP_SAME_VERSION`
+are Boolean defaults, initially false.
 `DP2S_REFRESH_SURY_SIGNING_KEY` and `DP2S_ADD_OS_SECURITY_REPOSITORY` are also
 Boolean defaults, initially false. Choose only one of these two repository methods
 per attempt. All method settings require command-line `--enable-extra-fixes`;
@@ -115,8 +126,13 @@ Explicit command-line settings take precedence over the environment.
 `--check` now prints suggested options when installed or cached evidence supports
 a particular update or repair. Cached simulations do not refresh repositories,
 install packages or run repairs. A missing-source migration suggestion explicitly
-states that its candidates have not been checked. Suggestions do not establish
-that an update will succeed; fix mode repeats all applicable safety checks.
+states that its candidates have not been checked. Suggestions use the installed/cached observations; fix mode refreshes metadata and repeats all applicable safety checks.
+
+An unresolved `--fix` run offers specific additional repairs when fresh checks
+identify one. It omits a plain `--fix` retry. If no additional automatic repair is
+identified, review the detailed log and remaining PHP findings, address the
+reported cause, then run `--check` before deciding on another update attempt.
+
 The complete report retains `fix_recommendation` and cached `option_assessment`
 records, including reasons a potential method was refused.
 
@@ -155,7 +171,7 @@ dss:isvulnerable:afterfix: CVE_2026_109618N
 | `N` | All detected installations passed the checks, or no PHP was found within the inspected scope. |
 | `?` | A specific inventory, package provenance or running-process check remains unresolved. Read the associated messages. |
 
-The script emits `beforefix` and `afterfix` phases in check mode too. Those labels do not establish that an update ran. Update and restart records describe the operations attempted. A vulnerable installation takes precedence over unknown findings; an unresolved finding prevents a clear result.
+The script emits `beforefix` and `afterfix` phases in check mode too. Read the update and restart records for the operations attempted; the phase labels are emitted in both check and fix mode. A vulnerable installation takes precedence over unknown findings; an unresolved finding prevents a clear result.
 
 ## Diagnostic privacy
 

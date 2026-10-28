@@ -13,13 +13,13 @@ Fix the PHP runtime; an application or plugin update alone does not replace that
 | [CVE-2026-109618: upstream advisory](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w) | An out-of-memory interruption can leave partially initialised request data that cleanup later consumes. Crafted multipart input can exhaust memory despite apparent upload limits. Confirmed mod_php exploitation occurs before application code starts. Upstream identifies FPM as susceptible through later application execution, without a complete demonstrated FPM exploit for this CVE. |
 | [CVE-2026-109619: upstream advisory](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp) | Request-owned state can remain after its memory is freed. Another request reaching the same worker can consume that state. Research confirmed RCE against mod_php and FPM. FPM's confirmed session path depends on a suitable application operation. Session upload progress can act before normal initialisation, even without an application call to `session_start()`. |
 
-Operational inference: a PHP login screen or application maintenance plugin is an insufficient boundary. Requests can reach PHP before application authentication.
+Operational inference: requests can reach PHP before application authentication, including a login screen or application maintenance plugin. Restrict requests before they reach PHP when containing exposure.
 Do not infer immunity from nginx, a dynamic FPM pool, or a site that has no ordinary file-upload form.
 
 The [Wiz research article](https://www.wiz.io/blog/php2shell-php-rce) reports demonstrations against WordPress, Drupal, and Joomla, and memory disclosure as well as RCE.
 Those applications are examples rather than an exhaustive affected list.
 The [Cloudflare response](https://blog.cloudflare.com/php-vulnerabilities-waf-protection) reports observed attack traffic and evolving payloads.
-Attack-traffic observations do not establish whether a particular server was compromised.
+Those observations describe attack traffic. Assess a particular server for compromise using its own incident evidence.
 
 ## Fixed versions and package evidence
 
@@ -39,15 +39,15 @@ Do not deploy prerelease PHP to solve a production incident.
 
 ### PHP 5.3 and earlier
 
-Do not treat PHP 5.4 as a proven lower boundary for both CVEs.
+The reviewed source evidence extends to PHP 5.3; the affected lower boundary for both CVEs remains unresolved.
 The [PHP security-team explanation](https://daubois.dev/blog/cve-2026-109618-php2shell-rumors/)
 identifies the out-of-memory bailout mechanism in PHP 5.3, while distinguishing
 that source evidence from a demonstrated exploit on those older versions.
 The [PHP 5.3 allocator](https://github.com/php/php-src/blob/PHP-5.3/Zend/zend_alloc.c)
-contains `zend_bailout()` in its out-of-memory error handling. That mechanism alone
-does not prove every request path or older release exploitable. The
+contains `zend_bailout()` in its out-of-memory error handling. Exploitability of
+individual request paths and older releases needs further assessment. The
 [upstream advisory](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)
-does not establish an unaffected pre-5.4 range.
+leaves the pre-5.4 affected range unresolved.
 
 The detector's upstream-version rule returns `?` for versions before PHP 5.4.
 Keep that conservative result until a reviewed version/vendor rule establishes
@@ -65,7 +65,7 @@ check dependencies and actual site/job use before removal or migration.
 | Debian 13 trixie / `php8.4` | `8.4.27-1~deb13u1`, confirmed for both CVEs in [DSA-6574-1](https://lists.debian.org/debian-security-announce/2026/msg00489.html). |
 | Debian 12 bookworm / `php8.2` | `8.2.35-1~deb12u1` is confirmed fixed by both the [109619 tracker](https://security-tracker.debian.org/tracker/CVE-2026-109619) and [109618 tracker](https://security-tracker.debian.org/tracker/CVE-2026-109618), refreshed 22 October 2026. |
 | Debian 11 bullseye | Ordinary Debian LTS ended 31 August 2026. Verify an applicable third-party support entitlement and PHP fix, or migrate. No fixed PHP package was verified in this research. [Debian lifecycle](https://www.debian.org/releases/bullseye/). |
-| Debian 9/10 | Check the actual extended-support provider, package coverage, and entitlement. No CVE-specific fixed version was verified here. |
+| Debian 9/10 | Check the supplier of extended-support packages, package coverage, and entitlement. No CVE-specific fixed version was verified here. |
 | Debian 8 jessie | No maintained vendor fix verified. See the native custom-backport recipe below. Freexian ELTS ended 30 June 2025. Disable exposed PHP applications pending migration or a separately verified maintained solution. [Freexian EOL notice](https://www.freexian.com/fr/lts/extended/updates/ela-1477-1-jessie-elts/). |
 
 The earlier Debian 12 tracker inconsistency was resolved by refreshing both sources on 22 October 2026.
@@ -82,8 +82,8 @@ is a separate requirement.
   [PHP2Shell announcement](https://www.freexian.com/blog/php2shell-updates/)
   confirms fixes across supported platforms and includes i386. Its
   [current platform table](https://www.freexian.com/lts/php/) starts with Debian 9.
-  Ask explicitly for a custom Jessie/i386 build; a standard subscription does not
-  establish availability for Jessie. Sury's homepage still mentions Jessie via
+  Ask explicitly for a custom Jessie/i386 build and confirm its availability
+  separately from a standard subscription. Sury's homepage still mentions Jessie via
   Freexian, so use the current support table and a specific vendor confirmation.
 - [Sury's repository suites](https://packages.sury.org/php/dists/) contain no
   Jessie suite. The [PHP 5.6 source/package directory](https://packages.sury.org/php/pool/main/p/php5.6/)
@@ -93,7 +93,7 @@ is a separate requirement.
   (22 October). The series includes
   `0261-Avoid-state-corruption-via-bailout.patch`.
   Source inspected: [Debian packaging archive](https://packages.sury.org/php/pool/main/p/php5.6/php5.6_5.6.40-105%2B0~20261022.135%2Bdebian11~1.gbp37a17e.debian.tar.xz).
-  This identifies a maintained backport source, not a verified Jessie build.
+  This identifies a maintained backport source. A Jessie-compatible build still needs verification.
 - [TuxCare's current matrix](https://docs.tuxcare.com/els-for-runtimes/php/)
   lists Debian 10 and later and Linux x86_64, with some arm64 platforms.
   Jessie/i386 needs a custom request; its ordinary installation procedure does
@@ -120,8 +120,8 @@ its maintainer also packages PHP for Debian. [DEB.SURY.ORG](https://deb.sury.org
 describes that relationship and its collaboration with Freexian.
 [Freexian's FAQ](https://www.freexian.com/lts/php/faq/)
 distinguishes commercial service commitments from Sury's best-effort repository.
-That supports a provenance recommendation, not a measured popularity ranking or
-an assumption that either repository supports every historical distribution.
+These relationships support investigating Sury as a package publisher. Check the
+package publisher's current distribution coverage and service commitments for the target server.
 
 Targeted searches also found community PHP 5.6 patches and Jessie-based Docker
 build recipes, but no verified ready-built Jessie/i386 package set containing
@@ -197,7 +197,7 @@ These vendor package revisions fix both CVEs. They apply to the matching Ubuntu 
 | 14.04 LTS | `php5` | `5.5.9+dfsg-1ubuntu4.29+esm18` | Pro Legacy Support |
 
 Sources: [USN-8948-1](https://ubuntu.com/security/notices/USN-8948-1), [USN-8948-2](https://ubuntu.com/security/notices/USN-8948-2).
-Check each installed SAPI and its related packages, including FPM and Apache modules. A metapackage alone is insufficient inventory.
+Inventory each installed SAPI and its related packages, including FPM and Apache modules, alongside any metapackage.
 For example, patched Ubuntu 24.04 PHP still reports upstream version 8.3.6. An upstream-only detector would misclassify it.
 
 ### CentOS, Rocky, AlmaLinux, and RHEL
@@ -208,15 +208,15 @@ For example, patched Ubuntu 24.04 PHP still reports upstream version 8.3.6. An u
 | AlmaLinux 8/9/10 | [AlmaLinux response](https://almalinux.org/ko/blog/2026-10-21-php2shell-cve-2026-109618-cve-2026-109619/) now lists production fixed builds for all streams in AlmaLinux 8/9/10, rolling out from 21 October 2026 21:15 UTC. The exact advisory builds are recorded in the detector; do not apply them to other RPM vendors. |
 | Rocky Linux 9 / PHP 8.0 | [RLSA-2026:87151](https://errata.rockylinux.org/RLSA-2026:87151) lists `0:8.0.30-8.el9_8.1` as fixing both CVEs. Verified 23 October 2026 against Rocky's [advisory API](https://errata.rockylinux.org/api/v2/advisories/RLSA-2026%3A87151), including `php`, `php-cli`, `php-common`, `php-fpm` and `php-embedded` on x86_64, aarch64, ppc64le and s390x. The script matches this exact revision and `Rocky Enterprise Software Foundation` vendor on Rocky 9; similar custom builds and other vendors remain unverified. |
 | Other Rocky streams / supported CentOS Stream | Check the exact distribution's errata, architecture, PHP stream, and repository metadata. This detector has no reviewed backport rule for these streams. Do not copy another vendor's version threshold. |
-| CentOS Linux 7 / CentOS Stream 8 | Ordinary vendor support ended in June / May 2024 respectively. Archived packages are not evidence of a new security fix. Verify a maintained third-party fix or migrate. [CentOS lifecycle notice](https://blog.centos.org/2023/04/end-dates-are-coming-for-centos-stream-8-and-centos-linux-7/). |
+| CentOS Linux 7 / CentOS Stream 8 | Ordinary vendor support ended in June / May 2024 respectively. Archives retain historical package builds. Verify a maintained third-party fix or migrate. [CentOS lifecycle notice](https://blog.centos.org/2023/04/end-dates-are-coming-for-centos-stream-8-and-centos-linux-7/). |
 
 Alma's initial supported-stream plan covers 8: PHP 7.4/8.2; 9: default 8.0 and streams 8.2/8.3; 10: default 8.3 and PHP 8.4.
 The refreshed advisory also lists fixes for the retired streams, including Alma 8 PHP 7.2.
-Therefore, “the OS is supported” does not prove that the installed PHP stream will receive a fix.
+PHP stream coverage varies within a supported OS release. Check the advisory for the installed stream.
 
 DNF can report `Dependencies resolved.`, `Nothing to do.`, `Complete!` with exit
-status zero. That is a successful query with no update candidates, not evidence
-of an unsafe transaction plan or a verified PHP fix. Record
+status zero. Record this as a successful query with no update candidates; assess
+the installed PHP build separately using the reviewed fix rules. Record
 `package_update_plan:<phase>|dnf|no_updates`; do not request an install. An
 unverified installation remains unknown with a `no_candidate` explanation.
 Pending verified restart work can still proceed through the existing restart
@@ -226,7 +226,7 @@ checks. A vendor build already verified during inventory needs no update attempt
 
 Treat Sury/Ondřej, Remi, cPanel, Plesk, CloudLinux, custom builds, and containers as distinct package origins.
 
-The PHP archive warned that Remi would not have updates on release day. This is a dated availability statement; recheck the provider before acting.
+The PHP archive warned that Remi would not have updates on release day. This is a dated availability statement; recheck the package publisher before acting.
 Do not automatically switch repositories or major PHP streams during a security update.
 
 [cPanel's vendor notice](https://support.cpanel.net/hc/en-us/articles/44397389677335-Critical-PHP-Security-Release-CVE-2026-109618-and-CVE-2026-109619) lists panel updates separately from EasyApache PHP updates.
@@ -236,20 +236,19 @@ Use that vendor's current maintenance procedure for panel systems. Updating the 
 ## Check-mode update assessment
 
 Keep PHP restart requirements separate from other web-server maintenance. A
-deleted nginx/Apache executable without a mapped PHP module does not establish a
-PHP2Shell verification gap. Record the separate restart advisory without
-restarting PHP-FPM or changing the CVE state. Successfully read memory mappings
-are required for that conclusion; failed or unreadable inspections remain unknown.
-Deleted PHP executables/modules still need restart verification. `/dev/zero
-(deleted)` mappings alone are not evidence of deleted PHP code.
+deleted nginx/Apache executable with successfully inspected mappings and no
+mapped PHP module receives a separate restart advisory. Leave PHP-FPM and the
+CVE state unchanged for that finding. Failed or unreadable mapping inspections
+remain unknown. Deleted PHP executables/modules still need restart verification.
+Ignore `/dev/zero (deleted)` when identifying deleted PHP code.
 
 The detector reports update feasibility separately from vulnerability. Its
 `patchability` manifest records distinguish `not_needed`, `blocked`,
 `eligible_to_attempt` and `unknown`. Local package/service prerequisites can rule
-out the current automatic fix without making changes. Passing them does not
-establish that trusted repositories offer a verified fix or that the eventual
-transaction and restarts will succeed. Check mode does not refresh package
-metadata; do not treat this assessment as an available-package guarantee.
+out the current automatic fix without making changes. Passing them permits a
+fix attempt. Candidate availability, transaction safety and runtime replacement
+are checked during that attempt. Check mode uses cached package metadata; fresh
+candidates require a metadata refresh in fix mode.
 
 ### AlmaLinux 10 stock PHP build
 
@@ -272,7 +271,7 @@ The following operator procedure requires adaptation and validation on the actua
 1. Record host identity, UTC time, OS/release, architecture, package origin, installed revisions, serving runtimes, and active service units.
 2. Confirm the maintenance target and recovery path. For a cluster, drain one node and keep sufficient capacity available.
 3. Refresh signed package metadata. Treat unavailable repositories, expired credentials, signature failures, holds, and stale mirrors as blockers.
-4. Compare the candidate against the matching vendor's fixed revision for both CVEs. “Already newest” alone proves nothing.
+4. Compare the candidate against the matching vendor's fixed revision for both CVEs. “Already newest” reports the package manager's current candidate; verify that revision against the advisory.
 5. Simulate the selected transaction. Review removals, dependencies, PHP extensions, version changes, and unrelated service actions.
 6. Apply the approved package transaction. Keep PHP packages and dependent extensions consistent. Do not force configuration replacement.
 7. Check configuration syntax and replace every affected runtime's workers. Package scripts may already have done this; verify the evidence.
@@ -290,7 +289,7 @@ dpkg-query -W -f='${binary:Package}\t${Version}\t${source:Package}\t${source:Ver
 apt-mark showhold
 ```
 
-An unmatched `dpkg-query` pattern can return nonzero. Do not interpret command failure as “PHP absent.”
+An unmatched `dpkg-query` pattern can return nonzero. Inspect the query error and complete the inventory using the applicable package names.
 Inspect configured repositories and `apt-cache policy` for each serving package, including packages outside these naming patterns.
 
 Illustrative transaction for an already-installed Debian 13 FPM installation:
@@ -305,7 +304,7 @@ sudo apt-get install --only-upgrade php8.4-fpm php8.4-common
 
 Add the other installed PHP packages that need updating; the two named packages are an example, not a complete package list.
 On a mod_php host, include the installed `libapache2-mod-phpX.Y` package. Include alternate versions and relevant CLI/CGI packages.
-Do not run this example unchanged on Jessie or a host with a different PHP provider.
+Do not run this example unchanged on Jessie or a host with a different PHP package publisher.
 
 [Canonical's incident guidance](https://ubuntu.com/blog/php2shell-vulnerability-fixes-available) recommends a system update and application restarts, or a reboot.
 It explicitly warns that unattended security updates can still leave applications needing a restart.
@@ -325,7 +324,7 @@ dnf repolist
 dnf module list php
 ```
 
-Module commands apply only where PHP is delivered through modules. A failed module query is not evidence that PHP is absent.
+Module commands apply only where PHP is delivered through modules. If a module query fails, inspect the error and inventory installed PHP packages separately.
 Panel or software-collection packages may have different prefixes and service names; inventory them separately.
 
 For a supported DNF host, refresh metadata with `sudo dnf makecache --refresh`.
@@ -333,8 +332,9 @@ Review CVE-related `dnf updateinfo` records where the vendor publishes them.
 Preview an upgrade of the **explicit installed runtime package names** with `dnf --assumeno upgrade ...`, then apply the reviewed transaction.
 On older YUM systems, use the corresponding YUM procedure and verify the maintained support source first.
 
-Missing CVE metadata is not a clean result. Neither is a package changelog that happens to mention a CVE.
-Use the vendor advisory and RPM epoch/version/release comparison for the correct stream and architecture.
+When CVE metadata is missing or a changelog mentions a CVE, verify the package
+against the vendor advisory using RPM epoch/version/release comparison for the
+correct stream and architecture.
 Do not reset a module, enable a different stream, run `distro-sync`, or enable testing repositories as an incidental automated fix.
 
 ## PHP-FPM and other restart requirements
@@ -344,7 +344,7 @@ An additional manual restart is unnecessary only when evidence shows the package
 
 Debian FPM packaging includes service restart handling, but local policy can prevent it.
 See the [FPM package maintainer fragment](https://sources.debian.org/src/php8.4/8.4.24-1/debian/php-fpm.postinst.extra) and [`invoke-rc.d` policy semantics](https://manpages.debian.org/unstable/init-system-helpers/invoke-rc.d.8.en.html).
-These explain why an automatic action is possible; they do not prove what happened on a particular host.
+These describe the packaged restart behavior. Check process identities and service logs to verify replacement on the target host.
 
 Recommended handling:
 
@@ -355,7 +355,7 @@ Recommended handling:
 | nginx proxying FPM | Replace FPM workers. Restarting nginx alone does not replace PHP. Reload nginx if its own configuration changed. |
 | CGI / FastCGI / LiteSpeed / FrankenPHP | Replace the process or supervisor that actually executes PHP, using its vendor's procedure. Do not assume a process called `php-fpm` exists. |
 | Containers / cluster images | Rebuild from fixed packages/images and replace running containers on every node. Updating the host package or image tag alone does not update a running container. |
-| Long-running PHP CLI workers | Restart the affected jobs/supervisors. A new `php -v` process says nothing about already-running workers. |
+| Long-running PHP CLI workers | Restart the affected jobs/supervisors. `php -v` reports the newly launched process; inspect existing workers separately. |
 
 Use a full restart as the default incident procedure where a brief interruption is acceptable.
 If using a graceful reload, establish that it loads the fixed runtime and that all previous workers exit. Record the drain timeout and remaining workers.
@@ -373,10 +373,10 @@ systemctl show php8.4-fpm -p MainPID -p ActiveEnterTimestamp
 
 Record old and new process identities and start times, package ownership of the executable/module, and service logs.
 Use `/proc/<pid>/exe` and `/proc/<pid>/maps` or installed tooling to investigate old/deleted mappings.
-Absence of deleted mappings alone does not prove the package contains either fix.
+The mapping check looks for old files still in use. Verify both fixes through the package revision and provenance checks.
 
 A protected check through the real web SAPI should report the PHP version and selected effective settings, without exposing `phpinfo()` publicly.
-Correlate that check with the package provenance and replacement evidence. One request cannot prove every pool or cluster node is updated.
+Correlate that check with the package provenance and replacement evidence. Check every required pool and cluster node separately.
 
 ## Temporary containment and configuration gotchas
 
@@ -392,7 +392,7 @@ The upstream advisories describe these partial measures:
 | Measure | Limit or operational cost |
 | --- | --- |
 | Enforce `memory_limit=-1` administratively | Removes a controllable PHP OOM trigger, but underlying allocation failure remains dangerous. Removes per-request memory protection and can increase host-wide outage risk. Do not bulk-apply without a capacity boundary. |
-| Conservative body/upload limits and multipart controls | Bound decoded body size, input nesting, fields, parts, headers per part, and uploads. Cover requests without useful `Content-Length`. Where uploads are unnecessary, block multipart before PHP. Ordinary body limits alone are insufficient. |
+| Conservative body/upload limits and multipart controls | Bound decoded body size, input nesting, fields, parts, headers per part, and uploads. Cover requests without useful `Content-Length`. Where uploads are unnecessary, block multipart before PHP. Include multipart parsing and memory consumption in the limits review. |
 | Container/cgroup boundary | Can limit availability damage. Prefer killing only the affected worker. Do not substitute `RLIMIT_AS` or `RLIMIT_DATA`; allocation failures can trigger the vulnerable path. |
 
 Source: [109618 mitigation details](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w).
@@ -423,12 +423,12 @@ After patching, review temporary limits against real application needs. Do not l
 For already-proxied sites, [Cloudflare's response](https://blog.cloudflare.com/php-vulnerabilities-waf-protection) describes protections on free and paid plans and recommends keeping them enabled while patching.
 Check managed-rule deployment, block actions, exemptions, and events. Prevent direct-origin bypass where the service design permits it.
 WAF protection is supplementary; do not report a runtime as fixed because a rule is enabled.
-Do not assume a WAF event proves successful compromise.
+A WAF event records the request and configured rule action. Investigate possible compromise using server and application evidence.
 
 ## Public automation research: 22 October 2026
 
-The following are useful implementation leads, not independent proof that a
-particular package fixes both CVEs. Repository contents and first-party vendor
+The following provide implementation leads. Package fix recognition requires
+the authenticated vendor/source evidence described above. Repository contents and first-party vendor
 guidance were inspected; no third-party script, exploit or extension was run on
 a production or development service. Public scripts are changing quickly. Recheck
 their source before adopting anything; these are observations of this snapshot,
@@ -437,11 +437,11 @@ not endorsements or security audits of those projects.
 | Source | Useful idea and limit |
 | --- | --- |
 | [OpenAI php2shell-checker](https://github.com/openai/php2shell-checker) | HTTP/CLI version checker. Useful version-reporting comparison; it does not replace local package provenance, multiple runtime inventory or worker replacement checks. Its Node dependency is unsuitable for older hosts. |
-| [KyleClouthier/php2shell-check](https://github.com/KyleClouthier/php2shell-check) | `check-all-php.sh` inventories alternate installations. Useful path leads; executable modification times and process start times alone cannot establish that a worker runs a patched build. |
+| [KyleClouthier/php2shell-check](https://github.com/KyleClouthier/php2shell-check) | `check-all-php.sh` inventories alternate installations. Useful path leads; correlate executable modification and process start times with package revision, provenance and loaded-runtime evidence. |
 | [EXT-IT/php2shell-check](https://github.com/EXT-IT/php2shell-check) | Checks multiple SAPIs, panel/custom paths, containers and FrankenPHP. Embedded PHP needs `frankenphp version`, not a comparison against the FrankenPHP application version. |
 | [Blue-B/php2shell-guard](https://github.com/Blue-B/php2shell-guard) | aaPanel/LiteSpeed discovery and configuration mitigation. Modern-shell and online lookup requirements should not become dependencies of the delivered script; configuration containment is not a verified fix. |
 | [MakFly/php2shell-check](https://github.com/MakFly/php2shell-check) | Package/restart/container automation. Rebuilding and redeploying an image is distinct from updating host packages or restarting an unchanged container. Broad transactions need tighter scope for production systems. |
-| [Hosted Power php_uploadprogress_guard](https://github.com/HOSTED-POWER/php_uploadprogress_guard) | A hosting company's native PHP extension and deployment automation detach the upload-progress handler. The project describes this as a stopgap; it requires matching PHP build tooling and does not establish that every CVE path is patched. Not an automatic fix recipe for this script. |
+| [Hosted Power php_uploadprogress_guard](https://github.com/HOSTED-POWER/php_uploadprogress_guard) | A hosting company's native PHP extension and deployment automation detach the upload-progress handler. The project describes this as a stopgap requiring matching PHP build tooling. Other CVE paths still need the runtime fix. This script has no automatic recipe for the extension. |
 | [Syhunt php2shell-protection](https://github.com/syhunt/php2shell-protection) | Multipart/upload-progress containment and SAPI configuration caveats. Per-directory `.user.ini` changes can be too late for pre-initialisation paths; no clean vulnerability result based on these settings. |
 | [ersinkoc/php-fix](https://github.com/ersinkoc/php-fix) | Config backups, validation and live-check ideas. Disabling upload progress is partial containment. Do not copy a live PHP test endpoint or broad automatic config rewrites into an update recipe. |
 
@@ -455,8 +455,7 @@ not endorsements or security audits of those projects.
   runtime alone cannot clear the panel or its applications.
 - **Detached workers survive web-server restarts.** [LiteSpeed's restart documentation](https://docs.litespeedtech.com/lsws/cp/cpanel/php/#restart-php)
   says detached PHP is not replaced by an LSWS restart. Restart-marker files take
-  effect when handlers are used; touching a marker is not immediate evidence of
-  replacement. Inventory bare `lsphp`, not just executables named `php`.
+  effect when handlers are used; verify process replacement after handler use. Inventory bare `lsphp`, not just executables named `php`.
 - **Host packages and jailed copies can diverge.** [CloudLinux's integration documentation](https://docs.cloudlinux.com/cloudlinuxos/control_panel_integration/)
   requires a CageFS skeleton update after system RPM updates. Its
   [component documentation](https://docs.cloudlinux.com/cloudlinuxos/cloudlinux_os_components/)
@@ -467,38 +466,39 @@ not endorsements or security audits of those projects.
   says UpdateInfo/OVAL metadata was not yet published, so `yum --security` could
   miss available fixes. The script uses an ordinary targeted package
   update. Native PHP, EasyApache and alt-PHP are separate package families.
-- **Version numbers require provider context.** Vendor backports can keep an
-  apparently vulnerable upstream number. Build dates and changelog mentions are
-  useful observations but do not prove both fixes. A repository index or public script alone does not justify a new backport recognition rule. The separate [Sury review](sury-backport-evidence.md) records authenticated source and binary evidence.
+- **Version numbers require package publisher context.** Vendor backports can keep an
+  apparently vulnerable upstream number. Record build dates and changelog mentions,
+  then authenticate the package/source evidence for both fixes before adding a
+  backport recognition rule, including one suggested by a repository index or public script. The separate [Sury review](sury-backport-evidence.md) records authenticated source and binary evidence.
 - **Containers and chroots are separate inventories.** A process can appear in
   host `/proc` while its executable path belongs to another filesystem. Do not
   query the host package owner or restart a host unit based on that foreign path.
   Conversely, [PHP-FPM's service template](https://github.com/php/php-src/blob/master/sapi/fpm/php-fpm.service.in)
   uses `PrivateTmp`, which creates a mount namespace without moving PHP off the
-  host filesystem. Namespace differences alone are not proof of a container;
-  verify matching root and runtime file identities, including mapped PHP modules.
+  host filesystem. For a namespace difference, verify matching root and runtime
+  file identities, including mapped PHP modules, to identify the environment.
 
 ## Evidence required for additional recipes
 
 Keep observation dates separate from publication dates. Distinguish authenticated vendor claims, locally verified observations and proposed procedures.
 
-- Identify the provider, OS suite, PHP branch, package architecture, installed source identity and full binary revision.
+- Identify the package publisher, OS suite, PHP branch, package architecture, installed source identity and full binary revision.
 - Authenticate repository metadata and tie the source archive, enabled patch series and binary packages to that metadata. Review both CVEs and any prerequisite patches.
-- Confirm support entitlement and an actually available fixed candidate. Archive availability and a familiar maintainer name are insufficient.
+- Confirm support entitlement and an actually available fixed candidate with the package publisher, including when packages remain archived or the maintainer is familiar.
 - Review the whole transaction: SAPIs, extension ABI, configuration preservation, selectors, module streams, holds, dependency additions and removals.
 - Identify service ownership, active configuration and every old worker that needs replacing. Test vendor restart behaviour on a disposable instance.
-- Add offline positive and negative fixtures for the exact provider rule and transaction boundaries. Include lookalike versions from another provider, unsupported architectures, partial failures and surviving workers.
-- Check application behaviour on a representative instance. A package checksum or successful updater command cannot establish application compatibility.
+- Add offline positive and negative fixtures for the exact package publisher rule and transaction boundaries. Include lookalike versions from another package publisher, unsupported architectures, partial failures and surviving workers.
+- Check application behaviour on a representative instance after verifying package checksums and updater results.
 
-Provider migrations need their own explicit operator choice and recovery plan. The bounded native-to-Sury method requires `--enable-extra-fixes` and its separate method opt-in; it does not establish application compatibility. See [resolution options](resolution-options.md). Keep sensitive server evidence private when proposing a new recipe.
+Switching PHP package publishers needs their own explicit operator choice and recovery plan. The bounded native-to-Sury method requires `--enable-extra-fixes`, its separate method opt-in and application compatibility testing. See [resolution options](resolution-options.md). Keep sensitive server evidence private when proposing a new recipe.
 
 ## Source confidence
 
-Use PHP and each package vendor as the authority for their own fixes. Researcher publications establish their reported demonstrations. WAF-provider publications describe those providers' protection and traffic observations. Popularity, a changelog mention or a recent build date cannot replace package evidence.
+Use PHP and each package vendor as the authority for their own fixes. Researcher publications establish their reported demonstrations. WAF service publications describe those services' protection and traffic observations. Use authenticated package evidence to assess fix status; record changelog mentions and build dates as supporting observations.
 
 - [PHP Foundation context](https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/) describes discovery and remediation.
 - [Canonical guidance](https://ubuntu.com/blog/php2shell-vulnerability-fixes-available) and the linked USNs cover Ubuntu revisions, support requirements and restart advice.
 - [Debian trackers](https://security-tracker.debian.org/tracker/CVE-2026-109618), [AlmaLinux's response](https://almalinux.org/blog/2026-10-21-php2shell-cve-2026-109618-cve-2026-109619/) and vendor advisories above apply to their own package families.
 - [UK NCSC guidance](https://www.ncsc.gov.uk/news/critical-security-issue-affecting-php) covers incident-response choices when immediate patching is infeasible.
 
-The dated source review did not execute third-party exploits, establish absence of active exploitation or investigate compromise of any particular server. Speculative posts and unverified exploit repositories are not detection rules.
+This dated source review covered published advisories, package evidence and implementation leads. Exploit testing, active-exploitation assessment and host compromise investigation remain outside its scope. Detection rules require reviewed evidence; speculative posts and unverified exploit repositories remain unverified.

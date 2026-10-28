@@ -127,7 +127,7 @@ printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
             ('php-cli', 'Remi Collet', '0:8.3.36-1.el9.remi', 'Remi (revision hint)'),
             ('php5-cli', 'Debian PHP Maintainers', '5.6.40+freexian1', 'Freexian PHP LTS (revision hint)'),
             ('php5-cli', 'Debian PHP Maintainers', '5.6.40+dfsg-0+deb8u23+rhphp2shell1', 'RimuHosting PHP2Shell backport (revision hint)'),
-            ('php-cli', 'Ubuntu Developers', '8.3.36-1ppa1', 'Ubuntu PPA (provider unverified)'),
+            ('php-cli', 'Ubuntu Developers', '8.3.36-1ppa1', 'Ubuntu PPA (package publisher unverified)'),
             ('ea-php83-php-cli', 'Debian PHP Maintainers', '8.3.36+0~1', 'cPanel EasyApache'),
             ('alt-php83-php-cli', 'TuxCare', '8.3.36-1', 'CloudLinux/TuxCare alt-PHP (namespace hint)'),
         ]
@@ -760,11 +760,11 @@ p2s_summary_print_versions
                 self.assertTrue(all('Initial check: PHP ' in row for row in customer[:2]))
                 self.assertEqual(sum('After update attempt:' in row for row in customer), 2 if transaction or restart else 0)
                 self.assertIn('Package label: Sury/ondrej PHP.', customer[0])
-                self.assertIn('The PHP package provider added the security fixes without changing the PHP version.', customer[0])
+                self.assertIn('The PHP package publisher added the security fixes without changing the PHP version.', customer[0])
                 self.assertIn('fixes verified for both PHP2Shell vulnerabilities', customer[0])
                 self.assertIn('Package label: cPanel internal.', customer[1])
                 self.assertIn('patch status not verified', customer[1])
-                self.assertIn('A version number alone cannot confirm a vulnerability', customer[1])
+                self.assertIn('The upstream version is in the affected range', customer[1])
                 for row in customer:
                     for detail in ['revision hint', 'ubuntu22.04', 'cp130~el10', 'Oct 21', 'Jun 10', 'Before update attempt:']:
                         self.assertNotIn(detail, row)
@@ -787,8 +787,8 @@ p2s_summary_print_versions
             self.assertNotIn('vendor backport has not been verified', row)
         self.assertIn('Checked installed packages; no PHP executable or Apache module was matched.', rows[0])
         self.assertIn('patch status not verified', rows[2])
-        self.assertIn('A version number alone cannot confirm a vulnerability', rows[2])
-        self.assertIn('this script could not verify whether this build includes the fixes', rows[2])
+        self.assertIn('The upstream version is in the affected range', rows[2])
+        self.assertIn('backport status for this installed build is unverified', rows[2])
 
     def test_package_detail_stays_in_manifest(self):
         records = '\n'.join(name + '|8.4.27-1|amd64|install ok installed|Debian PHP Maintainers'
@@ -1136,7 +1136,7 @@ printf 'STATE=%s\n' "$P2S_STATE"
                 elif assessment == 'blocked':
                     self.assertIn('cannot proceed under the reported conditions', out)
                 elif assessment == 'unknown':
-                    self.assertIn('cannot predict whether an update will resolve', out)
+                    self.assertIn('fix feasibility remains unresolved until the package sources and candidates are checked', out)
 
     def test_check_mode_runs_only_local_preflight_commands(self):
         for backend, manager in [('deb', 'apt-get'), ('rpm', 'dnf'), ('rpm', 'yum')]:
