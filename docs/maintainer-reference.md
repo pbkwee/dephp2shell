@@ -133,6 +133,31 @@ When a complete check finds no PHP engine, no PHP update recipe is needed.
 The script records `update_recipe` as `not_needed` in the manifest and suppresses
 OS update-recipe warnings. Incomplete inventories still show those warnings.
 Operating-system security-update coverage requires a separate check.
+Unknown-version summaries name the missing evidence and show the installed package
+revision where available. A missing vendor fix rule, unavailable package inventory,
+unassessed engine owner and package/runtime version mismatch are distinct gaps.
+Main-process observations include the PID and executable so separate web-server or
+PHP masters can be identified. Repeated inventory observations appear once per run;
+before/after PHP version assessments retain their phase and attempted update command.
+The read-only retry assessment retains raw records without another version summary.
+Sury summaries distinguish the PHP engine version from the installed binary
+package names and full package revision. `package_fix_reference` records the
+reviewed fixed build and `dpkg` version comparison. Older/newer comparisons explain
+an unknown result; they do not broaden the exact backport recognition rules.
+Equal versions still require the reviewed source identity and architecture.
+Different Sury package revisions stay separate even when `php -v` is identical.
+
+Installed Sury/ondrej packages with no recognised active binary APT source matching
+the OS release and package architecture produce an update-source warning.
+The check reads conventional source definitions, including comments, Deb822
+`Enabled`, package architecture options and Ubuntu ondrej sources. Cached APT
+indexes do not count as an active source. A missing source does not change an
+otherwise verified fixed package's CVE assessment. Source activation retains
+its existing explicit opt-in requirements.
+
+Operational results omit routine application-testing reminders. Specific material
+compatibility changes remain documented alongside the proposed operation.
+
 Each engine package retains its own fixed, vulnerable or unknown manifest result;
 readable messages group only matching versions and conclusions. For
 example, fixed PHP 8.3/8.4 alongside vulnerable PHP 8.2 still produces aggregate
@@ -211,6 +236,12 @@ Ubuntu releases in USN-8948-1/-2, using `dpkg --compare-versions`. AlmaLinux 8/9
 rules accept the exact builds published in its advisory. RPM versions are never
 compared lexically or with Debian ordering. Unlisted RPM backports, unknown
 package publishers and later Alma builds below the upstream floor need further evidence.
+Rocky Linux 8's x86_64 `0:7.4.33-8.module+el8.10.0+40393+c071e357`
+engine packages are verified by
+[RLSA-2026:87080](https://errata.rockylinux.org/RLSA-2026:87080). The
+AppStream x86_64 updateinfo lists both CVEs for this exact build of `php`,
+`php-cli`, `php-common`, `php-fpm` and `php-embedded`; other architectures and
+custom revisions below the upstream floor still need evidence.
 Rocky Linux 9's official `0:8.0.30-8.el9_8.1` engine packages are verified by
 [RLSA-2026:87151](https://errata.rockylinux.org/RLSA-2026:87151), covering both CVEs.
 The rule matches the distro, vendor, package name and exact revision; it does not
@@ -361,6 +392,70 @@ tools or contacting package publishers:
   It identifies installed build inputs. Authenticate the corresponding source archive separately.
 - `runtime_source`: an executable with no verified package owner has an unknown
   installation method. Possible installation methods include source builds, copied binaries, bundled runtimes and management by another environment; the method remains unknown.
+
+Installed packages with explicit older release markers get a grouped customer
+warning and per-package `package_release_mismatch` evidence. This is separate
+from CVE state, runtime use and automatic-update eligibility. A package can be
+left over from an OS upgrade and still serve websites; it is not declared unused
+or removed. `config-files`/`not-installed` dpkg records are already excluded from
+the installed inventory, so removed `rc` entries do not trigger this warning.
+
+The same marker parser also recognises Debian build labels on Ubuntu and Ubuntu
+build labels on Debian. These cross-distribution mismatches get a separate readable
+warning, with binary/source evidence in the existing `package_release_mismatch`
+record. Distribution identity takes precedence over comparing release numbers:
+Debian 12 is not an older Ubuntu release. Unlabelled builds and generic maintainer
+names cannot prove which distribution built a package. Cross-distribution findings
+also use the existing runtime/configuration usage checks; enabled Apache PHP
+configuration suppresses removal suggestions even when APT labels packages as
+no longer required.
+
+After runtime inspection, `package_release_usage` reports each older-release or mismatched
+PHP installation as `running`, `configured`, `no_running_use_observed` or
+`unverified`. Package namespace/branch groups keep native `php8.2`, EasyApache
+`ea-php82` and CloudLinux `alt-php82` separate; CLI/FPM/common/extensions of the
+same installation share usage evidence. This does not claim each extension is
+loaded. Runtime ownership and path matches include CLI jobs launched by cron,
+FPM workers and mapped Apache PHP modules. Debian 8 executable names `php5-fpm`
+and `php5-cgi` are recognised alongside newer `php-fpm8.4`/`php-cgi8.4` names.
+Enabled `/etc/apache2/mods-enabled/php*.load` and
+`/etc/apache2/conf-enabled/php*-fpm.conf` references suppress removal suggestions,
+including broken enabled links that still require configuration review.
+
+Only a completed root process inspection with no current blockers, unknown
+runtime ownership, missing runtime paths, separate-environment review, pending
+restart or panel-managed PHP can support `no_running_use_observed`; at least one
+runtime of that installation must have identified package ownership. Otherwise
+the result remains `unverified` unless positive running/configuration evidence
+exists. This reporting never changes CVE state or update permissions.
+
+The process snapshot covers the script's recognised PHP/web processes. It does
+not audit all nginx/panel configuration, user jobs, application code or reverse
+package dependencies. The customer suggestion therefore says **no running use
+was found**, asks whether websites, scheduled tasks and other packages still need
+that PHP installation, and suggests reviewing the package manager's proposed
+removals. It neither declares the packages unused nor performs their removal.
+
+The comparison reuses installed binary versions and the exact matching
+`deb_source_package` record when a binary version has no marker. Source fallback
+matches binary name, version and architecture. No extra package, repository or
+network query is needed. Supported labels are native Debian `+deb8u12`/`~deb12u1`,
+Sury `+debian12~1`, Debian `~bpo12+1` (which takes precedence over the base revision),
+legacy `~bpo60+1`/`~bpo70+1` (Debian 6/7), explicit Ubuntu release labels such as `ubuntu0.22.04.1` or `+ubuntu22.04.1`, and
+`.el8`/`~el8` RPM build labels on Enterprise Linux systems. Ubuntu `ubuntu1.5`
+is a package revision, not an OS release. Numeric OS identity is required;
+Debian/Enterprise Linux compare major releases, Ubuntu compares its release number.
+Current or newer labels do not produce this older-release warning.
+
+[Debian binary control fields](https://www.debian.org/doc/debian-policy/ch-controlfields.html#debian-binary-package-control-files-debian-control)
+do not require a target-distribution field. The
+[Debian Developer Reference](https://www.debian.org/doc/manuals/developers-reference/pkgs.html)
+describes `+debXuY` release numbering; [Debian backport conventions](https://wiki.debian.org/BuildingFormalBackports)
+include both modern and historical target labels. Release labels identify the build
+naming convention; they do not authenticate download history or establish that
+all unlabelled packages belong to the current release. The script does not guess
+from a PHP branch, maintainer, build date or a missing APT-cache match. Custom
+version labels can retain earlier release markers and need administrator review.
 
 Package-cache semantics: [APT policy](https://manpages.debian.org/bookworm/apt/apt-cache.8.en.html),
 [APT cache paths](https://manpages.debian.org/bookworm/apt/apt.conf.5.en.html#DIRECTORIES)
@@ -736,6 +831,34 @@ Explicit per-source targets and custom hooks can still request extra downloads.
 See the [apt-file disable example](https://sources.debian.org/src/apt-file/3.4/examples-apt-conf/60disable-contents-fetching.conf).
 `apt_refresh_scope` records the selected defaults. Check mode does not refresh indexes.
 
+APT refresh blockers distinguish a missing signing key (`NO_PUBKEY`) from other
+signature failures, including when APT exits successfully with warnings. Command
+records retain repository hostnames and signing errors; URL credentials, paths
+and queries remain redacted. APT can retain old indexes for a failed repository
+even when other lists are current. The script blocks installation until that
+repository is repaired or deliberately disabled if no longer needed.
+
+Shared package diagnostics also report `repository_failure_source`: the failing
+URL host or quoted RPM repository ID, plus possible source files from the current
+redacted inventory. The customer message names the host or repository ID and
+possible source files in plain language. For a Webmin connection refusal, this
+identifies `download.webmin.com` and a matching source such as
+`/etc/apt/sources.list.d/webmin.list`; the connection error remains in the redacted
+update log. Only failure lines supply identities; successful `Hit`/`Get`
+lines do not implicate other repositories. Host matches can include multiple
+sources or disabled definitions. Confirm the repository and suite before changing
+a file. Unmatched mirrors or custom configuration paths remain unidentified.
+
+HTTP 404 classification requires an explicit missing-file status (`404 Not Found`,
+`HTTP Error 404`, or `Status code: 404`), not a substring of a download size or
+APT item number. APT `Hit`/`Get`/`Ign` progress rows cannot supply failure identities.
+For example, `Get:4 ... Packages [3404 B]` is a successful 3,404-byte download.
+A local module/file “not found” diagnostic without HTTP context is not a repository
+404. Real warnings include up to three distinct URL-redacted matching diagnostic
+lines; `repository_failure_source` continues to identify possible host/source-file
+matches. The original `repository_failure|http_404` classification remains intact.
+These diagnostics do not change package/update eligibility or retry behavior.
+
 Old partial Contents downloads can still occupy space after this change.
 An operator can inspect and remove those regenerable files while APT is idle.
 Do not delete lock files or assume `apt-get clean` removes index-list downloads:
@@ -785,6 +908,47 @@ reads at most 64 files, 200 lines per file and 512 characters per reported line.
 Truncation and unreadable files are identified. Password/proxy fields are omitted;
 URLs are redacted. No plugins run for the static policy inspection.
 
+`p2s_package_rpm_stream_guidance_report` adds manual stream advice for native
+Rocky/Alma 8 PHP 7.2/7.3/8.0, native Rocky/Alma 9 PHP 8.1, and existing Remi
+PHP 7.x/8.0/8.1. It requires a unique installed `php-common` engine-family
+record, no detected hosting panel, and no blocker other than `no_candidate`.
+This advice leaves CVE state and automatic-fix eligibility unchanged. A verified
+same-branch backport can already fix these CVEs even on a retired stream.
+
+The query uses cached DNF4 module metadata, disabled plugins and private log paths.
+It never refreshes metadata in check mode. A unique enabled stream must match the
+installed provider and PHP branch. Only reviewed destinations actually present
+and not disabled in that cache are offered: native EL8 7.4/8.2 (7.4 only from
+7.2/7.3), native EL9 8.2/8.3, or existing Remi 8.4. Missing, failed or ambiguous
+metadata produces an instruction to refresh/review the module list instead.
+`php_module_cache` and `php_module_gap` retain the evidence; additive
+`php_stream_migration` records carry preview/apply command text, architecture,
+cached availability, `fixed_candidate=not_queried` and `manual_only`. They are
+not `fix_recommendation` records and expose no automatic migration option.
+
+The printed `dnf --refresh --assumeno module switch-to php:...` previews a
+transaction and declines confirmation; it can refresh local metadata/cache.
+The separate apply command remains interactive. DNF's switch-to can remove old
+stream packages missing from the destination and update modular dependencies;
+review its whole plan. Remi uses `/common` per its vendor procedure. No repository
+is added. See [manual stream migration](resolution-options.md#move-a-retired-rockyalma-php-stream).
+Published destination fixes do not prove the server's current candidate; rerun
+`--check` after installation and service replacement. Compatibility and custom
+Apache handler configuration need application-specific review.
+
+Research checked 2026-10-29: native EL8 PHP 7.4 is a Full Life vendor stream,
+not retired merely because upstream PHP 7.4 is EOL; native EL8 8.2 is maintained
+to May 2029. Native EL9 PHP 8.0 also has Full Life status, so this advice does
+not label it retired from its upstream number. Alma published same-branch
+PHP2Shell fixes even for retired EL8 PHP streams. Sources:
+
+- [RHEL Application Streams lifecycle](https://access.redhat.com/support/policy/updates/rhel-app-streams-life-cycle)
+- [AlmaLinux PHP2Shell response](https://almalinux.org/blog/2026-10-21-php2shell-cve-2026-109618-cve-2026-109619/)
+- [Rocky AppStream update metadata](https://dl.rockylinux.org/pub/rocky/8/AppStream/x86_64/os/repodata/repomd.xml), RLSA-2026:87080 (7.4) and RLSA-2026:87073 (8.2)
+- [DNF module switch-to](https://dnf.readthedocs.io/en/latest/command_ref.html#module-command)
+- [Remi's fixed stable releases](https://blog.remirepo.net/post/2026/10/22/PHP-version-8.2.35-8.3.36-8.4.27-8.5.12)
+- [Remi's EL8/9 PHP 8.4 switch procedure](https://blog.remirepo.net/post/2024/12/18/Install-PHP-8.4-on-Fedora-RHEL-CentOS-Alma-Rocky-or-other-clone)
+
 Do not remove pins, clear version locks, disable exclusions or switch module streams
 automatically. These may protect the application's handler, package publisher or compatibility.
 If an installed Apache PHP module is still used, review a narrowly scoped policy
@@ -827,6 +991,24 @@ that every dependency, package publisher or PHP branch remains unchanged. The or
 not rewrite package sources or website PHP selections. Vendor dependency decisions
 and enabled-repository candidates still require review.
 
+Sury/ondrej migration, repository addition and Sury key repair are neither
+recommended nor permitted on cPanel/Plesk paths, including with explicit retry
+options. The low-level source-write and repair assessments enforce the same rule.
+Existing Sury packages on those panels require mixed-source review before updates.
+A missing-source warning asks for that review rather than suggesting activation.
+This is panel-specific, checked against vendor documentation on 29 October 2026:
+
+- [cPanel PHP integration](https://docs.cpanel.net/ea4/php/about-php/) supports
+  vendor-prefixed SCL PHP on non-Ubuntu systems. Sury/ondrej Debian packages do
+  not replace EasyApache or cPanel-internal PHP.
+- [Plesk custom PHP instructions](https://support.plesk.com/hc/en-us/articles/12376921077783-How-to-add-custom-PHP-versions-in-Plesk-for-Ubuntu-Debian)
+  demonstrate Sury/PPA installations with explicit PHP handler registration, and
+  label that custom procedure unsupported. The script does not perform it.
+- [Virtualmin multiple-PHP instructions](https://www.virtualmin.com/docs/server-components/configuring-multiple-php-versions/)
+  explicitly use Sury on Debian and ondrej/php on Ubuntu. Its existing bounded
+  opt-in package migration remains available; website PHP selections still need
+  the panel's configuration checks.
+
 CloudLinux, CageFS, LiteSpeed, unsupported operating systems, custom PHP and
 unmapped service restarts retain their existing blockers. Other detected panels
 without a reviewed recipe remain blocked. Vendor commands can fail after partial
@@ -837,8 +1019,57 @@ cPanel output containing an explicit fatal update error or a nonzero child-comma
 error also fails the attempt, even when `upcp` returns zero. Routine certificate
 housekeeping does not count as a TLS failure. An unconfigured cPanel CLI selector
 is reported separately from a PHP binary that cannot load.
-An explicit missing-license blocker gets a separate support message; the script
-does not change licensing or retry with broader updater options.
+Current cPanel output is checked for explicit license problems, update blockers
+and package conflicts. Each selected reason is shown to the customer, including
+package names/builds; licensing and conflicts are both reported when they coexist.
+These errors fail the attempt even if the updater exits zero. The script does
+not change licensing, erase conflicting packages or broaden updater options.
+
+Internal cPanel PHP rules, checked 29 October 2026 NZDT, use the
+[cPanel response](https://www.cpanel.net/blog/security/php-cve-2026-109618-and-cve-2026-109619-cpanel-response/)
+and official RPM listings. Fixed upstream PHP 8.4 starts at 8.4.27. The exact
+`cpanel-php81` RPM `8.1.34-2.cp110~el7`, `~el8` or `~el9` includes both backports.
+The corresponding `8.1.34-1` packages and stock `cpanel-php84`
+`8.4.22-1.cp130~el8`, `~el9` or `~el10` are affected. These exact rules accept
+x86_64 builds with no epoch or epoch zero. Custom revisions and other unreviewed
+older builds remain unknown. These rules do not use the cPanel release number
+as proof that its installed PHP packages were updated.
+Package references: [PHP 8.1 EL7](https://httpupdate.cpanel.net/RPM/11.110/centos/7/x86_64/),
+[EL8](https://httpupdate.cpanel.net/RPM/11.110/centos/8/x86_64/),
+[EL9](https://httpupdate.cpanel.net/RPM/11.110/centos/9/x86_64/);
+[PHP 8.4 EL8](https://httpupdate.cpanel.net/RPM/11.130/centos/8/x86_64/),
+[EL9](https://httpupdate.cpanel.net/RPM/11.130/centos/9/x86_64/),
+[EL10](https://httpupdate.cpanel.net/RPM/11.130/centos/10/x86_64/).
+
+A successful `upcp --security` exit can mean that no update started. The
+[official updater source for 136.0.29](https://httpupdate.cpanel.net/cpanelsync/11.136.0.29/cpanel/scripts/upcp.static.bz2)
+returns zero before logging when its preliminary security-target check fails.
+That check excludes `SECURITY_UPDATES=never`, an exact release pin, missing
+release metadata and an absent or unchanged eligible security release.
+The script records documented `CPANEL`, `SECURITY_UPDATES`, `RPMUP` and `UPDATES`
+settings from `/etc/cpupdate.conf`, and explains disabled security updates or
+an exact release pin. Selecting a release series such as `CPANEL=136` is not
+an exact release pin. If internal PHP still lacks a verified fix after cPanel
+returns success, the warning names the installed build, required fixed version,
+WHM Update Preferences and `/var/cpanel/updatelogs`. A possible skip reason is
+not reported as the actual cause without matching evidence.
+
+Every cPanel inventory, including `--check`, examines the last recorded cPanel
+update log under `/var/cpanel/updatelogs`. It also supplies context if internal
+PHP remains unfixed after an updater that returns success.
+It reads only a regular file inside that directory and only its final 256 KiB.
+`panel_previous_update_log` records the modification time and historical scope;
+up to 20 selected, URL-redacted failure lines are retained separately.
+Customer messages identify recorded missing-licence, Apache package-conflict and
+component-update failures. These messages describe that dated log, not the
+current updater's output or proof that an older blocker is still present.
+
+The updated [cPanel advisory](https://support.cpanel.net/hc/en-us/articles/44397389677335-Critical-PHP-Security-Release-CVE-2026-109618-and-CVE-2026-109619)
+also describes `/scripts/autorepair update_cpanel_php8`. Its
+[implementation](https://httpupdate.cpanel.net/autofixer2/update_cpanel_php8)
+only operates on panel branches 112–132. It is not an automatic fallback in this
+script and cannot repair a branch 136 installation. Use the supported cPanel
+update process and investigate its settings/logs.
 
 `panel_version`, `panel_update_tool` and `panel_update_scope` retain the detected
 version, installed executable paths and operation scope for troubleshooting.
@@ -1006,6 +1237,21 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   Extrepo is recognised by `extrepo_sury.sources` or its
   `/var/lib/extrepo/keys/sury.asc` signing path; edited layouts still exclude
   package-owned Sury key repair. Review the detected manager's installed tools and configuration before running repository repair. See [repository repair advice](resolution-options.md#repository-repair-advice).
+  Active Sury Debian and ondrej Ubuntu PPA definitions are checked against the
+  measured OS and expected suite. A mismatch warning includes the source file,
+  configured distribution/suite and host release, and `repository_guidance`
+  adds `configured`, `host` and `expected_suite`. Wrong-distribution sources
+  receive this warning before layout/key repair advice (including extrepo advice).
+  Disabled/commented sources do not get an active mismatch warning. Both legacy
+  `.list` and Deb822 `.sources` definitions use the existing parser; it keeps
+  folded fields, exact official hosts/paths, redaction and architecture filtering.
+  This source finding does not infer installed package provenance or change CVE
+  status. Replacing a source alone does not replace installed packages. The normal
+  package candidate check already refuses a Debian Bookworm Sury candidate on
+  Ubuntu Jammy; APT metadata may have refreshed before that rejection. These
+  diagnostics add no repository rewrite or package conversion procedure.
+  Primary publisher distinction: [Sury Ubuntu PPA and Debian DPA](https://deb.sury.org/),
+  reviewed 2026-10-29.
 - `panel_path`: cPanel core and updater paths, plus a detected CloudLinux selector
   directory. Records include file type, readability, executability, symlink target
   and resolved path when `readlink` is available. Missing and inaccessible paths

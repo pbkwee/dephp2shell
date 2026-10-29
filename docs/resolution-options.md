@@ -22,6 +22,71 @@ Existing Sury/ondrej packages can use a recognised fixed revision from their con
 
 A successful package update still needs an application check. Other PHP copies, isolated environments and workers using old code can keep the overall result unresolved.
 
+## Move a retired Rocky/Alma PHP stream
+
+An OS can still receive updates while its selected PHP stream has retired.
+`dnf upgrade php` stays in that stream, which explains “Nothing to do” on a
+Rocky 8 server still using native PHP 7.2. First try the ordinary `--fix`:
+a same-branch vendor security update changes less application behaviour than a
+branch migration. Alma has published PHP2Shell backports even for retired streams.
+A fix for these two CVEs and ongoing PHP maintenance are separate findings.
+
+For native PHP 7.2/7.3 on Rocky/Alma 8, PHP 7.4 is a smaller compatibility step
+than PHP 8. Despite upstream PHP 7.4 being EOL, this vendor stream has Full Life
+status in the [EL8 lifecycle](https://access.redhat.com/support/policy/updates/rhel-app-streams-life-cycle).
+Native PHP 8.2 is another maintained option, through May 2029. Rocky's published
+fixed 7.4 x86_64 engine build is
+`7.4.33-8.module+el8.10.0+40393+c071e357` (RLSA-2026:87080);
+the 8.2 fix is `8.2.35-1.module+el8.10.0+40394+d21b33fb` (RLSA-2026:87073).
+Check the complete installed package build, not just `php -v`.
+
+Review the application/framework/plugin PHP requirements, then choose **one**
+destination. For example, native PHP 7.2 to native 7.4:
+
+```sh
+sudo dnf --refresh module list php
+sudo dnf --refresh --assumeno module switch-to php:7.4
+# After reviewing application compatibility and the full package plan:
+sudo dnf --refresh module switch-to php:7.4
+```
+
+Use `php:8.2` instead if the applications support PHP 8.2 and you choose that
+route. A preview refreshes local metadata/cache, then declines the transaction.
+[DNF switch-to](https://dnf.readthedocs.io/en/latest/command_ref.html#module-command)
+can remove packages absent from the destination, including extensions; review all
+changes before applying. There is no universal compatibility guarantee: even
+[PHP 7.2 to 7.3 changes regular-expression behaviour](https://www.php.net/manual/en/migration73.other-changes.php),
+and [PHP 8 removes old functions and changes errors/type handling](https://www.php.net/manual/en/migration80.incompatible.php).
+PHP 8.2 on EL8 still supplies mod_php, but custom Apache module names/paths and
+handler configuration can need changes.
+
+For an existing Remi PHP 8.1 installation, the script offers stable Remi PHP 8.4
+when that stream is available. This retains the existing provider and has a longer
+upstream support window than PHP 8.2, whose upstream security support ends in
+December 2026. Confirm the application's supported branches; the version jump
+itself does not establish compatibility. Do not choose a higher stream simply
+because it appears in the list; it may be a development release.
+
+```sh
+sudo dnf --refresh --assumeno module switch-to php:remi-8.4/common
+# After application and package-plan review:
+sudo dnf --refresh module switch-to php:remi-8.4/common
+```
+
+See [Remi's procedure](https://blog.remirepo.net/post/2024/12/18/Install-PHP-8.4-on-Fedora-RHEL-CentOS-Alma-Rocky-or-other-clone)
+and [PHP's support dates](https://www.php.net/supported-versions.php).
+After applying the chosen switch, check `rpm -q php-common`, validate the actual
+PHP handler/configuration, and restart the PHP/web services that use it. The
+script names observed `php-fpm.service`/`httpd.service` validation and restart
+commands. Long-running CLI jobs also need replacement through their application's
+procedure. Rerun `--check` to assess the resulting installed builds and processes.
+
+This is manual maintenance advice. The check uses cached metadata to match the
+enabled stream and installed provider, and offers only reviewed available targets.
+It explicitly reports that a fixed candidate has not yet been queried. Hosting
+panels need their own PHP selection/update procedure; these commands are not
+offered on detected panel servers.
+
 ## What refreshing and installing mean
 
 A repository is a configured package source. Its **source definition** tells APT

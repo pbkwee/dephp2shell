@@ -150,6 +150,13 @@ candidate=1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1'''
         self.assertIn('candidate_provider', out)
         self.assertNotIn('INSTALL:', out)
 
+    def test_debian_bookworm_sury_candidate_cannot_be_installed_on_ubuntu_jammy(self):
+        out = self.shell(self.fixture('P2S_DISTRO=ubuntu; P2S_RELEASE=22.04; mixed=false'),
+                         isolated_sources=True)
+        self.assertIn('candidate_provider', out)
+        self.assertIn('RC=1|ATTEMPTED=false', out)
+        self.assertNotIn('INSTALL:', out)
+
     def test_versioned_pecl_extensions_are_not_php_engine_versions(self):
         changes = '''name=php7.4-imagick; source=php-imagick; selected_source=php-imagick
 old=3.8.1-1+0~20261010.1+debian12~1.gbpabcdef
@@ -267,6 +274,67 @@ cat "$P2S_WORK/package-states"
                             invalid = args.copy(); invalid[index] = bad
                             out = self.shell(setup+'p2s_version_package_state '+' '.join(map(shlex.quote,invalid)))
                             self.assertEqual(out.strip(), '?')
+
+    def installed_summary(self, version, names=('php7.4-cli',), source='php7.4', distro='debian', release='12'):
+        records = '\n'.join(f'{name}|{version}|amd64|Debian PHP Maintainers' for name in names)
+        sources = '\n'.join(f'{name}|{version}|amd64|{source}|{version}|source_field' for name in names)
+        return self.shell(f'P2S_BACKEND=deb; P2S_DISTRO={distro}; P2S_RELEASE={release}\n'
+                          + 'printf "%s\\n" ' + shlex.quote(records) + ' > "$P2S_WORK/packages"\n'
+                          + 'printf "%s\\n" ' + shlex.quote(sources) + r''' > "$P2S_WORK/deb-source-records"
+p2s_package_backport_evidence_collect() { :; }
+p2s_command_run() { return 0; }
+p2s_package_inventory_assess
+p2s_summary_print_versions
+cat "$P2S_WORK/package-states"
+''')
+
+    def test_fixed_php74_names_packages_and_the_backported_build(self):
+        version = '1:7.4.33-31+0~20261021.121+debian12~1.gbpe9c428'
+        names = ('php7.4-cli', 'php7.4-common', 'libapache2-mod-php7.4')
+        out = self.installed_summary(version, names)
+        rows = [row for row in out.splitlines() if row.startswith('dss:info: PHP ')]
+        self.assertEqual(len(rows), 1)
+        self.assertIn('PHP 7.4.33', rows[0])
+        self.assertIn('fixes verified for both PHP2Shell vulnerabilities', rows[0])
+        self.assertIn('Installed package build: ' + version, rows[0])
+        for name in names:
+            self.assertIn(name, rows[0])
+            self.assertIn(name + '|N', out.splitlines())
+
+    def test_sury_comparison_reports_full_version_order_without_clearing_unreviewed_builds(self):
+        for version, comparison in [
+                ('1:7.4.33-30+0~20261010.120+debian12~1.gbpabcdef', 'older'),
+                ('7.4.33-999+0~20261025.122+debian12~1.gbpabcdef', 'older'),
+                ('1:7.4.33-32+0~20261025.122+debian12~1.gbpabcdef', 'newer')]:
+            with self.subTest(version=version):
+                out = self.installed_summary(version)
+                self.assertIn('php7.4-cli|?', out.splitlines())
+                self.assertIn('Installed package build: ' + version, out)
+                self.assertIn('is ' + comparison + ' than this check\'s verified fixed build:', out)
+                self.assertIn('reviewed_fixed=1:7.4.33-31+0~20261021.121+debian12~1.gbpe9c428|comparison=' + comparison, out)
+
+    def test_equal_sury_revision_with_unverified_identity_explains_the_actual_gap(self):
+        version = '1:7.4.33-31+0~20261021.121+debian12~1.gbpe9c428'
+        out = self.installed_summary(version, source='unreviewed-source')
+        self.assertIn('php7.4-cli|?', out.splitlines())
+        self.assertIn('compares equal to the verified fixed Sury build', out)
+        self.assertIn('exact build and source identity did not match', out)
+        # A zero epoch compares equal, but is not an exact reviewed package identity.
+        out = self.installed_summary('0:8.1.34-9+0~20261021.82+debian12~1.gbp4e430a',
+                                     names=('php8.1-cli',), source='php8.1')
+        self.assertIn('|comparison=equal', out)
+        self.assertNotIn('tool is unavailable', out)
+
+    def test_different_sury_builds_with_same_php_version_keep_separate_conclusions(self):
+        records = [
+            '7.4.33|?|command line||Sury/ondrej PHP|1:7.4.33-30|Y|package|sury_build_older|php7.4-cli|1:7.4.33-31',
+            '7.4.33|?|Apache module||Sury/ondrej PHP|1:7.4.33-32|Y|package|sury_build_newer|libapache2-mod-php7.4|1:7.4.33-31']
+        out = self.shell('printf "%s\\n" ' + ' '.join(map(shlex.quote, records))
+                         + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_versions\n')
+        rows = [row for row in out.splitlines() if row.startswith('dss:warn: PHP ')]
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(any('php7.4-cli' in row and 'is older than' in row and 'libapache2' not in row for row in rows))
+        self.assertTrue(any('libapache2-mod-php7.4' in row and 'is newer than' in row and 'php7.4-cli' not in row for row in rows))
 
     def test_bullseye_recipe_requires_existing_sury_engines(self):
         sury = '1:7.4.33-30+0~20261010.120+debian11~1.gbpabcdef'

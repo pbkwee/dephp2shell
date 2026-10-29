@@ -87,16 +87,13 @@ p2s_manifest_redact_repository_urls() {
 
 p2s_message_print() {
     local level="$1" record="$2"
-    record=${record#Before update attempt: }; record=${record#After update attempt: }
     record="$level: $record"
-    # Keep both raw inventories, but do not repeat identical customer messages after a blocked preflight.
+    # Keep every raw inventory; repeat customer text only when the observation or phase changes.
     if [ "${P2S_INVENTORY_MESSAGES:-false}" = true ]; then
-        if [ "$P2S_PHASE" = beforefix ]; then
-            printf '%s\n' "$record" >> "$P2S_WORK/messages.before"
-        elif [ "${P2S_TRANSACTION_ATTEMPTED:-false}" = false ] && [ "${P2S_RESTART_ATTEMPTED:-false}" = false ] &&
-            grep -Fx -e "$record" "$P2S_WORK/messages.before" >/dev/null 2>&1; then
+        if grep -Fx -e "$record" "$P2S_WORK/messages.inventory" >/dev/null 2>&1; then
             return 0
         fi
+        printf '%s\n' "$record" >> "$P2S_WORK/messages.inventory"
     fi
     printf '%s\n' "$2" | LC_ALL=C tr -d '\000-\010\013-\037\177' |
         while IFS= read -r line; do printf 'dss:%s: %s\n' "$level" "$line"; done
@@ -277,8 +274,8 @@ p2s_version_deb_fixed_floor() {
     esac
 }
 
-p2s_version_sury_backport_fixed() {
-    local name="$1" version="$2" arch="$3" source="$4" source_version="$5" revision suffix release branch
+p2s_version_sury_fixed_build_output() {
+    local name="$1" arch="$2" revision suffix release
     [ "$arch" = amd64 ] || return 1
     # Exact signed source/binary builds reviewed in docs/sury-backport-evidence.md.
     # Do not turn these into >= floors: later EOL backports require another review.
@@ -301,15 +298,20 @@ p2s_version_sury_backport_fixed() {
         *) return 1 ;;
     esac
     p2s_package_is_engine "$name" || return 1
-    branch=${revision%%-*}; branch=${branch#*:}; branch=${branch%.*}
-    [ "$source" = "php$branch" ] && [ "$source_version" = "$version" ] || return 1
     if [ "$P2S_DISTRO" = debian ]; then
-        [ "$version" = "$revision+$suffix.gbp$release" ]
+        printf '%s\n' "$revision+$suffix.gbp$release"
     else
         revision=${revision%%+0~*}
         case "$name" in php7.0-*|libapache2-mod-php7.0) revision=7.0.33-92 ;; php7.1-*|libapache2-mod-php7.1) revision=7.1.33-80 ;; esac
-        [ "$version" = "$revision+$suffix" ]
+        printf '%s\n' "$revision+$suffix"
     fi
+}
+
+p2s_version_sury_backport_fixed() {
+    local fixed source=${1#libapache2-mod-}
+    source=${source%%-*}
+    fixed=$(p2s_version_sury_fixed_build_output "$1" "$3") || return 1
+    [ "$4" = "$source" ] && [ "$5" = "$2" ] && [ "$2" = "$fixed" ]
 }
 
 p2s_version_package_state() {
@@ -342,6 +344,14 @@ p2s_version_package_state() {
             *)
                 [ "$state" = N ] || state='?' ;;
         esac
+    elif [ "$P2S_BACKEND" = rpm ] && { [ "$name" = cpanel-php81 ] || [ "$name" = cpanel-php84 ]; }; then
+        [ "$state" = N ] || state='?'
+        # Exact stock RPMs in cPanel's advisory and repositories; custom revisions remain unverified.
+        # https://www.cpanel.net/blog/security/php-cve-2026-109618-and-cve-2026-109619-cpanel-response/
+        case "$name:${version#0:}:$arch" in
+            cpanel-php81:8.1.34-2.cp110~el[789]:x86_64) state=N ;;
+            cpanel-php81:8.1.34-1.cp110~el[789]:x86_64|cpanel-php84:8.4.22-1.cp130~el[89]:x86_64|cpanel-php84:8.4.22-1.cp130~el10:x86_64) state=Y ;;
+        esac
     elif [ "$P2S_DISTRO" = almalinux ] && [ "${vendor#*AlmaLinux}" != "$vendor" ]; then
         release=${version#*:}
         # Exact vendor builds: do not compare RPM EVRs with lexical or Debian ordering.
@@ -363,6 +373,10 @@ p2s_version_package_state() {
         [ "$state" = N ] || state='?'
         # RLSA-2026:87151 fixes both CVEs without changing upstream PHP 8.0.30.
         # https://errata.rockylinux.org/RLSA-2026:87151 (exact build, not an RPM ordering rule).
+        # Rocky 8 RLSA-2026:87080 supplies both fixes in the vendor-supported PHP 7.4 stream.
+        case "$P2S_MAJOR:${version#0:}:$arch" in 8:7.4.33-8.module+el8.10.0+40393+c071e357:x86_64)
+            case "$name" in php|php-cli|php-common|php-fpm|php-embedded) state=N ;; esac ;;
+        esac
         case "$P2S_MAJOR:${version#0:}" in 9:8.0.30-8.el9_8.1)
             case "$name" in php|php-cli|php-common|php-fpm|php-embedded) state=N ;; esac ;;
         esac
@@ -596,7 +610,8 @@ p2s_package_backport_evidence_collect() {
 }
 
 p2s_package_inventory_assess() {
-    local name version arch vendor state path upstream role provider reason upstream_state source_record source_name source_version
+    local name version arch vendor state path upstream role provider reason upstream_state source_record source_name source_version required
+    local fixed_build comparison summary_reason
     : > "$P2S_WORK/package-states"
     : > "$P2S_WORK/summary-versions"
     : > "$P2S_WORK/bundled-providers"
@@ -612,7 +627,11 @@ p2s_package_inventory_assess() {
                         case "${P2S_PANEL:-}:$name" in
                             cpanel:cpanel-php*|cpanel:sw-engine*|plesk:sw-engine*)
                                 if [ -n "$P2S_PANEL_TOOL" ]; then
-                                    p2s_message_print info "$provider PHP uses the panel vendor update path."
+                                    if [ "$name" = cpanel-php84 ] || [ "$name" = cpanel-php81 ]; then
+                                        p2s_message_print info "cPanel includes its own PHP software for panel features. Update mode runs $P2S_PANEL_TOOL --security to request cPanel's security fixes."
+                                    else
+                                        p2s_message_print info "$provider includes its own PHP software. Update mode uses the installed $P2S_PANEL updater for it."
+                                    fi
                                     p2s_manifest_record panel_runtime_scope "$name|vendor_update_available|PHP_fixes_assessed_separately"
                                 else p2s_fix_block bundled_php "$provider PHP requires a vendor-specific update and restart procedure."; fi ;;
                             *) p2s_fix_block bundled_php "$provider PHP requires a vendor-specific update and restart procedure." ;;
@@ -643,9 +662,34 @@ p2s_package_inventory_assess() {
             if [ "$state" = Y ] && [ "$upstream_state" = '?' ]; then reason=presumed_affected_legacy_vendor_build; fi
             if [ "$state" = '?' ]; then reason=no_verified_vendor_rule_or_unrecognised_version; fi
             p2s_manifest_record package_assessment "$name|$version|$arch|$vendor|$provider|$state|$reason|upstream=$upstream_state"
+            summary_reason=$reason; fixed_build=
+            case "$P2S_BACKEND:$provider" in deb:Sury/*)
+                fixed_build=$(p2s_version_sury_fixed_build_output "$name" "$arch")
+                comparison=not_compared
+                if [ -n "$fixed_build" ]; then comparison=tool_unavailable; fi
+                if [ -n "$fixed_build" ] && p2s_command_exists dpkg; then
+                    comparison=failed
+                    if dpkg --compare-versions "$version" lt "$fixed_build" 2>/dev/null; then comparison=older
+                    elif dpkg --compare-versions "$version" gt "$fixed_build" 2>/dev/null; then comparison=newer
+                    elif dpkg --compare-versions "$version" eq "$fixed_build" 2>/dev/null; then comparison=equal
+                    fi
+                fi
+                p2s_manifest_record package_fix_reference "$name|installed=$version|reviewed_fixed=${fixed_build:-unavailable}|comparison=$comparison"
+                if [ "$state" = '?' ]; then summary_reason=sury_build_$comparison; fi ;;
+            esac
             printf '%s|%s\n' "$name" "$state" >> "$P2S_WORK/package-states"
             upstream=$(printf '%s\n' "${version#*:}" | sed 's/[^0-9.].*//')
             [ -n "$upstream" ] || upstream="unrecognised version ($name)"
+            if [ "$P2S_PHASE" = afterfix ] && ${P2S_PANEL_UPDATE_COMPLETED:-false} && [ "$state" != N ]; then
+                case "$P2S_PANEL:$name" in
+                    cpanel:cpanel-php84|cpanel:cpanel-php81)
+                        required='8.4.27 or later in the PHP 8.4 branch'
+                        if [ "$name" = cpanel-php81 ]; then required='cPanel PHP 8.1.34-2.cp110'; fi
+                        p2s_manifest_record panel_update_verification "$name|$version|$state|required=$required"
+                        p2s_message_print warn "cPanel's security updater returned success, but $name still lacks a verified fix (installed package: $version; required: $required). Review WHM's Update Preferences (/etc/cpupdate.conf) and /var/cpanel/updatelogs. The security updater can skip updates without an error or log; see the reported update settings."
+                        p2s_cpanel_last_update_report ;;
+                esac
+            fi
             case "$name" in
                 libapache*-mod-php*) role='Apache module' ;;
                 *-cli) role='command line' ;; *-cgi) role=CGI ;; *-fpm) role=PHP-FPM ;;
@@ -655,7 +699,7 @@ p2s_package_inventory_assess() {
             # Only executable output identifies the embedded PHP version in these product packages.
             case "$name" in
                 sw-engine|frankenphp*) p2s_manifest_record embedded_runtime_package "$name|$version|PHP_version=requires_executable_probe" ;;
-                *) printf '%s|%s|%s||%s|%s|%s|package\n' "$upstream" "$state" "$role" "$provider" "$version" "$upstream_state" >> "$P2S_WORK/summary-versions" ;;
+                *) printf '%s|%s|%s||%s|%s|%s|package|%s|%s|%s\n' "$upstream" "$state" "$role" "$provider" "$version" "$upstream_state" "$summary_reason" "$name" "$fixed_build" >> "$P2S_WORK/summary-versions" ;;
             esac
         else
             p2s_manifest_record package_classification "$name|supporting_or_selector_package|version_is_not_a_PHP_engine_version"
@@ -877,11 +921,223 @@ p2s_package_sources_collect() {
     esac
 }
 
+# Report retained build-release labels across Debian/Ubuntu too; PHP branch age cannot identify its OS release.
+p2s_package_release_report() {
+    local source_records=/dev/null name version arch family target evidence revision details
+    : > "$P2S_WORK/package-release-mismatches"
+    case "$P2S_BACKEND:$P2S_DISTRO" in
+        deb:debian|deb:ubuntu|rpm:almalinux|rpm:rocky|rpm:rhel|rpm:ol|rpm:centos) ;;
+        *) return 0 ;;
+    esac
+    [ -r "$P2S_WORK/packages" ] || return 0
+    if [ "$P2S_BACKEND" = deb ] && [ -r "$P2S_WORK/deb-source-records" ]; then source_records="$P2S_WORK/deb-source-records"; fi
+    # dpkg versions: 5.6.40+dfsg-0+deb8u12 -> Debian 8; +debian12~1 -> Debian 12.
+    # ~bpo12+1 targets Debian 12 even if the base names Debian 13; legacy ~bpo70+1 means Debian 7.
+    # +debian12~1 identifies Debian 12 even on an Ubuntu host; do not compare their release numbers.
+    # Ubuntu: 8.3.6-0ubuntu0.24.04.13 -> Ubuntu 24.04; RPM: 8.1.34-2.cp110~el8 -> EL 8.
+    if ! LC_ALL=C awk -F'|' -v distro="$P2S_DISTRO" -v current="$P2S_RELEASE" '
+        function release(version, label) {
+            if (distro=="debian" || distro=="ubuntu") {
+                family="Debian"
+                if (match(version, /~bpo[0-9]+[+]/)) {
+                    label=substr(version,RSTART,RLENGTH); sub(/^~bpo/,"",label); sub(/[+]$/,"",label)
+                    if (label=="60" || label=="70") label=substr(label,1,1)
+                } else if (match(version, /[+~]deb[0-9]+u[0-9]+([+.~]|$)/)) {
+                    label=substr(version,RSTART,RLENGTH); sub(/^[+~]deb/,"",label); sub(/u.*/,"",label)
+                } else if (match(version, /[+]debian[0-9]+~/)) {
+                    label=substr(version,RSTART,RLENGTH); sub(/^[+]debian/,"",label); sub(/~$/,"",label)
+                }
+                if (label=="") {
+                    family="Ubuntu"
+                    if (match(version, /ubuntu0[.][0-9][0-9][.][0-9][0-9]([.+~]|$)/)) {
+                        label=substr(version,RSTART,RLENGTH); sub(/^ubuntu0[.]/,"",label); sub(/[.+~]$/,"",label)
+                    } else if (match(version, /[+]ubuntu[0-9][0-9][.][0-9][0-9]([.+~]|$)/)) {
+                        label=substr(version,RSTART,RLENGTH); sub(/^[+]ubuntu/,"",label); sub(/[.+~]$/,"",label)
+                    }
+                }
+            } else {
+                family="Enterprise Linux"
+                if (match(version, /[.~]el[0-9]+([_.+~]|$)/)) {
+                    label=substr(version,RSTART,RLENGTH); sub(/^[.~]el/,"",label); sub(/[_.+~]$/,"",label)
+                }
+            }
+            return label
+        }
+        FILENAME==ARGV[1] {source[$1 FS $2 FS $3]=$5; next}
+        {
+            # Numeric VERSION_ID is required; codenames or unknown releases cannot prove age.
+            if (current !~ /^[0-9]+([.][0-9]+)*$/) next
+            revision=$2; target=release(revision); evidence="binary_version_marker"
+            if (target=="" && ($1 FS $2 FS $3) in source) {
+                revision=source[$1 FS $2 FS $3]; target=release(revision); evidence="source_version_marker"
+            }
+            installed=current
+            if (family!="Ubuntu") sub(/[.].*/,"",installed)
+            if (target!="" && ((family=="Debian" && distro=="ubuntu") ||
+                (family=="Ubuntu" && distro=="debian") || target+0<installed+0))
+                print $1 FS $2 FS $3 FS family FS target FS evidence FS revision
+        }' "$source_records" "$P2S_WORK/packages" > "$P2S_WORK/package-release-mismatches"; then
+        p2s_manifest_record source_gap 'package build-release assessment failed'
+        return 0
+    fi
+    while IFS='|' read -r name version arch family target evidence revision; do
+        p2s_manifest_record package_release_mismatch "$name|$version|$arch|target=$family $target|host=$P2S_DISTRO $P2S_RELEASE|evidence=$evidence|revision=$revision"
+    done < "$P2S_WORK/package-release-mismatches"
+    # Group packages by target release so a retained PHP build produces one customer warning.
+    awk -F'|' '{
+        key=$4 FS $5
+        if (!(key in packages)) order[++count]=key
+        detail=$1 " (" $2
+        if ($6=="source_version_marker") detail=detail "; source " $7
+        packages[key]=packages[key] separator[key] detail ")"; separator[key]=", "
+    } END {for (i=1;i<=count;i++) print order[i] FS packages[order[i]]}' "$P2S_WORK/package-release-mismatches" |
+        while IFS='|' read -r family target details; do
+            case "$P2S_DISTRO:$family" in
+                debian:Ubuntu|ubuntu:Debian)
+                    p2s_message_print warn "PHP packages built for another distribution are installed: $details. Their build labels identify $family $target; this server runs $P2S_DISTRO $P2S_RELEASE. Review replacements built for this server's distribution and release; changing the repository alone does not replace these installed packages." ;;
+                *) p2s_message_print warn "PHP packages from an older OS release are still installed: $details. Their build labels identify $family $target; this server runs $P2S_DISTRO $P2S_RELEASE. Review these packages and the PHP installations using them before choosing an update or migration." ;;
+            esac
+        done
+    return 0
+}
+
+# A process snapshot can show use, but cannot prove that websites or future jobs no longer need PHP.
+p2s_package_release_usage_report() {
+    local path name family target installation usage references packages label qualifier complete=false
+    [ -s "$P2S_WORK/package-release-mismatches" ] || return 0
+    : > "$P2S_WORK/release-usage-observations"
+    if [ -r "$P2S_WORK/runtime-package-observations" ]; then
+        cat "$P2S_WORK/runtime-package-observations" > "$P2S_WORK/release-usage-observations"
+        case "${P2S_PANEL:-}" in ''|none)
+            if ${P2S_PROCESS_USAGE_COMPLETE:-false} && ! ${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false} &&
+                ! ${P2S_RESTART_PENDING:-false} && ! ${P2S_BLOCKED:-false}; then complete=true; fi ;;
+        esac
+    fi
+    # Enabled links count as configured use even when Apache is stopped or the link is broken.
+    for path in /etc/apache2/mods-enabled/php*.load /etc/apache2/conf-enabled/php*-fpm.conf; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        name=${path##*/}; name=${name%.load}; name=${name%-fpm.conf}
+        printf '%s|enabled_configuration|%s\n' "$name" "$path" >> "$P2S_WORK/release-usage-observations"
+    done
+    # php5-cli/php5-fpm/libapache2-mod-php5 share php5; keep php8.2, ea-php82 and alt-php82 separate.
+    # A running FPM sibling protects the CLI, common files and extensions from an unused-package suggestion.
+    LC_ALL=C awk -F'|' -v complete="$complete" '
+        function installation(name) {
+            sub(/:.*/,"",name); sub(/^libapache[^-]*-mod-/,"",name)
+            if (match(name, /^(ea-|alt-|rh-|plesk-|cpanel-)?php[0-9]*([.][0-9]+)?/)) return substr(name,RSTART,RLENGTH)
+            if (match(name, /^(lsphp[0-9]*|sw-engine|frankenphp)/)) return substr(name,RSTART,RLENGTH)
+            return ""
+        }
+        FILENAME==ARGV[1] {
+            if ($1=="") incomplete=1
+            key=installation($1); if (key=="") next
+            if ($2=="enabled_configuration") {
+                configured[key]=1
+                if (!seen[key FS $3]++) config[key]=config[key] config_separator[key] $3
+                config_separator[key]=", "
+            } else {
+                observed[key]=1
+                if ($2=="running_path") {
+                    running[key]=1; reference=$1 " (" $3 ")"
+                    if (!seen[key FS reference]++) references[key]=references[key] separator[key] reference
+                    separator[key]=", "
+                }
+            }
+            next
+        }
+        {
+            stem=installation($1); key=$4 FS $5 FS (stem!="" ? stem : $1)
+            if (!(key in packages)) order[++count]=key
+            known[key]=(stem!=""); group[key]=stem
+            packages[key]=packages[key] package_separator[key] $1; package_separator[key]=", "
+        }
+        END {for (i=1;i<=count;i++) {
+            key=order[i]; stem=group[key]; use="unverified"; evidence="none"
+            if (running[stem]) {use="running"; evidence=references[stem]}
+            else if (configured[stem]) {use="configured"; evidence=config[stem]}
+            else if (complete=="true" && !incomplete && known[key] && observed[stem]) use="no_running_use_observed"
+            print key FS use FS evidence FS packages[key]
+        }}' "$P2S_WORK/release-usage-observations" "$P2S_WORK/package-release-mismatches" |
+        while IFS='|' read -r family target installation usage references packages; do
+            p2s_manifest_record package_release_usage "installation=$installation|target=$family $target|usage=$usage|packages=$packages|evidence=$references|usage_assessment_complete=$complete"
+            label=Older-release; qualifier=older-release
+            case "$P2S_DISTRO:$family" in debian:Ubuntu|ubuntu:Debian) label=Mismatched; qualifier=mismatched ;; esac
+            case "$usage" in
+                running) p2s_message_print warn "$label PHP installation $installation ($family $target packages: $packages) is in use by running processes. Observed runtime packages: $references. Move the applications using it to maintained PHP before considering removal." ;;
+                configured) p2s_message_print warn "$label PHP installation $installation ($family $target packages: $packages) has enabled Apache configuration: $references. Review its website assignments before considering removal." ;;
+                no_running_use_observed) p2s_message_print info "No running use was found for $qualifier PHP installation $installation ($family $target packages: $packages). If websites, scheduled tasks and other installed packages no longer need it, consider removing these packages. Review the package manager's proposed removals first." ;;
+                *) p2s_message_print warn "Use of $qualifier PHP installation $installation ($family $target packages: $packages) could not be established from the available process and package-file information. Check its websites, scheduled tasks and dependencies before considering removal." ;;
+            esac
+        done
+}
+
+p2s_package_repository_failure_report() {
+    local kind identity sources
+    # APT: "W: GPG error: https://user:secret@repo.invalid/private suite ..."
+    # -> host=repo.invalid. RPM: "Failed to download metadata for repo 'remi'" -> repo_id=remi.
+    LC_ALL=C p2s_manifest_redact_repository_urls < "$1" | LC_ALL=C awk '
+        /^(Hit|Get|Ign)(:|[ \t])/ {next}
+        {
+            line=tolower($0)
+            if ($0 ~ /(^Err[ :]|^E:|^[Ee]rrors?[: ]|GPG error|[Ff]ailed to|[Cc]annot |[Uu]nable to|[Cc]ould not|[Cc]ouldn.t |NO_PUBKEY|BADSIG|EXPKEYSIG|certificate.*(fail|error|problem|expired))/ ||
+                line ~ /(^|[^0-9])404[ \t]+not[ \t]+found([^a-z]|$)/ ||
+                line ~ /(http([\/][0-9.]+)?([ \t]+error)?|status([ \t]+code)?|error([ \t]+code)?)[ :\t]+404([^0-9]|$)/) print
+        }
+    ' > "$P2S_WORK/repository-errors"
+    [ -s "$P2S_WORK/repository-errors" ] || return 0
+    # Reuse the current, redacted inventory, including sources added during this fix.
+    p2s_repository_inventory_collect | LC_ALL=C awk '
+        function hosts(line, source, authority, key) {
+            while (match(line, /\[repository host=[^;]+; path redacted\]/)) {
+                authority=substr(line,RSTART,RLENGTH)
+                sub(/^\[repository host=/, "", authority); sub(/; path redacted\]$/, "", authority)
+                authority=tolower(authority)
+                if (source=="") failed_hosts[authority]=1
+                else {
+                    key=authority SUBSEP source
+                    if (!seen[key]++) host_sources[authority]=host_sources[authority] (host_sources[authority]=="" ? "" : ", ") source
+                }
+                line=substr(line,RSTART+RLENGTH)
+            }
+        }
+        FILENAME=="-" {
+            if ($0 !~ /^dss:manifest:repository_definition:[^|]+\|/) next
+            split($0, fields, "|")
+            source=fields[2] " (" fields[3] ")"
+            hosts($0, source)
+            if (fields[3] ~ /^rpm-repo=/) {
+                repo=fields[3]; sub(/^rpm-repo=/, "", repo)
+                key=repo SUBSEP source
+                if (!seen_repos[key]++) repo_sources[repo]=repo_sources[repo] (repo_sources[repo]=="" ? "" : ", ") source
+            }
+            next
+        }
+        {
+            hosts($0, "")
+            # RPM diagnostics quote an ID, not the repository display name or its credentials.
+            if (match($0, /repo(sitory)? [\047"][A-Za-z0-9_.:-]+[\047"]/)) {
+                repo=substr($0,RSTART,RLENGTH)
+                sub(/^[^ ]+ [\047"]/, "", repo); sub(/[\047"]$/, "", repo)
+                failed_repos[repo]=1
+            }
+        }
+        END {
+            for (authority in failed_hosts) print "host|" authority "|" (host_sources[authority]=="" ? "not identified in conventional source files" : host_sources[authority])
+            for (repo in failed_repos) print "repo_id|" repo "|" (repo_sources[repo]=="" ? "not identified in conventional source files" : repo_sources[repo])
+        }
+    ' - "$P2S_WORK/repository-errors" |
+        while IFS='|' read -r kind identity sources; do
+            p2s_manifest_record repository_failure_source "$kind=$identity|possible_sources=$sources|match=review_required"
+            p2s_message_print warn "Repository $identity reported an error. Possible source files: $sources. Match the failing repository and suite before changing a source file."
+        done
+}
+
 p2s_package_log_report() {
     # Package-manager failures can contain authenticated URLs. Never print those verbatim.
-    LC_ALL=C awk '{ gsub(/(https?|ftp):\/\/[^ \t\r\n\014\013"<>]+/, "[repository URL redacted]"); print }' "$1" |
+    LC_ALL=C p2s_manifest_redact_repository_urls < "$1" |
         while IFS= read -r line; do p2s_manifest_record command "$line"; done
     p2s_package_failure_report "$1"
+    p2s_package_repository_failure_report "$1"
 }
 
 p2s_package_failure_report() {
@@ -917,26 +1173,47 @@ p2s_package_failure_report() {
         p2s_manifest_record repository_failure tls
         p2s_message_print warn "The package or panel updater reported a TLS/certificate failure. Review the update log and repair trusted repository access. Certificate verification was not disabled."
     fi
-    if LC_ALL=C grep -Ei '404([ :]|$)|Not Found' "$1" >/dev/null; then
+    # APT: "Get:4 ... Packages [3404 B]" is success, not HTTP 404.
+    # Failures: "404 Not Found", "HTTP Error 404", "Status code: 404 for https://...".
+    LC_ALL=C awk '
+        /^(Hit|Get|Ign)(:|[ \t])/ {next}
+        {
+            line=tolower($0)
+            if (line ~ /(^|[^0-9])404[ \t]+not[ \t]+found([^a-z]|$)/ ||
+                line ~ /(http([\/][0-9.]+)?([ \t]+error)?|status([ \t]+code)?|error([ \t]+code)?)[ :\t]+404([^0-9]|$)/) print
+        }' "$1" | p2s_manifest_redact_repository_urls > "$P2S_WORK/repository-missing-files"
+    if [ -s "$P2S_WORK/repository-missing-files" ]; then
         p2s_manifest_record repository_failure http_404
-        p2s_message_print warn "A package repository returned a missing-file error. Check obsolete release URLs or stale mirrors; repository URLs were not rewritten."
+        LC_ALL=C sort -u "$P2S_WORK/repository-missing-files" | head -n 3 |
+            while IFS= read -r details; do
+                p2s_message_print warn "Repository request failed with HTTP 404 (file not found): $details. Check this request against the configured source; the repository may have moved or the package index may be stale."
+            done
     fi
     if LC_ALL=C grep -Ei 'Could not resolve|Couldn.t resolve|Name or service not known|Temporary failure resolving' "$1" >/dev/null; then
         p2s_manifest_record repository_failure dns
         p2s_message_print warn "Package-source name resolution failed; check the server DNS and network configuration."
     fi
     if LC_ALL=C grep -Ei 'NO_PUBKEY|GPG error|not signed|signature.*(fail|invalid)|unsigned package' "$1" >/dev/null; then
+        # Keep lock and disk failures primary when the same log also contains signing errors.
+        P2S_PACKAGE_FAILURE=${P2S_PACKAGE_FAILURE:-authentication}
         p2s_manifest_record repository_failure authentication
         p2s_message_print warn "Package authentication failed. Check the vendor signing keys and repository configuration; signature checks were not disabled."
     fi
 }
 
 p2s_package_refresh_failure_report() {
+    local reason
     p2s_package_log_report "$1"
-    case "$P2S_PACKAGE_FAILURE" in
-        package_manager_busy|disk_full)
+    case "$P2S_PACKAGE_FAILURE:${P2S_BACKEND:-}" in
+        package_manager_busy:*|disk_full:*)
             P2S_BLOCKED=true
             p2s_manifest_record blocker "$P2S_PACKAGE_FAILURE|Package metadata could not be refreshed; see the specific diagnostic above." ;;
+        authentication:deb)
+            reason="repository signature verification failed"
+            if LC_ALL=C grep -F NO_PUBKEY "$1" >/dev/null; then
+                reason="a repository signing key is missing (NO_PUBKEY)"
+            fi
+            p2s_fix_block repositories "Package-list refresh stopped because $reason. APT may retain old indexes for the failed repository even when other lists are current. See the affected repository and possible source files above, and the signing error in the package update log. Repair that repository's signing configuration, or disable it if no longer needed, then retry." ;;
         *) p2s_fix_block repositories "$2" ;;
     esac
 }
@@ -1158,7 +1435,9 @@ p2s_disruptive_sury_validate_equivalents() {
         *) p2s_fix_block provider_migration "No equivalent-package Sury migration is implemented for $P2S_DISTRO $P2S_RELEASE. Upgrade or migrate the OS rather than using another release's repository."; return 1 ;;
     esac
     case "${P2S_PANEL:-}" in ''|none) ;;
-        *) p2s_fix_block provider_migration "Switching PHP package sources to Sury is not implemented for control-panel-managed servers; their package and handler selections need a separate procedure."; return 1 ;;
+        cpanel) p2s_fix_block provider_migration "Sury/ondrej packages do not replace cPanel's EasyApache or internal PHP. Update the affected PHP packages through cPanel; this script does not switch them to Sury."; return 1 ;;
+        plesk) p2s_fix_block provider_migration "Custom Sury/ondrej PHP on Plesk requires separate PHP handler registration and website settings. This script does not migrate Plesk PHP to Sury/ondrej. Update Plesk-provided PHP through Plesk."; return 1 ;;
+        *) p2s_fix_block provider_migration "Switching PHP package sources to Sury is not implemented for this control panel; its package and PHP handler settings need a separate procedure."; return 1 ;;
     esac
     p2s_package_deb_sury_trust_preflight || return 1
     while IFS='|' read -r name version arch vendor; do
@@ -1225,6 +1504,9 @@ p2s_disruptive_sury_add_repository() {
         p2s_fix_block provider_migration "Adding a PHP source requires fix mode and both explicitly enabled Sury migration options."
         return 1
     fi
+    case "${P2S_PANEL:-}" in ''|none) ;;
+        *) p2s_fix_block provider_migration "Adding Sury/ondrej repositories is disabled for $P2S_PANEL-managed PHP. Use the panel's PHP update procedure."; return 1 ;;
+    esac
     case "$P2S_DISTRO:$P2S_RELEASE" in
         debian:11|debian:11.*) suite=bullseye ;; debian:12|debian:12.*) suite=bookworm ;; debian:13|debian:13.*) suite=trixie ;;
         ubuntu:22.04) suite=jammy ;; ubuntu:24.04) suite=noble ;;
@@ -1383,41 +1665,59 @@ p2s_repository_native_suites_verified() {
         END {stanza_check(); exit bad}' "$1"
 }
 
-# Emit only classifications, never repository URLs or inline signing keys.
+# Emit classifications and suite labels, never repository URLs or inline signing keys.
 p2s_repository_source_layouts_output() {
     local file=$1 suite=''
     case "${P2S_DISTRO:-}:${P2S_RELEASE:-}" in
         debian:9|debian:9.*) suite=stretch ;; debian:10|debian:10.*) suite=buster ;;
         debian:11|debian:11.*) suite=bullseye ;; debian:12|debian:12.*) suite=bookworm ;;
         debian:13|debian:13.*) suite=trixie ;;
+        ubuntu:22.04) suite=jammy ;; ubuntu:24.04) suite=noble ;;
     esac
     # deb [signed-by=/key] URI suite main; Deb822 fields can continue on indented lines.
     # extrepo_sury.sources + /var/lib/extrepo/keys/sury.asc identify the managed PHP source.
-    LC_ALL=C awk -v file="$file" -v suite="$suite" \
+    LC_ALL=C awk -v file="$file" -v suite="$suite" -v distro="${P2S_DISTRO:-}" -v active_arch="${2:-}" \
         -v standard_key=/usr/share/keyrings/debsuryorg-archive-keyring.gpg \
         -v extrepo_key=/var/lib/extrepo/keys/sury.asc '
         function trim(value) {gsub(/^[ \t]+|[ \t]+$/,"",value); return value}
-        function emit(n,a,i,uri,host,path,layout,matching) {
+        function contains(value,item) {gsub(/[, \t]+/," ",value); return index(" " trim(value) " "," " item " ")>0}
+        function emit(n,a,i,uri,host,path,layout,matching,provider,family,reported_suites) {
             if(types !~ /(^|[ \t])(deb|deb-src|rpm)([ \t]|$)/) return
             n=split(uris,a,/[ \t]+/)
             for(i=1;i<=n;i++) {
                 uri=a[i]; if(uri !~ /^https?:\/\//) continue
                 host=uri; sub(/^https?:\/\//,"",host); sub(/[\/?#].*$/,"",host); sub(/^.*@/,"",host)
                 path=uri; sub(/^https?:\/\/[^\/]+/,"",path); sub(/[?#].*$/,"",path)
+                if(active_arch!="") {
+                    if(enabled=="yes" && contains(types,"deb") && suite!="" && contains(suites,suite) &&
+                       (active_arch=="all" || ((architectures=="" || contains(architectures,active_arch) || contains(added_architectures,active_arch)) && !contains(excluded_architectures,active_arch))) &&
+                       ((distro=="debian" && host=="packages.sury.org" && path ~ /^\/php\/?$/) ||
+                        (distro=="ubuntu" && host ~ /^ppa[.]launchpad(content)?[.]net$/ && path ~ /^\/ondrej\/php\/ubuntu\/?$/))) print "active"
+                    continue
+                }
+                provider=""; family=""
                 if(host=="packages.sury.org" && path ~ /^\/php\/?$/ && types!="rpm") {
+                    provider="sury"; family="Debian"
                     layout="standard"
                     if(file ~ /\/extrepo_sury[.]sources$/ || signing==extrepo_key) {
                         layout="extrepo"
                         if(signing!=extrepo_key || uri !~ /^https:\/\//) layout="extrepo_custom"
                     } else if(signing!=standard_key || uri !~ /^https:\/\//) layout="legacy_or_custom"
+                } else if(host ~ /^ppa[.]launchpad(content)?[.]net$/ && path ~ /^\/ondrej\/php\/ubuntu\/?$/ && types!="rpm") {
+                    provider="ondrej"; family="Ubuntu"; layout="ppa"
+                }
+                if(provider!="") {
                     matching="unreviewed"
                     if(suite!="") {matching="different"; if(trim(suites)==suite) matching="matching"}
-                    print "sury|" layout "|" enabled "|" matching
+                    if((distro=="debian" && family!="Debian") || (distro=="ubuntu" && family!="Ubuntu")) matching="different"
+                    reported_suites=trim(suites); gsub(/[ \t]+/," ",reported_suites)
+                    if(reported_suites !~ /^[a-zA-Z0-9_.+~\/-]+( [a-zA-Z0-9_.+~\/-]+)*$/) reported_suites="unrecognised"
+                    print provider "|" layout "|" enabled "|" matching "|" family "|" reported_suites "|" suite
                 } else if(host=="software.virtualmin.com") print "virtualmin|legacy|" enabled "|unreviewed"
                 else if(host=="download.virtualmin.com") print "virtualmin|current|" enabled "|unreviewed"
             }
         }
-        function reset() {types=""; uris=""; suites=""; signing=""; enabled="yes"; key=""}
+        function reset() {types=""; uris=""; suites=""; signing=""; enabled="yes"; key=""; architectures=""; added_architectures=""; excluded_architectures=""}
         BEGIN {apt=(file ~ /[.](list|sources)$/); reset()}
         {
             if($0 ~ /^[ \t]*#/) next
@@ -1431,7 +1731,12 @@ p2s_repository_source_layouts_output() {
                     end=index(line,"]"); if(!end) next
                     options=substr(line,2,end-2); line=trim(substr(line,end+1))
                     count=split(options,option,/[ \t]+/)
-                    for(j=1;j<=count;j++) if(option[j] ~ /^signed-by=/) signing=substr(option[j],11)
+                    for(j=1;j<=count;j++) {
+                        if(option[j] ~ /^signed-by=/) signing=substr(option[j],11)
+                        if(option[j] ~ /^arch=/) architectures=substr(option[j],6)
+                        if(option[j] ~ /^arch\+=/) added_architectures=substr(option[j],7)
+                        if(option[j] ~ /^arch-=/) excluded_architectures=substr(option[j],7)
+                    }
                 }
                 split(line,entry,/[ \t]+/); uris=entry[1]; suites=entry[2]
                 emit(); reset(); next
@@ -1444,6 +1749,9 @@ p2s_repository_source_layouts_output() {
                 if(key=="suites") suites=suites " " line
                 if(key=="signed-by") signing=trim(signing " " line)
                 if(key=="enabled") enabled=(tolower(line)=="no" ? "no" : tolower(line)=="yes" ? "yes" : "unknown")
+                if(key=="architectures") architectures=architectures " " line
+                if(key=="architectures-add") added_architectures=added_architectures " " line
+                if(key=="architectures-remove") excluded_architectures=excluded_architectures " " line
             } else if(file !~ /[.]list$/ && file !~ /\/sources[.]list$/) {
                 if(line ~ /^\[/) {emit(); reset(); next}
                 if(line ~ /^baseurl[ \t]*=/) {sub(/^[^=]*=[ \t]*/,"",line); types="rpm"; uris=line}
@@ -1453,17 +1761,58 @@ p2s_repository_source_layouts_output() {
         END {emit()}' "$file"
 }
 
+p2s_repository_sury_installed_source_report() {
+    local name version arch vendor provider file active inspected advice
+    [ "${P2S_BACKEND:-}" = deb ] || return 0
+    while IFS='|' read -r name version arch vendor; do
+        provider=$(p2s_package_provider "$name" "$vendor" "$version")
+        case "$provider" in Sury/*) ;; *) continue ;; esac
+        # Read current definitions: cached APT indexes can survive a source being disabled.
+        active=false; inspected=true
+        for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$file" ] || continue
+            if [ ! -r "$file" ] || ! p2s_repository_source_layouts_output "$file" "$arch" > "$P2S_WORK/sury-active-source"; then
+                inspected=false; continue
+            fi
+            if [ -s "$P2S_WORK/sury-active-source" ]; then active=true; break; fi
+        done
+        if ! $active; then
+            if $inspected; then
+                case "${P2S_PANEL:-}" in
+                    ''|none) advice='Automatic Sury/ondrej updates need an active matching source. Review missing, commented-out or disabled sources and their release and architecture settings.' ;;
+                    *) advice="This server also uses $P2S_PANEL-managed PHP. Review the mixed package sources with the panel administrator before enabling a repository; Sury packages do not replace the panel's own PHP packages." ;;
+                esac
+                p2s_message_print warn "Sury/ondrej PHP packages are installed, but no active matching Sury/ondrej source was recognised in /etc/apt/sources.list or /etc/apt/sources.list.d (OS release $P2S_RELEASE; architecture $arch). $advice"
+                p2s_manifest_record repository_guidance "Sury|installed_packages_without_matching_active_source|architecture=$arch"
+            else
+                p2s_manifest_record source_gap 'Sury|active_source_check_incomplete|unreadable_or_unparsed_source'
+            fi
+            return 0
+        fi
+    done < "$P2S_WORK/packages"
+}
+
 p2s_repository_maintenance_report() {
-    local file=$1 provider layout enabled matching
+    local file=$1 provider layout enabled matching family suites expected advice
     if ! p2s_repository_source_layouts_output "$file" > "$P2S_WORK/repository-layouts"; then
         p2s_manifest_record source_gap "$file|repository_layout_assessment_failed"; return 0
     fi
-    while IFS='|' read -r provider layout enabled matching; do
+    while IFS='|' read -r provider layout enabled matching family suites expected; do
         p2s_manifest_record repository_layout "$file|$provider|$layout|enabled=$enabled|suite=$matching"
         if [ "$enabled" != yes ]; then
             p2s_manifest_record repository_guidance "$file|$provider|inactive_or_unknown_state|review_intended_state_before_repair_or_activation"
             continue
         fi
+        case "$provider:$matching" in sury:different|ondrej:different)
+            case "$P2S_DISTRO" in
+                ubuntu) advice="Ubuntu PHP packages use the ondrej/php PPA for ${expected:-the installed Ubuntu release}." ;;
+                debian) advice="Debian PHP packages use packages.sury.org/php for ${expected:-the installed Debian release}." ;;
+                *) advice='Check the PHP publisher support for this distribution and release.' ;;
+            esac
+            p2s_message_print warn "PHP repository mismatch in $file: the source supplies $family packages for suite '$suites', but this server runs $P2S_DISTRO $P2S_RELEASE. $advice Review the installed PHP packages before replacing the source; a repository change alone does not replace packages already installed."
+            p2s_manifest_record repository_guidance "$file|$provider|different_suite|manual_review=match_installed_OS_and_provider_support|configured=$family $suites|host=$P2S_DISTRO $P2S_RELEASE|expected_suite=$expected|not_executed"
+            continue ;;
+        esac
         case "$provider:$layout" in
             sury:extrepo*)
                 p2s_message_print info "Sury PHP source in $file uses an extrepo-managed layout. If repository repair is needed, review 'extrepo update sury' and reconcile duplicate definitions first. Do not use --refresh-sury-signing-key for this layout."
@@ -1475,10 +1824,6 @@ p2s_repository_maintenance_report() {
                 p2s_message_print warn "Legacy Virtualmin repository in $file; it may be intentional. If updates fail, review 'virtualmin configure-repos' ('virtualmin setup-repos' on older versions) and https://www.virtualmin.com/docs/installation/troubleshooting-repositories/ . Switching to the production repository can change Webmin module packaging."
                 p2s_manifest_record repository_guidance "$file|virtualmin|legacy|manual_review=virtualmin configure-repos|not_executed" ;;
         esac
-        if [ "$provider" = sury ] && [ "$matching" = different ]; then
-            p2s_message_print warn "Sury PHP source in $file does not specify just the installed Debian release's suite. Verify OS identity and Sury repository support before correcting the existing source; do not substitute packages from another release."
-            p2s_manifest_record repository_guidance "$file|sury|different_suite|manual_review=match_installed_OS_and_provider_support|not_executed"
-        fi
     done < "$P2S_WORK/repository-layouts"
 }
 
@@ -1498,6 +1843,9 @@ p2s_repository_repair_assess() {
     P2S_REPOSITORY_REPAIR_SUITE=$suite
     case "$recipe" in
         sury-key)
+            case "${P2S_PANEL:-}" in ''|none) ;;
+                *) P2S_REPOSITORY_REPAIR_REASON="Sury key repair is disabled for $P2S_PANEL-managed PHP; review its package sources through the panel's update procedure."; return 1 ;;
+            esac
             [ "$P2S_DISTRO" = debian ] || { P2S_REPOSITORY_REPAIR_REASON='The Sury key recipe applies only to the standard Debian Sury source.'; return 1; }
             keyring=/usr/share/keyrings/debsuryorg-archive-keyring.gpg
             for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -1764,6 +2112,7 @@ p2s_disruptive_package_configure_pending_php() {
         targets[${#targets[@]}]="$target"
     done < "$P2S_WORK/repair-pending"
     P2S_TRANSACTION_ATTEMPTED=true; P2S_PACKAGE_CONFIGURATION_ATTEMPTED=true
+    P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }dpkg --configure PHP packages"
     p2s_manifest_record package_repair_attempt 'configure_pending_php|explicit_targets_only|unrelated_triggers_suppressed|local_configuration_retained'
     if ! (export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
         p2s_command_run 600 dpkg --force-confold --no-triggers --configure "${targets[@]}" > "$P2S_WORK/repair.log" 2>&1); then
@@ -1883,6 +2232,7 @@ p2s_disruptive_package_reinstall_exact_php() {
         p2s_fix_block package_repair "Exact PHP reinstallation proposes a changed identity, new package, removal, unrelated configuration or unrecognized plan; no packages were installed."; return 1
     fi
     P2S_TRANSACTION_ATTEMPTED=true; P2S_PACKAGE_REINSTALL_ATTEMPTED=true
+    P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }apt-get install --reinstall PHP packages"
     p2s_manifest_record package_repair_attempt 'exact_php_reinstall|same_provider_name_version_architecture|local_configuration_retained|unrelated_triggers_suppressed'
     if ! (export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=l
         p2s_command_run 900 apt-get -y --no-remove --reinstall -o APT::Get::AllowUnauthenticated=false \
@@ -2064,7 +2414,7 @@ p2s_package_deb_update() {
     if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
         p2s_disruptive_sury_validate_equivalents || return 1
         P2S_SURY_MIGRATION_ACTIVE=true
-        p2s_message_print warn "Switching from distribution PHP packages to third-party Sury (Debian) or ondrej PHP PPA (Ubuntu) packages was explicitly requested. Only equivalent versioned packages with matching PHP branches, architecture and extension APIs are eligible; application testing is still required."
+        p2s_message_print warn "Switching from distribution PHP packages to third-party Sury (Debian) or ondrej PHP PPA (Ubuntu) packages was explicitly requested. Only equivalent versioned packages with matching PHP branches, architecture and extension APIs are eligible."
         p2s_manifest_record provider_migration 'Sury|explicit_opt_in|same_names_branches_architectures_and_extension_API|required_fixed_candidates|selectors_frozen'
     fi
     while IFS='|' read -r name version arch vendor; do
@@ -2237,6 +2587,7 @@ p2s_package_deb_update() {
         p2s_fix_block privileges 'A package installation requires explicit fix mode.'; return 1
     fi
     P2S_TRANSACTION_ATTEMPTED=true
+    P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }apt-get install --only-upgrade PHP packages"
     if ! (export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=l
         # P2S-MUTATION: Installs PHP and verified required library updates; package scripts can also change services.
         p2s_command_run 1800 apt-get -y --no-remove -o APT::Get::AllowUnauthenticated=false \
@@ -2307,12 +2658,101 @@ p2s_package_rpm_update() {
         return 1
     fi
     P2S_TRANSACTION_ATTEMPTED=true
+    P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }$manager update PHP packages"
     # P2S-MUTATION: Installs PHP RPM updates; package scriptlets can also change services.
     if ! p2s_command_run 1800 "$manager" -y --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' update "${packages[@]}" > "$log" 2>&1; then
         p2s_package_log_report "$log"; p2s_fix_block package_update "The RPM PHP update failed or timed out; check the package transaction before retrying."; return 1
     fi
     p2s_package_log_report "$log"
     p2s_message_print fixmethod "Updated installed PHP packages through $manager without switching streams or enabling package erasure."
+}
+
+# Manual migration advice only: cache inspection never enables or switches a module stream.
+p2s_package_rpm_stream_guidance_report() {
+    local record version arch vendor provider branch expected enabled state target stream_targets='' label unit
+    case "$P2S_BACKEND:$P2S_DISTRO:$P2S_MAJOR" in rpm:rocky:8|rpm:almalinux:8|rpm:rocky:9|rpm:almalinux:9) ;; *) return 0 ;; esac
+    case "${P2S_PANEL:-}" in ''|none) ;; *) return 0 ;; esac
+    # php-common is the engine family revision; php-pear and parallel/panel namespaces are not it.
+    [ -r "$P2S_WORK/packages" ] || return 0
+    record=$(awk -F'|' '$1=="php-common" {record=$2 FS $3 FS $4; count++} END {if (count==1) print record}' "$P2S_WORK/packages")
+    [ -n "$record" ] || return 0
+    IFS='|' read -r version arch vendor <<EOF
+$record
+EOF
+    provider=$(p2s_package_provider php-common "$vendor" "$version")
+    branch=${version#*:}; branch=${branch%%-*}; branch=${branch%.*}
+    case "$provider:$P2S_MAJOR:$branch" in
+        'Rocky Linux:8:7.2'|'Rocky Linux:8:7.3'|'Rocky Linux:8:8.0'|\
+        'AlmaLinux:8:7.2'|'AlmaLinux:8:7.3'|'AlmaLinux:8:8.0'|\
+        'Rocky Linux:9:8.1'|'AlmaLinux:9:8.1')
+            expected=$branch; label="The native PHP $branch module stream has retired even though this OS release is still maintained." ;;
+        Remi*:8:7.*|Remi*:8:8.0|Remi*:8:8.1|Remi*:9:7.*|Remi*:9:8.0|Remi*:9:8.1)
+            expected="remi-$branch"; label="This installation uses Remi PHP $branch, which is no longer supported by the upstream PHP project." ;;
+        *) return 0 ;;
+    esac
+    p2s_message_print warn "$label Ordinary dnf/yum upgrades stay in the enabled PHP stream; they do not select a newer PHP branch."
+    state=$(awk -F'|' '$1=="php-common" {print $2; exit}' "$P2S_WORK/package-states" 2>/dev/null)
+    if [ "$state" = N ]; then
+        p2s_message_print info "This installed PHP build already has verified PHP2Shell fixes. The stream migration below concerns ongoing support, not an outstanding fix for these two CVEs."
+    else
+        p2s_message_print info "First try --fix for security updates from the existing PHP source and branch. A same-branch security update is usually the smallest application change."
+    fi
+    if ! p2s_fix_blockers_match '|no_candidate|' || ! p2s_command_exists dnf; then return 0; fi
+    # DNF4 module list: php 7.2 [d][e] common [d], devel, minimal PHP scripting language.
+    # -C reads cached metadata; disabled plugins and private log paths avoid refresh/subscription helpers.
+    if ! LC_ALL=C p2s_command_run 60 dnf -C '--disableplugin=*' "--setopt=logfile=$P2S_WORK/module-source.log" \
+        "--setopt=logdir=$P2S_WORK" module list php > "$P2S_WORK/php-module-cache" 2> "$P2S_WORK/php-module-cache.err"; then
+        p2s_manifest_record php_module_gap "cache_query_failed|$(p2s_manifest_redact_repository_urls < "$P2S_WORK/php-module-cache.err")"
+        p2s_message_print warn "The cached PHP module list could not be read. Run 'sudo dnf --refresh module list php' to see the streams currently available from this server's repositories."
+        return 0
+    fi
+    p2s_manifest_record php_module_cache "$(p2s_manifest_redact_repository_urls < "$P2S_WORK/php-module-cache")"
+    LC_ALL=C awk '$1=="php" && $2 ~ /^[a-zA-Z0-9_.-]+$/ && !index($0,"[x]") {
+        key=$2; available[key]=1; if (index($0,"[e]")) enabled[key]=1
+    } END {for (key in available) print key "|" (enabled[key] ? "yes" : "no")}' "$P2S_WORK/php-module-cache" > "$P2S_WORK/php-module-streams"
+    enabled=$(awk -F'|' '$2=="yes" {print $1}' "$P2S_WORK/php-module-streams")
+    if [ "$enabled" != "$expected" ]; then
+        p2s_manifest_record php_module_gap "installed_branch=$branch|expected=$expected|enabled=$enabled|stream_state_not_matched"
+        p2s_message_print warn "The enabled PHP module stream could not be matched uniquely to installed PHP $branch. Review 'sudo dnf --refresh module list php' and 'rpm -q php-common' before choosing a migration."
+        return 0
+    fi
+    case "$expected:$P2S_MAJOR" in
+        remi-*:*) stream_targets=remi-8.4 ;;
+        7.2:8|7.3:8) stream_targets='7.4 8.2' ;;
+        8.0:8) stream_targets=8.2 ;;
+        8.1:9) stream_targets='8.2 8.3' ;;
+    esac
+    record=''
+    for target in $stream_targets; do
+        awk -F'|' -v wanted="$target" '$1==wanted {found=1} END {exit !found}' "$P2S_WORK/php-module-streams" || continue
+        case "$target" in
+            7.4) label='Smaller PHP 7 compatibility step; this is a vendor-maintained EL8 stream despite upstream PHP 7.4 being end of life.' ;;
+            remi-8.4) label='PHP 8.4 from the already configured Remi source. Confirm that the application and its extensions support PHP 8.4.'; target="$target/common" ;;
+            *) label="Native PHP $target. Confirm application and extension support for this PHP branch." ;;
+        esac
+        p2s_manifest_record php_stream_migration "current=$expected|target=$target|availability=cached_module_list|architecture=$arch|fixed_candidate=not_queried|manual_only|preview=sudo dnf --refresh --assumeno module switch-to php:$target|apply=sudo dnf --refresh module switch-to php:$target"
+        p2s_message_print info "Manual migration option php:$target. $label Preview the transaction: sudo dnf --refresh --assumeno module switch-to php:$target. After compatibility and package-plan review, apply that one option: sudo dnf --refresh module switch-to php:$target."
+        record=offered
+    done
+    if [ -z "$record" ]; then
+        p2s_message_print warn "No reviewed destination stream was found in the cached PHP module list. Refresh the list with 'sudo dnf --refresh module list php' before choosing a supported destination."
+        return 0
+    fi
+    p2s_message_print warn "A stream switch can replace extensions, change configuration and remove packages unavailable in the destination. Review application/framework/plugin requirements and the proposed removals. No PHP branch change is guaranteed compatible."
+    case "$branch" in
+        7.*) p2s_message_print warn "PHP 7 to 8 removes legacy functions such as each() and create_function(), tightens error handling and can require Apache PHP module configuration changes. Even PHP 7.2 to 7.4 changes regular-expression behaviour and needs matching extension builds." ;;
+        *) p2s_message_print info "Moving between PHP 8 branches can also introduce incompatible changes. Use the application's supported PHP versions and extension requirements to choose the destination." ;;
+    esac
+    p2s_message_print info "Published PHP2Shell fixes exist for these destination streams, but listing a stream does not verify its current package candidate. After applying one chosen migration, check the full installed build with 'rpm -q php-common' and rerun this script with --check. PHP 7.4 vendor backports can keep the 7.4.33 engine version."
+    if [ -r "$P2S_WORK/services" ]; then
+        while IFS= read -r unit; do
+            case "$unit" in
+                php-fpm.service) p2s_message_print info "After migration, validate the observed PHP-FPM service configuration with 'sudo php-fpm -t', then restart it with 'sudo systemctl restart php-fpm.service'." ;;
+                httpd.service) p2s_message_print info "After migration, verify Apache's PHP handler and run 'sudo httpd -t', then restart it with 'sudo systemctl restart httpd.service'." ;;
+            esac
+        done < "$P2S_WORK/services"
+    fi
+    [ ! -s "$P2S_WORK/scheduled-php" ] || p2s_message_print info "Already-running PHP scheduled tasks retain their old PHP code. Let them finish or restart them through their application's procedure after the migration."
 }
 
 # Repository configuration inventory
@@ -2357,7 +2797,7 @@ p2s_repository_inventory_collect() {
 p2s_panel_inventory_collect() {
     # CageFS is CloudLinux's per-customer filesystem jail; host updates can leave jail copies unchanged.
     local name directory label panel_found=false tool container_tools='' version_file version
-    local update_tools path
+    local update_tools path key value
     P2S_PANEL=; P2S_PANEL_TOOL=
     for name in cpanel plesk virtualmin directadmin cloudlinux cagefs litespeed aapanel; do
         case "$name" in
@@ -2376,6 +2816,26 @@ p2s_panel_inventory_collect() {
             for path in "$directory" "$directory/version" "$directory/cpsrvd" "$directory/3rdparty/bin/perl"; do
                 p2s_manifest_path_record panel_path "$path"
             done
+            if [ -r /etc/cpupdate.conf ]; then
+                # CPANEL=release / SECURITY_UPDATES=never: keep only documented update settings, never other configuration.
+                LC_ALL=C awk -F= '
+                    NF==2 && (($1=="CPANEL" && ($2 ~ /^(edge|current|release|stable|lts)$/ || $2 ~ /^[0-9]+([.][0-9]+)*$/)) ||
+                    ($1=="SECURITY_UPDATES" && $2 ~ /^(hourly|never)$/) ||
+                    (($1=="RPMUP" || $1=="UPDATES") && $2 ~ /^(daily|manual|never)$/)) {print $1 "|" $2}
+                ' /etc/cpupdate.conf | while IFS='|' read -r key value; do
+                    p2s_manifest_record panel_update_setting "cpanel|$key=$value"
+                    case "$key=$value" in
+                        SECURITY_UPDATES=never)
+                            p2s_message_print warn "cPanel's critical security updater is disabled by SECURITY_UPDATES=never in /etc/cpupdate.conf. Enable critical security updates in WHM's Update Preferences before retrying." ;;
+                        CPANEL=[0-9]*)
+                            # CPANEL=136 selects a branch; 136.0.29 or 11.136.0.29 pins an exact build.
+                            if printf '%s\n' "$value" | awk -F. 'NF==4 || (NF==3 && $1!=11) {found=1} END {exit !found}'; then
+                                p2s_message_print warn "cPanel is pinned to release $value in /etc/cpupdate.conf. Its critical security updater skips pinned releases. Review the release selection in WHM's Update Preferences."
+                            fi ;;
+                    esac
+                done
+            else p2s_manifest_record panel_update_setting 'cpanel|/etc/cpupdate.conf|unavailable'; fi
+            p2s_cpanel_last_update_report
         elif [ "$name" = cloudlinux ]; then
             p2s_manifest_path_record panel_path "$directory"
         fi
@@ -2447,6 +2907,61 @@ p2s_panel_inventory_collect() {
     fi
 }
 
+p2s_cpanel_last_update_report() {
+    local directory=/var/cpanel/updatelogs log modified line
+    # The last log can predate this no-op security request; never attribute it to this attempt.
+    ${P2S_CPANEL_LAST_LOG_REPORTED:-false} && return 0
+    P2S_CPANEL_LAST_LOG_REPORTED=true
+    p2s_command_exists readlink || return 0
+    directory=$(readlink -f "$directory" 2>/dev/null) || return 0
+    log=$(readlink -f "$directory/last" 2>/dev/null) || return 0
+    case "$log" in "$directory"/*) ;; *) return 0 ;; esac
+    [ -f "$log" ] && [ -r "$log" ] || return 0
+    # Read only the final 256 KiB; log size must not make a diagnostic expensive.
+    tail -c 262144 "$log" > "$P2S_WORK/cpanel-last-update.log" 2>/dev/null || return 0
+    modified=$(LC_ALL=C TZ=UTC stat -c '%y' "$log" 2>/dev/null) || modified=unavailable
+    p2s_manifest_record panel_previous_update_log "$log|modified_UTC=$modified|scope=last_262144_bytes|not_current_attempt_output"
+    p2s_message_print info "cPanel's last recorded update log is $log (last modified: $modified UTC). It records a previous update; the reported problems may have been resolved since then."
+    LC_ALL=C grep -Ei 'Blocker found:|conflicts with|conflicts:|The install encountered a fatal error:|reported error (number|code)[^0-9]*[1-9][0-9]*|ea-apache24.*(conflicts with httpd-mmn|requires ea-apache24-mmn)|cannot install.*(mod_ssl|httpd-core)' "$P2S_WORK/cpanel-last-update.log" |
+        head -n 20 | p2s_manifest_redact_repository_urls |
+        while IFS= read -r line; do p2s_manifest_record panel_previous_update_error "$line"; done
+    p2s_cpanel_update_blockers_report "$P2S_WORK/cpanel-last-update.log" previous || :
+    if LC_ALL=C grep -Ei 'The install encountered a fatal error:|reported error (number|code)[^0-9]*[1-9][0-9]*' "$P2S_WORK/cpanel-last-update.log" >/dev/null; then
+        p2s_message_print warn "cPanel's last recorded update log reports a failed component update. These historical errors may explain why PHP remains unfixed; they are not output from this update attempt."
+    fi
+}
+
+# Share exact blocker/conflict reporting between dated logs and current updater output.
+p2s_cpanel_update_blockers_report() {
+    local log=$1 scope=$2 line key reason failed=false
+    LC_ALL=C grep -Ei 'Blocker found:|conflicts with|conflicts:|((invalid|expired|missing|not valid|not activated).*licen[cs]e|licen[cs]e.*(invalid|expired|missing|not found|not valid|not activated))' "$log" |
+        head -n 20 | p2s_manifest_redact_repository_urls > "$P2S_WORK/cpanel-update-blockers"
+    while IFS= read -r line; do
+        key=panel_update
+        if printf '%s\n' "$line" | LC_ALL=C grep -Ei 'licen[cs]e' >/dev/null; then
+            key=panel_license
+            reason="cPanel reported a license problem. A valid cPanel license is required for this update path. Check the current license status in WHM. Reported reason: $line"
+        elif printf '%s\n' "$line" | LC_ALL=C grep -Ei 'conflicts with|conflicts:' >/dev/null; then
+            key=panel_package_conflict
+            reason='cPanel reported conflicting packages that cannot be installed together.'
+            if printf '%s\n' "$line" | LC_ALL=C grep -E 'ea-apache24.*conflicts with httpd-mmn.*httpd-core' >/dev/null; then
+                reason="cPanel's Apache package (ea-apache24) conflicts with the operating system's Apache package (httpd-core)."
+            fi
+            reason="$reason Resolve the package selections before retrying. Reported conflict: $line"
+        else
+            reason="cPanel reported an update blocker: $line"
+        fi
+        if [ "$scope" = current ]; then
+            p2s_manifest_record panel_update_diagnostics "cpanel|$key|$line"
+            p2s_fix_block "$key" "$reason Some changes may already have been made."
+        else
+            p2s_message_print warn "cPanel's last recorded update log: $reason"
+        fi
+        failed=true
+    done < "$P2S_WORK/cpanel-update-blockers"
+    ! $failed
+}
+
 # P2S-MUTATION: Vendor update path; Plesk can update non-PHP components as well.
 p2s_panel_update() {
     local log="$P2S_WORK/panel-update.log" status
@@ -2454,7 +2969,7 @@ p2s_panel_update() {
     case "$P2S_PANEL" in
         cpanel)
             arguments=("$P2S_PANEL_TOOL" --security)
-            p2s_message_print info "Requesting critical cPanel security updates before checking website PHP packages." ;;
+            p2s_message_print info "Running $P2S_PANEL_TOOL --security to request cPanel's critical security updates before checking website PHP packages." ;;
         plesk)
             arguments=("$P2S_PANEL_TOOL" installer --select-release-current --upgrade-installed-components)
             p2s_message_print warn "Updating installed Plesk components within the current release. This operation can also update databases, mail and web-server components; check those services and applications afterwards." ;;
@@ -2462,17 +2977,14 @@ p2s_panel_update() {
     esac
     p2s_manifest_record panel_update_command "${arguments[*]}"
     P2S_TRANSACTION_ATTEMPTED=true
+    P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }${arguments[*]}"
     # P2S-MUTATION: Runs the installed vendor updater; do not force a release change or rewrite preferences.
     p2s_command_run 1800 "${arguments[@]}" < /dev/null > "$log" 2>&1
     status=$?
     p2s_package_log_report "$log"
     p2s_manifest_record panel_update_exit "$P2S_PANEL|$status"
-    # upcp can continue maintenance after its license check blocks the security update.
-    if [ "$P2S_PANEL" = cpanel ] && LC_ALL=C grep -Fi 'Blocker found: No license file found.' "$log" >/dev/null; then
-        p2s_manifest_record panel_update_diagnostics 'cpanel|license_unavailable|see_vendor_update_log'
-        p2s_fix_block panel_license "cPanel could not find its license, so its updater could not finish. A valid cPanel license is required for this update path. Some changes may already have been made."
-        return 1
-    fi
+    # Report every selected blocker before returning: licensing and package conflicts can coexist.
+    if [ "$P2S_PANEL" = cpanel ] && ! p2s_cpanel_update_blockers_report "$log" current; then return 1; fi
     # cPanel can exit zero after a nested updater reports a fatal error or nonzero child exit.
     if [ "$P2S_PANEL" = cpanel ] && LC_ALL=C grep -Ei 'The install encountered a fatal error:|reported error (number|code)[^0-9]*[1-9][0-9]*' "$log" >/dev/null; then
         p2s_manifest_record panel_update_diagnostics 'cpanel|nested_update_failed|see_vendor_update_log'
@@ -2484,7 +2996,7 @@ p2s_panel_update() {
         return 1
     fi
     P2S_PANEL_UPDATE_COMPLETED=true
-    p2s_message_print fixmethod "The $P2S_PANEL vendor update command completed. Installed PHP and running processes are checked again."
+    p2s_message_print fixmethod "${arguments[*]} returned success. Checking installed PHP and running processes to see whether the fixes were installed."
 }
 
 # Process scope, scheduled jobs and running-code inventory
@@ -2602,6 +3114,7 @@ p2s_process_inventory_collect() {
     : > "$P2S_WORK/unmapped-services"
     : > "$P2S_WORK/scheduled-php"
     : > "$P2S_WORK/scope-reviews-reported"
+    P2S_PROCESS_USAGE_COMPLETE=false
     : > "$P2S_WORK/process-runtime-paths"
     : > "$P2S_WORK/web-restart-advisories"
     if [ ! -r /proc/1/stat ] || ! p2s_command_exists readlink || ! p2s_command_exists ps; then
@@ -2661,7 +3174,7 @@ p2s_process_inventory_collect() {
                 nginx*) label=nginx ;; sw-engine*) label='WebPros sw-engine PHP' ;;
                 lshttpd*) label=LiteSpeed ;; frankenphp*) label=FrankenPHP ;;
             esac
-            [ -z "$label" ] || p2s_message_print info "$label main process started: ${started:-unknown}."
+            [ -z "$label" ] || p2s_message_print info "$label main process started: ${started:-unknown} (PID $pid; executable $executable)."
         fi
         if ! p2s_process_check_host_scope "$entry" "$pid" "$executable"; then continue; fi
         case "$comm" in php*|lsphp*|sw-engine*|frankenphp*)
@@ -2818,6 +3331,7 @@ EOF
     if [ "$unreadable_executables" -gt 0 ] || [ "$unreadable_maps" -gt 0 ]; then
         p2s_message_print warn "We could not fully check some running PHP or web-server processes. Rerun the check; if this continues, review process access using the details in the run log."
     fi
+    if [ "$unreadable_executables" -eq 0 ] && [ "$unreadable_maps" -eq 0 ] && [ "$(id -u)" = 0 ]; then P2S_PROCESS_USAGE_COMPLETE=true; fi
     p2s_manifest_record process_summary "matched_processes=$process_count|restart_pending=$P2S_RESTART_PENDING"
     p2s_manifest_record web_process_summary "recognised_server=$web_server_found|scope=inspected_process_list"
     if $process_found && ! $web_server_found; then
@@ -2891,10 +3405,11 @@ p2s_runtime_path_add() {
         lsphp[0-9]*) suffix=${1##*/}; suffix=${suffix#lsphp} ;;
     esac
     case "$suffix" in *[!0-9.]*) return ;; esac
+    # Debian 8 names its engines php5-fpm/php5-cgi; newer Debian uses php-fpm8.4/php-cgi8.4.
     # Match the basename: */php[0-9]* would also match configuration below /etc/php8.4/.
     case "$1" in /*) ;; *) return ;; esac
     case "${1##*/}" in
-        php|php[0-9]|php[0-9].[0-9]|php-cgi|php-cgi[0-9]*|php-fpm|php-fpm[0-9]*|lsphp|lsphp[0-9]*|sw-engine|sw-engine-fpm|libphp*.so|frankenphp)
+        php|php[0-9]|php[0-9].[0-9]|php5-cgi|php5-fpm|php-cgi|php-cgi[0-9]*|php-fpm|php-fpm[0-9]*|lsphp|lsphp[0-9]*|sw-engine|sw-engine-fpm|libphp*.so|frankenphp)
             printf '%s\n' "$1" >> "$P2S_WORK/paths.raw" ;;
     esac
 }
@@ -2919,6 +3434,7 @@ p2s_runtime_report_startup_warnings() {
 p2s_runtime_inventory_collect() {
     local path owner output state version package_version expected actual role built vendor provider resolved reason upstream_state probe_status observation level
     : > "$P2S_WORK/runtime-reviews"
+    : > "$P2S_WORK/runtime-package-observations"
     # Software Collections keep parallel PHP versions under /opt/remi or /opt/rh instead of /usr/bin.
     # Bounded conventional locations, panel trees and software collections. No traversal of /home or /.
     for path in /usr/bin/php* /usr/sbin/php* /usr/bin/sw-engine /usr/local/bin/php* /usr/local/sbin/php* /usr/local/bin/lsphp* /usr/local/bin/frankenphp \
@@ -2939,6 +3455,7 @@ p2s_runtime_inventory_collect() {
             p2s_manifest_path_record runtime_path "$path" "${owner:-unverified}"
             P2S_UNKNOWN=true
             p2s_manifest_record inventory_gap "runtime_file|$path|missing_or_not_regular"
+            printf '|unverified|%s\n' "$path" >> "$P2S_WORK/runtime-package-observations"
             p2s_message_print warn "An inventoried PHP runtime file is missing or is not a regular file: $path. Review the package files and running-process references."
             continue
         fi
@@ -2974,11 +3491,12 @@ p2s_runtime_inventory_collect() {
             observation=running_path
         fi
         p2s_manifest_record runtime_observation "$path|$observation"
+        printf '%s|%s|%s\n' "$owner" "$observation" "$path" >> "$P2S_WORK/runtime-package-observations"
         case "$path" in *.so)
             state=$(awk -F'|' -v name="$owner" '$1 == name { print $2; exit }' "$P2S_WORK/package-states" 2>/dev/null)
             if [ -n "$state" ]; then
                 actual=$(printf '%s\n' "${package_version#*:}" | sed 's/[^0-9.].*//')
-                printf '%s|%s|Apache module||%s|%s|%s|%s\n' "$actual" "$state" "$provider" "$package_version" "$(p2s_version_upstream_state "$package_version")" "$observation" >> "$P2S_WORK/summary-versions"
+                printf '%s|%s|Apache module||%s|%s|%s|%s|engine_package_assessment\n' "$actual" "$state" "$provider" "$package_version" "$(p2s_version_upstream_state "$package_version")" "$observation" >> "$P2S_WORK/summary-versions"
             else
                 P2S_UNKNOWN=true
                 p2s_manifest_record inventory_gap "module_version|$path|no_assessed_engine_owner"
@@ -2994,7 +3512,7 @@ p2s_runtime_inventory_collect() {
             continue
         fi
         # Only runtime executables, never php-config, phpize or package-maintenance helpers.
-        case "${path##*/}" in php|php[0-9]|php[0-9].[0-9]|php-cgi|php-cgi[0-9]*|php-fpm|php-fpm[0-9]*|lsphp|lsphp[0-9]*|sw-engine|sw-engine-fpm|frankenphp) ;; *) continue ;; esac
+        case "${path##*/}" in php|php[0-9]|php[0-9].[0-9]|php5-cgi|php5-fpm|php-cgi|php-cgi[0-9]*|php-fpm|php-fpm[0-9]*|lsphp|lsphp[0-9]*|sw-engine|sw-engine-fpm|frankenphp) ;; *) continue ;; esac
         if output=$(p2s_runtime_probe_version "$path" 2>&1); then
             p2s_manifest_record runtime_probe "$path|exit=0"
             # PHP 8.4.27 (cli) ...; FrankenPHP v1.11.1 PHP 8.4.27 Caddy v2.10.2.
@@ -3053,7 +3571,7 @@ p2s_runtime_inventory_collect() {
             p2s_manifest_record runtime_assessment "$path|$owner|$version|$package_version|$provider|$state|$reason|upstream=$upstream_state"
             # A wrapper's revision is not a PHP revision; keep it in runtime_assessment only.
             case "$reason" in owner_is_not_an_assessed_engine|engine_package_version_mismatch|embedded_engine_independent_version) package_version= ;; esac
-            printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$actual" "$state" "$role" "$built" "$provider" "$package_version" "$upstream_state" "$observation" >> "$P2S_WORK/summary-versions"
+            printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$actual" "$state" "$role" "$built" "$provider" "$package_version" "$upstream_state" "$observation" "$reason" >> "$P2S_WORK/summary-versions"
         else
             probe_status=$?
             P2S_UNKNOWN=true
@@ -3062,7 +3580,7 @@ p2s_runtime_inventory_collect() {
             p2s_manifest_record runtime_probe "$path|exit=$probe_status"
             p2s_manifest_record runtime_error "$path|$output"
             if [ "$owner" = ea-php-cli ] && [ "$probe_status" -eq 2 ] && [ "$output" = 'Default PHP is not configured!' ]; then
-                p2s_message_print warn "cPanel's command-line PHP selector at $path has no default PHP version configured. Review the cPanel CLI PHP selection and check the installed versioned website PHP runtimes separately. This check did not choose a default PHP version."
+                p2s_message_print warn "cPanel's command-line PHP selector at $path has no default PHP version configured, so this command cannot run PHP. Configure the default in WHM's MultiPHP Manager. Installed versioned PHP runtimes are checked separately."
             else
                 p2s_message_print warn "Could not obtain a PHP version from $path (exit $probe_status; 124 means timeout). Review this executable's startup error in the diagnostic output; missing libraries or runtime configuration may need repair."
             fi
@@ -3265,24 +3783,34 @@ p2s_service_restart_and_verify() {
 
 p2s_summary_print_versions() {
     local level message prefix=
+    ${P2S_RETRY_ASSESSMENT:-false} && return 0
     if [ "${P2S_MODE:-check}" = fix ]; then
         prefix='Initial check: '
         if [ "$P2S_PHASE" = afterfix ] &&
             { ${P2S_TRANSACTION_ATTEMPTED:-false} || ${P2S_RESTART_ATTEMPTED:-false}; }; then
             prefix='After update attempt: '
+            if [ -n "${P2S_UPDATE_METHOD:-}" ]; then prefix="After update attempt ($P2S_UPDATE_METHOD): "
+            elif ${P2S_RESTART_ATTEMPTED:-false}; then prefix='After service restart attempt: '
+            fi
         fi
     fi
     # Keep package publishers separate: fixed EasyApache and unverified panel PHP can report the same version.
-    # Full package revisions, paths and unabridged version output remain in the manifest.
+    # Unknown builds show package revisions and the missing evidence; full paths/output remain in the manifest.
     [ -s "$P2S_WORK/summary-versions" ] || return 0
     sort -u "$P2S_WORK/summary-versions" | awk -F'|' -v prefix="$prefix" '
         {
             key=$1 SUBSEP $2 SUBSEP $5
+            # A backport changes the package build while php -v can stay unchanged.
+            if ($5 ~ /^Sury\//) key=key SUBSEP $6
             if (!(key in version)) { order[++count]=key; version[key]=$1; state[key]=$2; provider[key]=$5 }
             if (!seen_role[key SUBSEP $3]++) roles[key]=roles[key] (roles[key] ? ", " : "") $3
             if ($7 == "Y") affected_upstream[key]=1
             if ($2 == "Y" && $7 == "?") presumed_affected[key]=1
             if ($8 != "") evidence[key SUBSEP $8]=1
+            if ($6 != "" && !seen_revision[key SUBSEP $6]++) revisions[key]=revisions[key] (revisions[key] ? ", " : "") $6
+            if ($9 != "") reasons[key SUBSEP $9]=1
+            if ($10 != "" && !seen_package[key SUBSEP $10]++) packages[key]=packages[key] (packages[key] ? ", " : "") $10
+            if ($11 != "" && !seen_fixed[key SUBSEP $11]++) fixed_builds[key]=fixed_builds[key] (fixed_builds[key] ? ", " : "") $11
         }
         END {
             for (i=1; i<=count; i++) {
@@ -3297,9 +3825,34 @@ p2s_summary_print_versions() {
                     conclusion="outside this detector\047s verified PHP2Shell coverage; review its security support and migrate applications to maintained, patched PHP."
                 text=prefix "PHP " version[key] " (" roles[key] "): " conclusion
                 source=provider[key]; sub(/ [(](revision|namespace) hint[)]$/, "", source)
-                if (source) text=text " Package label: " source "."
+                if (source) text=text " Package publisher: " source "."
+                if (packages[key]) text=text " Installed packages: " packages[key] "."
+                if (provider[key] ~ /^Sury\// && revisions[key]) text=text " Installed package build: " revisions[key] "."
                 if (state[key]=="N" && affected_upstream[key]) text=text " The PHP package publisher added the security fixes without changing the PHP version."
-                if (state[key]=="?" && affected_upstream[key]) text=text " The upstream version is in the affected range; backport status for this installed build is unverified."
+                if (state[key]=="?") {
+                    if (provider[key] !~ /^Sury\// && revisions[key]) text=text " Installed package build: " revisions[key] "."
+                    if (reasons[key SUBSEP "engine_package_version_mismatch"])
+                        text=text " The executable reports a different PHP version from its owning package; check the runtime mismatch warning."
+                    else if (reasons[key SUBSEP "package_inventory_unavailable"])
+                        text=text " Package inventory is unavailable, so the installed build and any vendor security fixes could not be checked."
+                    else if (reasons[key SUBSEP "owner_is_not_an_assessed_engine"] || reasons[key SUBSEP "owner_outside_PHP_inventory"])
+                        text=text " No assessed PHP engine package owns this executable; confirm its installation source and security fixes."
+                    else if (reasons[key SUBSEP "sury_build_older"])
+                        text=text " The installed Sury package build is older than this check\047s verified fixed build: " fixed_builds[key] ". The installed build is not on this check\047s list of verified patched packages."
+                    else if (reasons[key SUBSEP "sury_build_newer"])
+                        text=text " The installed Sury package build is newer than this check\047s verified fixed build: " fixed_builds[key] ". This particular build has not been verified."
+                    else if (reasons[key SUBSEP "sury_build_equal"])
+                        text=text " The package revision compares equal to the verified fixed Sury build: " fixed_builds[key] ". Its exact build and source identity did not match a reviewed package."
+                    else if (reasons[key SUBSEP "sury_build_tool_unavailable"])
+                        text=text " The dpkg version-comparison tool is unavailable; the reviewed fixed Sury build is " fixed_builds[key] "."
+                    else if (reasons[key SUBSEP "sury_build_failed"])
+                        text=text " dpkg could not compare the installed package version with the reviewed fixed Sury build: " fixed_builds[key] "."
+                    else if (reasons[key SUBSEP "sury_build_not_compared"])
+                        text=text " No reviewed fixed Sury build could be compared for this OS release, architecture and package."
+                    else if (affected_upstream[key])
+                        text=text " This PHP release needs security fixes from its package publisher. This script has no verified fix record for the installed build. Check both CVEs with the publisher or install a confirmed fixed build."
+                    else text=text " No verified version or package fix rule matches this build; check both CVEs with its publisher."
+                }
                 if (state[key]=="Y" && provider[key]=="AlmaLinux") text=text " AlmaLinux has published security updates for this PHP stream; check your configured package sources for an available fix."
                 if (evidence[key SUBSEP "running_path"]) text=text " Running processes use this installation."
                 else if (evidence[key SUBSEP "executable"]) text=text " Installed; no matching running process was found."
@@ -3364,13 +3917,16 @@ p2s_inventory_collect_and_assess() {
     P2S_SEPARATE_ENVIRONMENT_REVIEW=false; P2S_PACKAGE_POLICY_REVIEW=false
     : > "$P2S_WORK/paths.raw"
     p2s_package_inventory_collect
-    p2s_package_sources_collect
     p2s_panel_inventory_collect
+    p2s_package_sources_collect
+    p2s_package_release_report
+    p2s_repository_sury_installed_source_report
     p2s_package_inventory_assess
     p2s_process_inventory_collect
     p2s_web_listener_inventory_collect
     p2s_runtime_inventory_collect
     p2s_process_scheduled_php_verify
+    p2s_package_release_usage_report
     if [ "$(id -u)" != 0 ]; then P2S_UNKNOWN=true; p2s_message_print warn "A root check is required to inspect all PHP workers."; fi
     if $P2S_RESTART_PENDING; then p2s_message_print warn "A relevant process still uses a deleted executable or PHP module; a restart needs verification."; fi
     # All inventoried versions/interfaces (CLI, FPM, Apache module, embedded PHP) share one CVE marker.
@@ -3381,6 +3937,7 @@ p2s_inventory_collect_and_assess() {
     fi
     p2s_manifest_record aggregate "$P2S_STATE|runtime_packages=$P2S_COUNT|restart_pending=$P2S_RESTART_PENDING"
     p2s_summary_print_versions
+    p2s_package_rpm_stream_guidance_report
     P2S_INVENTORY_MESSAGES=false
 }
 
@@ -3655,6 +4212,11 @@ p2s_fix_recommendation_print() {
 p2s_fix_recommend_options() {
     local status=0 name version arch vendor exact=true native_php=false migration_repair=''
     [ "${P2S_STATE:-N}" != N ] || return 0
+    case "${P2S_PANEL:-}" in
+        cpanel|plesk)
+            if ! ${P2S_BLOCKED:-false}; then p2s_fix_recommendation_print existing_provider '--fix' 'Use the detected panel updater for its PHP packages.'; fi
+            return 0 ;;
+    esac
     if [ "${P2S_BACKEND:-}" != deb ]; then
         if ! ${P2S_BLOCKED:-false}; then p2s_fix_recommendation_print existing_provider '--fix' 'Use the current supported package or panel procedure.'; fi
         return 0
@@ -3832,7 +4394,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command script_revision=2026-10-29.5
+    local mode=check result=0 command script_revision=2026-10-29.15
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -3849,6 +4411,8 @@ p2s_main() {
     esac
     P2S_PHASE=beforefix; P2S_BLOCKED=false; P2S_FIX_FAILED=false
     P2S_TRANSACTION_ATTEMPTED=false; P2S_RESTART_ATTEMPTED=false
+    P2S_UPDATE_METHOD=; P2S_RETRY_ASSESSMENT=false
+    P2S_CPANEL_LAST_LOG_REPORTED=false
     P2S_SURY_REPOSITORY_CREATED=false; P2S_SURY_KEY_CREATED=false
     for command in awk sed grep sort tr head cat date uname id mkdir rm; do
         if ! p2s_command_exists "$command"; then
@@ -3865,12 +4429,13 @@ p2s_main() {
     umask 077
     p2s_work_directory_init || return 1
     : > "$P2S_WORK/blocker-keys"
+    : > "$P2S_WORK/messages.inventory"
     # Main runs in a subshell so traps/options never leak into a caller that sources this script.
     trap 'p2s_disruptive_sury_cleanup_added_repository; rm -rf "$P2S_WORK"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     export LC_ALL=C
-    p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-27'
+    p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-29'
     p2s_manifest_record script_revision "$script_revision"
     p2s_manifest_record source_preservation 'policy=explicit_provider_migrations_only|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|other_providers_and_panel_transactions_require_separate_review'
     p2s_manifest_record dependency_policy 'required_installed_native_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources|no_additions_removals_or_downgrades'
@@ -3929,6 +4494,7 @@ p2s_main() {
             P2S_ALLOW_PENDING_PHP_CONFIGURATION=false; P2S_ALLOW_EXACT_PHP_REINSTALL=false
             P2S_REPOSITORY_REPAIR=none
             P2S_PHASE=afterfix
+            P2S_RETRY_ASSESSMENT=true
             p2s_inventory_collect_and_assess
             p2s_fix_check_distro_recipe
             if p2s_fix_preflight; then
@@ -3937,7 +4503,7 @@ p2s_main() {
             P2S_FIX_RECOMMENDATION_EMITTED=false
             p2s_fix_recommend_options
             if ! $P2S_FIX_RECOMMENDATION_EMITTED; then
-                p2s_message_print warn "No additional automatic repair was identified. Review the reported blockers, package/update output and remaining PHP versions in the detailed log before retrying. Run --check after addressing the remaining package or runtime findings."
+                p2s_message_print warn "This script could not finish the PHP fix. Check the earlier messages for the remaining problems. After resolving them, run --check again."
             fi
         )
         if ! $P2S_TRANSACTION_ATTEMPTED && ! $P2S_RESTART_ATTEMPTED; then
@@ -3950,6 +4516,8 @@ p2s_main() {
         else
             if [ "$result" -eq 0 ] && [ "$P2S_STATE" = '?' ]; then
                 p2s_message_print error "The update attempt finished, but we could not verify that all PHP installations are patched. See the remaining verification warnings above."
+            elif [ "$result" -eq 0 ] && [ "$P2S_STATE" = Y ]; then
+                p2s_message_print error "The update attempt finished, but at least one PHP installation is still vulnerable. See the remaining PHP versions and update messages above."
             else
                 p2s_message_print error "The update could not be completed or verified. Packages or services may have changed. Review the messages and check your websites before retrying."
             fi

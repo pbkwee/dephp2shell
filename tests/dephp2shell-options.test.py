@@ -117,6 +117,43 @@ printf 'RC=%s|PROBES=%s\n' "$?" "$probes"
                 self.assertIn({'release': 'RC=0|PROBES=2', 'busy': 'RC=1|PROBES=3',
                                'unknown': 'RC=1|PROBES=1', 'slow': 'RC=1|PROBES=1'}[scenario], out)
 
+    def test_panel_recommendations_use_vendor_updater_and_do_not_offer_sury_repairs(self):
+        for panel in ('cpanel', 'plesk'):
+            for blocked in ('false', 'true'):
+                with self.subTest(panel=panel, blocked=blocked):
+                    out = self.shell('P2S_PANEL=' + panel + '; P2S_BLOCKED=' + blocked + r'''
+P2S_BACKEND=deb; P2S_STATE=Y
+p2s_package_lock_probe() { printf 'UNEXPECTED_APT_ASSESSMENT\n'; return 0; }
+p2s_repository_repair_assess() { printf 'UNEXPECTED_REPOSITORY_REPAIR\n'; return 0; }
+p2s_disruptive_sury_validate_equivalents() { printf 'UNEXPECTED_MIGRATION\n'; return 0; }
+p2s_fix_recommend_options
+''')
+                    self.assertNotIn('UNEXPECTED_', out)
+                    self.assertNotIn('--migrate-php-to-sury', out)
+                    self.assertNotIn('--add-sury-repository', out)
+                    self.assertNotIn('--refresh-sury-signing-key', out)
+                    self.assertEqual('Suggested options: --fix.' in out, blocked == 'false')
+
+    def test_panel_cannot_add_sury_source_or_refresh_its_key_even_with_explicit_options(self):
+        for panel in ('cpanel', 'plesk'):
+            with self.subTest(panel=panel):
+                out = self.shell('P2S_PANEL=' + panel + r'''
+P2S_DISTRO=debian; P2S_RELEASE=12; P2S_BACKEND=deb; P2S_MODE=fix
+P2S_DISRUPTIVE=true; P2S_ALLOW_SURY_MIGRATION=true; P2S_ALLOW_SURY_REPOSITORY=true
+p2s_command_run() { printf 'UNEXPECTED_COMMAND\n'; return 97; }
+p2s_disruptive_sury_add_repository
+printf 'ADD_STATUS=%s\n' "$?"
+p2s_repository_repair_assess sury-key
+printf 'KEY_STATUS=%s|REASON=%s\n' "$?" "$P2S_REPOSITORY_REPAIR_REASON"
+p2s_disruptive_sury_validate_equivalents
+printf 'MIGRATE_STATUS=%s\n' "$?"
+''')
+                self.assertIn('ADD_STATUS=1', out)
+                self.assertIn('KEY_STATUS=1', out)
+                self.assertIn('MIGRATE_STATUS=1', out)
+                self.assertIn('Sury key repair is disabled', out)
+                self.assertNotIn('UNEXPECTED_COMMAND', out)
+
     def test_check_recommends_matching_package_repair_only(self):
         for eligible, expected in [('pending', '--configure-pending-php-packages'),
                                    ('exact', '--reinstall-php-same-version'), ('unrelated', None)]:
@@ -194,10 +231,10 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
                 else:
                     self.assertNotIn('fix_recommendation:', out)
                 if outcome in ('pending', 'fixed'):
-                    self.assertNotIn('No additional automatic repair was identified', out)
+                    self.assertNotIn('This script could not finish the PHP fix', out)
                 else:
-                    self.assertIn('No additional automatic repair was identified', out)
-                    self.assertIn('Run --check after addressing', out)
+                    self.assertIn('This script could not finish the PHP fix', out)
+                    self.assertIn('After resolving them, run --check again', out)
                 if outcome == 'fixed':
                     self.assertNotIn('RECIPE:afterfix', out)
                     self.assertNotIn('PREFLIGHT:', out)

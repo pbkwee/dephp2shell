@@ -51,6 +51,26 @@ Keep ordinary runtime ownership, transaction-scope and service-restart checks.
 An already-installed package with unresolved provenance needs a separate
 provenance check, including when its version string matches a reviewed build.
 
+## Package build comparisons
+
+Reports show the PHP engine version, binary package names and complete installed
+package revision separately. For example, PHP 7.4.33 can be supplied by
+`php7.4-cli` or `libapache2-mod-php7.4`; Sury's package revision identifies its
+backported fixes.
+
+For an unrecognised build, compare its full package version with the reviewed
+fixed version using `dpkg --compare-versions`. Preserve epochs and distribution
+suffixes. Say whether the installed build is older, equal or newer, and name both
+builds. A comparison does not add that build to the verified-patch list. Even an
+equal version still needs the matching source identity and architecture.
+
+The reviewed fixed build is not necessarily the first fixed build. For PHP 7.4,
+the [official packaging changelog](https://packages.sury.org/php/pool/main/p/php7.4/php7.4_7.4.33-31%2B0~20261021.121%2Bdebian12~1.gbpe9c428.debian.tar.xz)
+introduces both CVE fixes at source revision `1:7.4.33-31` on 21 October 2026.
+Some other branches received fixes before the exact builds reviewed here.
+An older-than-reviewed comparison therefore does not by itself establish that a
+package predates the first security fix. Retain the bounded recognition rules above.
+
 ## Authentication and source-to-binary chain
 
 The review used downloaded metadata without installing keys or packages or changing repositories.

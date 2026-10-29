@@ -156,7 +156,7 @@ p2s_package_log_report "$P2S_WORK/package.log"
 ''')
         # The text-mode subprocess normalises the preserved carriage return to a newline.
         self.assertIn('[repository host=one.invalid; path redacted]\tfirst\nsecond\fthird\vfourth', out)
-        self.assertIn('[repository URL redacted] "quoted"', out)
+        self.assertIn('[repository host=two.invalid; path redacted] "quoted"', out)
         self.assertNotIn('user:secret', out)
         self.assertNotIn('/private', out)
 
@@ -758,15 +758,17 @@ p2s_summary_print_versions
                 customer = [row for row in out.splitlines() if row.startswith(('dss:info:', 'dss:warn:'))]
                 self.assertEqual(len(customer), 4 if transaction or restart else 2)
                 self.assertTrue(all('Initial check: PHP ' in row for row in customer[:2]))
-                self.assertEqual(sum('After update attempt:' in row for row in customer), 2 if transaction or restart else 0)
-                self.assertIn('Package label: Sury/ondrej PHP.', customer[0])
+                self.assertEqual(sum('After update attempt:' in row for row in customer), 2 if transaction else 0)
+                self.assertEqual(sum('After service restart attempt:' in row for row in customer), 2 if restart else 0)
+                self.assertIn('Package publisher: Sury/ondrej PHP.', customer[0])
+                self.assertIn('Installed package build: 1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1.', customer[0])
                 self.assertIn('The PHP package publisher added the security fixes without changing the PHP version.', customer[0])
                 self.assertIn('fixes verified for both PHP2Shell vulnerabilities', customer[0])
-                self.assertIn('Package label: cPanel internal.', customer[1])
+                self.assertIn('Package publisher: cPanel internal.', customer[1])
                 self.assertIn('patch status not verified', customer[1])
-                self.assertIn('The upstream version is in the affected range', customer[1])
+                self.assertIn('This script has no verified fix record for the installed build', customer[1])
                 for row in customer:
-                    for detail in ['revision hint', 'ubuntu22.04', 'cp130~el10', 'Oct 21', 'Jun 10', 'Before update attempt:']:
+                    for detail in ['revision hint', 'Oct 21', 'Jun 10', 'Before update attempt:']:
                         self.assertNotIn(detail, row)
                 self.assertIn('dss:manifest:package:afterfix|php7.4-fpm|1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1', out)
 
@@ -787,8 +789,24 @@ p2s_summary_print_versions
             self.assertNotIn('vendor backport has not been verified', row)
         self.assertIn('Checked installed packages; no PHP executable or Apache module was matched.', rows[0])
         self.assertIn('patch status not verified', rows[2])
-        self.assertIn('The upstream version is in the affected range', rows[2])
-        self.assertIn('backport status for this installed build is unverified', rows[2])
+        self.assertIn('This script has no verified fix record for the installed build', rows[2])
+
+    def test_unknown_summary_names_the_missing_evidence_and_installed_build(self):
+        for reason, expected in [
+                ('engine_package_assessment', 'This script has no verified fix record for the installed build'),
+                ('engine_package_version_mismatch', 'The executable reports a different PHP version from its owning package'),
+                ('package_inventory_unavailable', 'Package inventory is unavailable'),
+                ('owner_is_not_an_assessed_engine', 'No assessed PHP engine package owns this executable')]:
+            with self.subTest(reason=reason):
+                record = '8.4.26|?|command line||unverified source|8.4.26-custom1|Y|executable|' + reason
+                out = self.shell('printf "%s\\n" ' + shlex.quote(record) + r''' > "$P2S_WORK/summary-versions"
+P2S_MODE=fix; P2S_PHASE=afterfix; P2S_TRANSACTION_ATTEMPTED=true
+P2S_UPDATE_METHOD='apt-get install --only-upgrade PHP packages'
+p2s_summary_print_versions
+''')
+                self.assertIn(expected, out)
+                self.assertIn('Installed package build: 8.4.26-custom1.', out)
+                self.assertIn('After update attempt (apt-get install --only-upgrade PHP packages): PHP 8.4.26', out)
 
     def test_package_detail_stays_in_manifest(self):
         records = '\n'.join(name + '|8.4.27-1|amd64|install ok installed|Debian PHP Maintainers'
@@ -838,7 +856,7 @@ P2S_STATE='?'; p2s_summary_print_result
         self.assertNotIn('PHP versions needing attention:', out)
         warnings = [row for row in out.splitlines() if row.startswith('dss:warn:')]
         self.assertEqual(sum('vendor-specific update and restart procedure' in row for row in warnings), 1)
-        self.assertIn('Package label: cPanel internal.', out)
+        self.assertIn('Package publisher: cPanel internal.', out)
 
     def test_alma_known_affected_build_shows_vendor_update_guidance(self):
         out = self.shell(r'''
@@ -854,7 +872,7 @@ printf 'VULNERABLE=%s|UNKNOWN=%s\n' "$P2S_VULNERABLE" "$P2S_UNKNOWN"
         self.assertIn('VULNERABLE=true|UNKNOWN=false', out)
         self.assertIn('php-cli|0:8.3.31-1.el10_2|x86_64|AlmaLinux|AlmaLinux|Y|verified_affected_version_rule', out)
         warning = next(row for row in out.splitlines() if row.startswith('dss:warn:'))
-        self.assertIn('Package label: AlmaLinux.', warning)
+        self.assertIn('Package publisher: AlmaLinux.', warning)
         self.assertNotIn('0:8.3.31-1.el10_2', warning)
         self.assertIn('AlmaLinux has published security updates for this PHP stream', warning)
         self.assertNotIn('patch status not verified', warning)
@@ -1386,9 +1404,13 @@ printf 'RC=%s\n' "$?"
 """, isolated_sources=True)
                 self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618' + expected, out)
                 self.assertIn('RC=0' if expected == 'N' else 'RC=1', out)
+                if expected == 'Y':
+                    self.assertIn('The update attempt finished, but at least one PHP installation is still vulnerable', out)
+                    self.assertNotIn('could not be completed or verified', out)
 
     def apt_fixture(self, stage, result=1, output='fixture failure'):
         return '''
+P2S_BACKEND=deb
 printf 'php8.4-cli|8.4.26-1|amd64|Debian\\n' > "$P2S_WORK/packages"
 p2s_command_exists() { case "$1" in apt-get|apt-cache|dpkg) return 0;; *) return 1;; esac; }
 p2s_package_deb_candidate() { P2S_DEB_CANDIDATE=8.4.27; }
@@ -1441,6 +1463,173 @@ printf 'RC=%s|BLOCKED=%s\\n' "$rc" "$P2S_BLOCKED"
         self.assertIn('RC=1|BLOCKED=true', out)
         self.assertNotIn('Check repository availability', out)
         self.assertNotIn('INSTALLED', out)
+
+    def test_apt_refresh_reports_signing_failure_even_when_other_indexes_are_current(self):
+        for status in (0, 100):
+            for error, reason in (
+                    ('NO_PUBKEY 0123456789ABCDEF', 'a repository signing key is missing (NO_PUBKEY)'),
+                    ('BADSIG 0123456789ABCDEF', 'repository signature verification failed')):
+                with self.subTest(status=status, error=error):
+                    output = ('Hit:1 https://archive.ubuntu.com/ubuntu jammy InRelease\n'
+                              'W: GPG error: https://account:secret@repo.mysql.com/private-path '
+                              'bionic InRelease: ' + error + '\n'
+                              'W: Some index files failed to download. They have been ignored, or old ones used instead.')
+                    out = self.shell(self.apt_fixture('refresh', status, output))
+                    self.assertIn('blocker:beforefix|repositories|Package-list refresh stopped because ' + reason, out)
+                    self.assertIn('APT may retain old indexes for the failed repository even when other lists are current', out)
+                    self.assertIn('[repository host=repo.mysql.com; path redacted] bionic InRelease: ' + error, out)
+                    self.assertIn('Repair that repository', out)
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    for unwanted in ('secret', 'account', 'private-path', 'INSTALLED',
+                                     'refusing to install from stale metadata', 'Check repository availability'):
+                        self.assertNotIn(unwanted, out)
+
+    def test_rpm_refresh_signing_failure_keeps_rpm_diagnostic(self):
+        out = self.shell(r'''
+P2S_BACKEND=rpm
+printf '%s\n' 'NO_PUBKEY 0123456789ABCDEF' > "$P2S_WORK/log"
+p2s_package_refresh_failure_report "$P2S_WORK/log" 'RPM metadata refresh failed.'
+''')
+        self.assertIn('blocker:beforefix|repositories|RPM metadata refresh failed.', out)
+        self.assertNotIn('APT', out)
+
+    def test_repository_failure_names_only_failing_hosts_and_possible_apt_sources(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
+printf '%s\n' 'deb https://account:config-secret@repo.invalid/subscription-secret stable main' \
+    > "$P2S_WORK/etc/apt/sources.list.d/vendor.list"
+printf '%s\n' 'Types: deb' 'URIs: https://repo.invalid/other-secret' 'Suites: stable' \
+    > "$P2S_WORK/etc/apt/sources.list.d/other.sources"
+printf '%s\n' 'deb https://healthy.invalid/packages stable main' > "$P2S_WORK/etc/apt/sources.list"
+printf '%s\n' 'Hit:1 https://healthy.invalid/packages stable InRelease' \
+    'W: GPG error: https://account:log-secret@REPO.INVALID/subscription-secret stable InRelease: NO_PUBKEY 0123456789ABCDEF' \
+    'Err:2 https://repo.invalid/subscription-secret stable InRelease' > "$P2S_WORK/log"
+P2S_BACKEND=deb
+p2s_package_refresh_failure_report "$P2S_WORK/log" 'Refresh failed'
+''', isolated_sources=True)
+        warnings = '\n'.join(line for line in out.splitlines() if line.startswith('dss:warn: Repository ') and 'reported an error.' in line)
+        self.assertEqual(warnings.count('Repository repo.invalid reported an error.'), 1, warnings)
+        self.assertIn('/etc/apt/sources.list.d/vendor.list (apt-list)', warnings)
+        self.assertIn('/etc/apt/sources.list.d/other.sources (deb822-stanza=1)', warnings)
+        self.assertIn('repository_failure_source:beforefix|host=repo.invalid|possible_sources=', out)
+        self.assertNotIn('healthy.invalid', warnings)
+        self.assertIn('Match the failing repository and suite before changing a source file', warnings)
+        for secret in ('account', 'config-secret', 'log-secret', 'subscription-secret', 'other-secret'):
+            self.assertNotIn(secret, out)
+
+    def test_webmin_connection_failure_names_host_and_apt_source_file(self):
+        out = self.shell(r'''
+P2S_BACKEND=deb
+mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
+printf '%s\n' 'deb https://healthy.invalid/ubuntu jammy main' > "$P2S_WORK/etc/apt/sources.list"
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/webmin.gpg] https://download.webmin.com/download/newkey/repository stable contrib' > "$P2S_WORK/etc/apt/sources.list.d/webmin.list"
+printf '%s\n' 'Hit:1 https://healthy.invalid/ubuntu jammy InRelease' \
+    'Ign:2 https://download.webmin.com/download/newkey/repository stable InRelease' \
+    'Err:2 https://download.webmin.com/download/newkey/repository stable InRelease' \
+    '  Could not connect to download.webmin.com:443 (192.0.2.20). - connect (111: Connection refused)' \
+    'W: Failed to fetch https://download.webmin.com/download/newkey/repository/dists/stable/InRelease Could not connect to download.webmin.com:443 (192.0.2.20). - connect (111: Connection refused)' \
+    'W: Some index files failed to download. They have been ignored, or old ones used instead.' > "$P2S_WORK/log"
+p2s_package_refresh_failure_report "$P2S_WORK/log" 'Package-list refresh failed.'
+''', isolated_sources=True)
+        warnings = '\n'.join(line for line in out.splitlines() if line.startswith('dss:warn:'))
+        self.assertEqual(warnings.count('Repository download.webmin.com reported an error.'), 1)
+        self.assertIn('Possible source files:', warnings)
+        self.assertIn('/etc/apt/sources.list.d/webmin.list (apt-list)', warnings)
+        self.assertNotIn('healthy.invalid', warnings)
+        self.assertIn('Connection refused', out)
+        self.assertIn('blocker:beforefix|repositories|Package-list refresh failed.', out)
+
+    def test_repository_failure_matches_rpm_id_without_a_url(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/etc/yum.repos.d"
+printf '%s\n' '[remi-php83]' 'name=Private display name' 'baseurl=https://user:secret@rpm.invalid/private' \
+    'enabled=1' 'password=hidden-password' > "$P2S_WORK/etc/yum.repos.d/php.repo"
+printf '%s\n' "Error: Failed to download metadata for repo 'remi-php83': Cannot download repomd.xml" \
+    "Errors during downloading metadata for repository 'remi-php83':" > "$P2S_WORK/log"
+P2S_BACKEND=rpm
+p2s_package_refresh_failure_report "$P2S_WORK/log" 'RPM metadata refresh failed.'
+''', isolated_sources=True)
+        self.assertIn('repo_id=remi-php83|possible_sources=', out)
+        self.assertIn('/etc/yum.repos.d/php.repo (rpm-repo=remi-php83)', out)
+        self.assertIn('blocker:beforefix|repositories|RPM metadata refresh failed.', out)
+        for secret in ('Private display name', 'user:', 'secret', 'hidden-password'):
+            self.assertNotIn(secret, out)
+
+    def test_repository_failure_does_not_guess_for_unknown_mirrors_or_missing_identity(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/etc/yum.repos.d"
+printf '%s\n' '[vendor]' 'mirrorlist=https://mirrors.invalid/list' > "$P2S_WORK/etc/yum.repos.d/vendor.repo"
+printf '%s\n' 'E: Failed to fetch https://cdn.invalid/private-package 404 Not Found' > "$P2S_WORK/log"
+p2s_package_log_report "$P2S_WORK/log"
+printf '%s\n' 'E: Repository signature verification failed' > "$P2S_WORK/no-identity.log"
+p2s_package_log_report "$P2S_WORK/no-identity.log"
+''', isolated_sources=True)
+        warnings = '\n'.join(line for line in out.splitlines() if line.startswith('dss:warn: Repository ') and 'reported an error.' in line)
+        self.assertIn('Repository cdn.invalid reported an error. Possible source files: not identified in conventional source files', warnings)
+        self.assertEqual(warnings.count('Repository '), 1)
+        self.assertNotIn('vendor.repo', warnings)
+        self.assertNotIn('private-package', out)
+
+    def test_successful_repository_log_does_not_read_configuration_or_report_failure_context(self):
+        out = self.shell(r'''
+p2s_repository_inventory_collect() { printf 'UNEXPECTED administrative command: inventory\n' >&2; return 97; }
+printf '%s\n' 'Hit:1 https://healthy.invalid/packages stable InRelease' \
+    'Get:2 https://healthy.invalid/packages stable Packages' > "$P2S_WORK/log"
+p2s_package_log_report "$P2S_WORK/log"
+''')
+        self.assertNotIn('reported an error. Possible source files:', out)
+        self.assertNotIn('repository_failure_source:', out)
+
+    def test_download_sizes_and_item_numbers_are_not_missing_file_errors(self):
+        out = self.shell(r'''
+p2s_repository_inventory_collect() { printf 'UNEXPECTED administrative command: inventory\n' >&2; return 97; }
+printf '%s\n' \
+    'Get:4 https://security.invalid/debian-security bullseye-security/contrib amd64 Packages [3404 B]' \
+    'Get:404 https://healthy.invalid/packages bullseye/main amd64 Packages [404 B]' \
+    'Hit:404 https://healthy.invalid/packages bullseye InRelease' \
+    'Get:5 https://healthy.invalid/build/404 bullseye/main amd64 Packages [14040 B]' \
+    'Downloaded https://healthy.invalid/packages (404 bytes)' \
+    'Fetched 817 kB in 1s (1200 kB/s)' 'Reading package lists...' > "$P2S_WORK/log"
+p2s_package_log_report "$P2S_WORK/log"
+''')
+        self.assertNotIn('dss:warn:', out)
+        self.assertNotIn('repository_failure:', out)
+        self.assertNotIn('repository_failure_source:', out)
+
+    def test_real_missing_file_error_has_redacted_failure_and_source_file_context(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
+printf '%s\n' 'deb https://account:config-secret@repo.invalid/private-source bullseye main' > "$P2S_WORK/etc/apt/sources.list.d/php.list"
+printf '%s\n' 'Get:4 https://healthy.invalid/packages bullseye/main amd64 Packages [3404 B]' \
+    'Err:5 https://repo.invalid/private-source bullseye Release' \
+    '  404  Not Found [IP: 192.0.2.10 443]' \
+    'E: Failed to fetch https://account:log-secret@repo.invalid/private-source/dists/bullseye/Release?token=hidden  404  Not Found' > "$P2S_WORK/log"
+p2s_package_log_report "$P2S_WORK/log"
+''', isolated_sources=True)
+        warnings = '\n'.join(line for line in out.splitlines() if line.startswith('dss:warn:'))
+        self.assertIn('repository_failure:beforefix|http_404', out)
+        self.assertIn('Repository request failed with HTTP 404 (file not found)', warnings)
+        self.assertIn('[repository host=repo.invalid; path redacted]', warnings)
+        self.assertIn('/etc/apt/sources.list.d/php.list (apt-list)', warnings)
+        self.assertNotIn('healthy.invalid', warnings)
+        for secret in ('account', 'config-secret', 'log-secret', 'private-source', 'token=hidden'):
+            self.assertNotIn(secret, out)
+
+    def test_missing_file_status_formats_require_an_actual_http_error(self):
+        for diagnostic, missing in [('404 Not Found', True),
+                                    ('Status code: 404 for https://repo.invalid/repomd.xml', True),
+                                    ('[Errno 14] HTTP Error 404 - Not Found', True),
+                                    ('HTTP/1.1 404 Not Found', True),
+                                    ('PHP module not found', False),
+                                    ('HTTP Error 1404', False),
+                                    ('Status code: 4040', False),
+                                    ('Downloaded 404 bytes', False)]:
+            with self.subTest(diagnostic=diagnostic):
+                out = self.shell("printf '%s\\n' " + shlex.quote(diagnostic) + r''' > "$P2S_WORK/log"
+p2s_package_failure_report "$P2S_WORK/log"
+''')
+                self.assertEqual('repository_failure:beforefix|http_404' in out, missing)
+                self.assertEqual('Repository request failed with HTTP 404' in out, missing)
 
     def test_lock_file_permission_error_is_not_reported_as_another_running_job(self):
         output = 'E: Could not open lock file /var/lib/apt/lists/lock - open (13: Permission denied)\nE: Unable to lock directory /var/lib/apt/lists/'
@@ -1673,7 +1862,7 @@ p2s_process_inventory_collect
 printf 'SERVICES=%s|PROCESSES=%s\\n' "$(cat "$P2S_WORK/services")" "$(cat "$P2S_WORK/processes")"
 ''', isolated_paths=True)
         self.assertIn('SERVICES=|PROCESSES=', out)
-        self.assertIn('Apache main process started: Oct 22 2026 UTC.', out)
+        self.assertIn('Apache main process started: Oct 22 2026 UTC (PID 4242; executable /usr/sbin/apache2).', out)
         self.assertNotIn('No deleted PHP executables or modules', out)
 
     def test_rpm_plan_rejects_dependencies_removals_and_unknown_formats(self):
@@ -1895,17 +2084,18 @@ cat "$P2S_WORK/paths.raw"
             with self.subTest(attempted=attempted):
                 out = self.shell('P2S_TRANSACTION_ATTEMPTED=' + attempted + '\n' + r"""
 P2S_INVENTORY_MESSAGES=true
-p2s_message_print info 'Before update attempt: PHP 8.4.27: fixed.'
+p2s_message_print info 'Initial check: PHP 8.4.27: fixed.'
 p2s_message_print warn 'Same warning.'
 p2s_manifest_record package 'php8.4|same'
 P2S_PHASE=afterfix
-p2s_message_print info 'After update attempt: PHP 8.4.27: fixed.'
+if $P2S_TRANSACTION_ATTEMPTED; then p2s_message_print info 'After update attempt: PHP 8.4.27: fixed.'
+else p2s_message_print info 'Initial check: PHP 8.4.27: fixed.'; fi
 p2s_message_print warn 'Same warning.'
 p2s_message_print warn 'New warning.'
 p2s_manifest_record package 'php8.4|same'
 """)
                 self.assertEqual(out.count('PHP 8.4.27: fixed.'), 1 if attempted == 'false' else 2)
-                self.assertEqual(out.count('Same warning.'), 1 if attempted == 'false' else 2)
+                self.assertEqual(out.count('Same warning.'), 1)
                 self.assertIn('New warning.', out)
                 self.assertIn('package:beforefix|php8.4|same', out)
                 self.assertIn('package:afterfix|php8.4|same', out)

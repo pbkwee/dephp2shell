@@ -130,6 +130,7 @@ printf 'RC=%s|ATTEMPTED=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
     def test_opt_in_updates_exact_engines_and_freezes_selectors_and_native_pecl(self):
         out = self.shell(self.fixture(), isolated_sources=True)
         self.assertIn('RC=0|ATTEMPTED=true', out)
+        self.assertNotIn('application testing is still required', out)
         install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
         simulate = next(line for line in out.splitlines() if line.startswith('SIMULATE:'))
         self.assertEqual(simulate.split('install --only-upgrade ', 1)[1],

@@ -1114,8 +1114,8 @@ printf 'UNKNOWN=%s\n' "$P2S_UNKNOWN"
 ''')
         rows = [row for row in out.splitlines() if row.startswith(('dss:info: PHP ', 'dss:warn: PHP '))]
         self.assertEqual(len(rows), 2)
-        self.assertTrue(any('fixes verified' in row and 'Package label: cPanel EasyApache.' in row for row in rows))
-        self.assertTrue(any('patch status not verified' in row and 'Package label: cPanel internal.' in row for row in rows))
+        self.assertTrue(any('fixes verified' in row and 'Package publisher: cPanel EasyApache.' in row for row in rows))
+        self.assertTrue(any('patch status not verified' in row and 'Package publisher: cPanel internal.' in row for row in rows))
         self.assertEqual(out.count('dss:manifest:runtime_identity:beforefix|'), 2)
         self.assertEqual(out.count('dss:manifest:runtime_assessment:beforefix|'), 2)
         self.assertIn('UNKNOWN=true', out)
@@ -1136,7 +1136,7 @@ printf 'UNKNOWN=%s|BLOCKED=%s|VULNERABLE=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED" "$P
         self.assertIn('dss:manifest:php_version:beforefix|', out)
         self.assertIn('Jun 3 2026 14:41:23', out)
         self.assertRegex(out, r'dss:manifest:runtime_assessment:beforefix\|.*\|8[.]5[.]7\|.*\|[?]\|.*\|upstream=Y')
-        self.assertIn('The upstream version is in the affected range', out)
+        self.assertIn('Package inventory is unavailable, so the installed build and any vendor security fixes could not be checked', out)
         self.assertNotIn('bundled or custom build', out)
 
     def test_process_read_failure_explains_unknown_without_claiming_update_failed(self):
@@ -1494,8 +1494,8 @@ p2s_summary_print_versions
 ''')
                 rows = [row for row in out.splitlines() if row.startswith('dss:info: PHP ')]
                 self.assertEqual(len(rows), 2)
-                easy = next(row for row in rows if 'Package label: cPanel EasyApache.' in row)
-                alt = next(row for row in rows if 'Package label: CloudLinux/TuxCare alt-PHP.' in row)
+                easy = next(row for row in rows if 'Package publisher: cPanel EasyApache.' in row)
+                alt = next(row for row in rows if 'Package publisher: CloudLinux/TuxCare alt-PHP.' in row)
                 self.assertIn('Installed; no matching running process was found.', alt)
                 if running:
                     self.assertIn("Running processes use this installation.", easy)
@@ -1531,7 +1531,7 @@ p2s_summary_print_versions
         self.assertRegex(out, r'dss:manifest:process_runtime_reference:beforefix\|4242\|module\|.*/libphp[.]so')
         self.assertRegex(out, r'dss:manifest:runtime_observation:beforefix\|.*/libphp[.]so\|running_path')
         self.assertIn('PHP 8.3.33 (Apache module): fixes verified', out)
-        self.assertIn('Package label: AlmaLinux.', out)
+        self.assertIn('Package publisher: AlmaLinux.', out)
         self.assertNotIn('Package revision:', out)
         self.assertRegex(out, r'dss:manifest:runtime_identity:beforefix\|.*\|php\|8[.]3[.]33-1[.]el10_2[.]alma[.]1\|AlmaLinux\|')
         self.assertIn("Running processes use this installation.", out)
