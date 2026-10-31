@@ -10,12 +10,36 @@ DISRUPTIVE = runpy.run_path(str(Path(__file__).with_name('dephp2shell-disruptive
 class RepairOptionsTest(unittest.TestCase):
     shell = HELPERS['PHP2ShellTest'].shell
 
+    def test_fix_method_records_effective_options_before_failed_preflight(self):
+        setup = r'''
+p2s_command_exists() { return 1; }
+unset DP2S_MIGRATE_PHP_TO_SURY DP2S_ADD_SURY_REPOSITORY DP2S_CONFIGURE_PENDING_PHP_PACKAGES
+unset DP2S_REINSTALL_PHP_SAME_VERSION DP2S_REFRESH_SURY_SIGNING_KEY DP2S_ADD_OS_SECURITY_REPOSITORY
+'''
+        for options in [
+            '--fix',
+            '--fix --enable-extra-fixes --migrate-php-to-sury --add-sury-repository --configure-pending-php-packages --reinstall-php-same-version',
+            '--fix --enable-extra-fixes --refresh-sury-signing-key',
+            '--fix --enable-extra-fixes --add-os-security-repository',
+        ]:
+            with self.subTest(options=options):
+                out = self.shell(setup + '\np2s_cli --output machine ' + options, status=1)
+                methods = [line for line in out.splitlines() if line.startswith('dss:fixmethod:')]
+                self.assertEqual(methods, ['dss:fixmethod: Attempted ' + options])
+        env = 'DP2S_CONFIGURE_PENDING_PHP_PACKAGES=yes\n'
+        out = self.shell(setup + env + 'p2s_cli --output machine --enable-extra-fixes', status=1)
+        self.assertIn('dss:fixmethod: Attempted --fix --enable-extra-fixes --configure-pending-php-packages', out)
+        out = self.shell(setup + env + 'p2s_cli --output machine --fix --configure-pending-php-packages=false', status=1)
+        self.assertIn('dss:fixmethod: Attempted --fix\n', out)
+        out = self.shell(setup + env + 'p2s_cli --output machine --check --enable-extra-fixes', status=1)
+        self.assertNotIn('dss:fixmethod:', out)
+
     def cli(self, args, settings='', expected=0):
         return self.shell(r'''
 unset DP2S_MIGRATE_PHP_TO_SURY DP2S_ADD_SURY_REPOSITORY DP2S_CONFIGURE_PENDING_PHP_PACKAGES
-unset DP2S_REINSTALL_PHP_SAME_VERSION DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS
+unset DP2S_REINSTALL_PHP_SAME_VERSION
 unset DP2S_REFRESH_SURY_SIGNING_KEY DP2S_ADD_OS_SECURITY_REPOSITORY
-p2s_main() { printf 'ENGINE:%s|pending=%s|reinstall=%s|repo=%s|wait=%s\n' "$*" "$P2S_ALLOW_PENDING_PHP_CONFIGURATION" "$P2S_ALLOW_EXACT_PHP_REINSTALL" "$P2S_REPOSITORY_REPAIR" "$P2S_PACKAGE_LOCK_WAIT_SECONDS"; }
+p2s_main() { printf 'ENGINE:%s|pending=%s|reinstall=%s|repo=%s\n' "$*" "$P2S_ALLOW_PENDING_PHP_CONFIGURATION" "$P2S_ALLOW_EXACT_PHP_REINSTALL" "$P2S_REPOSITORY_REPAIR"; }
 ''' + settings + '\np2s_cli --output machine ' + args + ' 2>&1', status=expected)
 
     def test_new_permissions_and_environment_require_disruptive(self):
@@ -74,15 +98,24 @@ p2s_main() { printf 'ENGINE:%s|pending=%s|reinstall=%s|repo=%s|wait=%s\n' "$*" "
                 out = self.cli('--fix', 'DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES=' + value)
                 self.assertIn('ENGINE:--fix|', out)
 
-    def test_wait_range_and_check_mode(self):
-        self.assertIn('wait=120', self.cli('--check --wait-for-package-lock 120'))
-        self.assertIn('wait=60', self.cli('--fix --wait-for-package-lock=060'))
-        self.assertIn('wait=0', self.cli('--check'))
-        self.assertIn('wait=120', self.cli('--check', 'DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS=120'))
-        self.assertIn('wait=30', self.cli('--check --wait-for-package-lock 30', 'DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS=120'))
-        for value in ('-1', '601', '10000000000000000', 'no', ''):
-            with self.subTest(value=value):
-                self.cli('--fix --wait-for-package-lock=' + value, expected=64)
+    def test_retired_wait_option_is_rejected_before_the_engine_runs(self):
+        for args in ('--fix --wait-for-package-lock 120', '--fix --wait-for-package-lock=120'):
+            with self.subTest(args=args):
+                out = self.cli(args, expected=64)
+                self.assertIn('Unrecognised argument', out)
+                self.assertNotIn('ENGINE:', out)
+
+    def test_package_lock_blocker_requires_investigation_without_retry_options(self):
+        for phase in ('beforefix', 'afterfix'):
+            out = self.shell('P2S_PHASE=' + phase + r'''
+P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
+printf 'package_manager_busy\n' > "$P2S_WORK/blocker-keys"
+p2s_fix_recommend_options
+printf 'BLOCKED=%s\n' "$P2S_BLOCKED"
+''')
+            self.assertIn('BLOCKED=true', out)
+            self.assertNotIn('Suggested options:', out)
+            self.assertNotIn('fix_recommendation:', out)
 
     def test_cached_candidate_plan_never_refreshes_or_installs(self):
         fixture = DISRUPTIVE['DisruptiveTest']().fixture(
@@ -95,35 +128,12 @@ p2s_main() { printf 'ENGINE:%s|pending=%s|reinstall=%s|repo=%s|wait=%s\n' "$*" "
         self.assertNotIn('INSTALL:', out)
         self.assertNotIn('UNEXPECTED_SOURCE_WRITE', out)
 
-    def test_wait_releases_or_times_out_without_removing_lock(self):
-        for scenario in ('release', 'busy', 'unknown', 'slow'):
-            with self.subTest(scenario=scenario):
-                out = self.shell('scenario=' + scenario + r'''
-P2S_PACKAGE_LOCK_WAIT_SECONDS=2; probes=0; SECONDS=0
-touch "$P2S_WORK/lock-must-remain"
-p2s_package_lock_probe() {
-    probes=$((probes + 1))
-    [ "$scenario" != slow ] || SECONDS=$((SECONDS + 2))
-    [ "$scenario" != unknown ] || return 2
-    [ "$scenario" = release ] && [ "$probes" -gt 1 ] && return 0
-    return 1
-}
-p2s_command_run() { [ "$2" = sleep ] && [ "$3" = 1 ] || return 1; SECONDS=$((SECONDS + 1)); }
-p2s_package_lock_wait
-printf 'RC=%s|PROBES=%s\n' "$?" "$probes"
-[ -f "$P2S_WORK/lock-must-remain" ] && printf 'LOCK_RETAINED\n'
-''')
-                self.assertIn('LOCK_RETAINED', out)
-                self.assertIn({'release': 'RC=0|PROBES=2', 'busy': 'RC=1|PROBES=3',
-                               'unknown': 'RC=1|PROBES=1', 'slow': 'RC=1|PROBES=1'}[scenario], out)
-
     def test_panel_recommendations_use_vendor_updater_and_do_not_offer_sury_repairs(self):
         for panel in ('cpanel', 'plesk'):
             for blocked in ('false', 'true'):
                 with self.subTest(panel=panel, blocked=blocked):
                     out = self.shell('P2S_PANEL=' + panel + '; P2S_BLOCKED=' + blocked + r'''
 P2S_BACKEND=deb; P2S_STATE=Y
-p2s_package_lock_probe() { printf 'UNEXPECTED_APT_ASSESSMENT\n'; return 0; }
 p2s_repository_repair_assess() { printf 'UNEXPECTED_REPOSITORY_REPAIR\n'; return 0; }
 p2s_disruptive_sury_validate_equivalents() { printf 'UNEXPECTED_MIGRATION\n'; return 0; }
 p2s_fix_recommend_options
@@ -161,7 +171,6 @@ printf 'MIGRATE_STATUS=%s\n' "$?"
                 out = self.shell('eligible=' + eligible + r'''
 P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
 printf 'package_state\n' > "$P2S_WORK/blocker-keys"
-p2s_package_lock_probe() { return 0; }
 p2s_package_deb_repair_audit_collect() {
     P2S_REPAIR_AUDIT_NEEDED=true
     P2S_PENDING_PHP_REPAIR_ELIGIBLE=false; P2S_EXACT_PHP_REPAIR_ELIGIBLE=false
@@ -178,6 +187,22 @@ printf 'BLOCKED=%s\n' "$P2S_BLOCKED"
                     self.assertIn('fix_recommendation:', out)
                 else:
                     self.assertNotIn('Suggested options:', out)
+
+    def test_incomplete_pending_configuration_is_not_recommended_again_in_same_run(self):
+        for phase, attempted, offered in [('afterfix', 'true', False), ('afterfix', 'false', True), ('beforefix', 'true', True)]:
+            with self.subTest(phase=phase, attempted=attempted):
+                out = self.shell(f'P2S_PHASE={phase}; P2S_PACKAGE_CONFIGURATION_ATTEMPTED={attempted}\n' + r'''
+P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
+printf 'package_state\n' > "$P2S_WORK/blocker-keys"
+p2s_package_deb_repair_audit_collect() {
+    P2S_REPAIR_AUDIT_NEEDED=true; P2S_PENDING_PHP_REPAIR_ELIGIBLE=true
+}
+p2s_fix_recommend_options
+''')
+                self.assertEqual('fix_recommendation:' in out, offered)
+                if not offered:
+                    self.assertIn('attempted PHP package configuration is still incomplete', out)
+                    self.assertIn('run --check before trying the repair again', out)
 
     def test_incomplete_fix_recommends_from_fresh_afterfix_preflight_only(self):
         for outcome in ('pending', 'unrelated', 'fixed', 'generic'):
@@ -209,7 +234,6 @@ p2s_package_deb_preflight() {
     [ "$outcome" != generic ] || return 0
     p2s_fix_block package_state 'Pending PHP configuration'; return 1
 }
-p2s_package_lock_probe() { return 0; }
 p2s_package_deb_repair_audit_collect() {
     P2S_REPAIR_AUDIT_NEEDED=false
     if [ "$outcome" = pending ]; then P2S_REPAIR_AUDIT_NEEDED=true; P2S_PENDING_PHP_REPAIR_ELIGIBLE=true; fi
@@ -245,7 +269,6 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
                 with self.subTest(phase=phase, backend=backend, plan_status=plan_status):
                     out = self.shell('P2S_PHASE=' + phase + '; P2S_BACKEND=' + backend + '; plan_status=' + str(plan_status) + r'''
 P2S_STATE=Y; P2S_BLOCKED=false; P2S_FIX_RECOMMENDATION_EMITTED=false
-p2s_package_lock_probe() { return 0; }
 p2s_package_deb_repair_audit_collect() { P2S_REPAIR_AUDIT_NEEDED=false; }
 p2s_repository_repair_assess() { return 1; }
 p2s_package_deb_update() { return "$plan_status"; }
@@ -266,7 +289,6 @@ printf 'EMITTED=%s\n' "$P2S_FIX_RECOMMENDATION_EMITTED"
         out = self.shell(r'''
 P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
 printf 'custom_runtime\n' > "$P2S_WORK/blocker-keys"
-p2s_package_lock_probe() { return 0; }
 p2s_disruptive_sury_validate_equivalents() { printf 'UNEXPECTED_ALTERNATIVE\n'; return 0; }
 p2s_fix_recommend_options
 ''')
@@ -279,7 +301,6 @@ p2s_fix_recommend_options
                 out = self.shell("vendor='" + provider + "'" + r'''
 P2S_STATE=Y; P2S_BACKEND=deb
 printf 'php8.2-cli|8.2.29-1|amd64|%s\n' "$vendor" > "$P2S_WORK/packages"
-p2s_package_lock_probe() { return 0; }
 p2s_package_deb_repair_audit_collect() { P2S_REPAIR_AUDIT_NEEDED=false; }
 p2s_repository_repair_assess() {
     [ "$1" = native-security-source ] || return 1
@@ -302,7 +323,6 @@ cat "$P2S_WORK/recommend-migration.log" 2>/dev/null || :
         out = self.shell(r'''
 P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=false
 p2s_package_deb_repair_audit_collect() { P2S_REPAIR_AUDIT_NEEDED=false; }
-p2s_package_lock_probe() { return 0; }
 p2s_repository_repair_assess() { return 1; }
 p2s_package_deb_update() {
     [ "$P2S_MODE" = check ] && ! $P2S_DISRUPTIVE || return 97
@@ -317,7 +337,6 @@ p2s_fix_recommend_options
     def test_check_recommends_migration_only_after_cached_equivalence_checks(self):
         out = self.shell(DISRUPTIVE['DisruptiveTest']().fixture('P2S_MODE=check') + r'''
 P2S_STATE=Y
-p2s_package_lock_probe() { return 0; }
 p2s_fix_recommend_options
 ''', isolated_sources=True)
         self.assertIn('Suggested options: --fix --enable-extra-fixes --migrate-php-to-sury.', out)
@@ -329,7 +348,6 @@ p2s_fix_recommend_options
 P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
 printf 'unsupported_os\n' > "$P2S_WORK/blocker-keys"
 : > "$P2S_WORK/apt-origins"
-p2s_package_lock_probe() { return 0; }
 p2s_repository_repair_assess() { return 1; }
 p2s_disruptive_sury_validate_equivalents() { return 0; }
 p2s_package_deb_update() { return 1; }
@@ -459,7 +477,6 @@ printf 'RC=%s|INSTALL=%s|RESTART=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED" "$P2S_R
     def test_fix_orchestration_refuses_explicit_check_mode(self):
         out = self.shell(r'''
 P2S_MODE=check
-p2s_package_lock_wait() { printf 'UNEXPECTED_WAIT\n'; return 97; }
 p2s_fix_run
 printf 'RC=%s\n' "$?"
 ''')

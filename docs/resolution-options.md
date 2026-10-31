@@ -155,11 +155,10 @@ scripts and hosting-panel updaters have their own effects, explained below.
 | `--add-os-security-repository` | Add a source file using the installed Debian/Ubuntu archive keyring. | Enable the matching native `main` security repository. | Make native security updates available; the persistent source also affects future updates outside PHP. |
 | `--configure-pending-php-packages` | No direct source/key edits. | Finish setup for explicitly identified pending PHP packages. | Complete an interrupted installation; package setup scripts can change configuration and services. |
 | `--reinstall-php-same-version` | No direct source/key edits. | Download and reinstall the same PHP package version. | Restore package files/metadata; setup scripts run again and the version may still be vulnerable. |
-| `--wait-for-package-lock SECONDS` | Unchanged. | Wait for another package operation before proceeding. | Avoid a temporary lock failure; waiting does not fix a stalled package manager. |
 
 The additional repair and package source methods require
-`--enable-extra-fixes` and are otherwise disabled. The lock-wait option is
-independent. `--enable-extra-fixes` alone does not grant all these permissions
+`--enable-extra-fixes` and are otherwise disabled.
+`--enable-extra-fixes` alone does not grant all these permissions
 or bypass a blocker. It selects fix mode unless `--check` is explicitly present.
 Examples below include `--fix` to make that action clear.
 
@@ -336,6 +335,14 @@ sudo bash dephp2shell.sh --fix --enable-extra-fixes \
 
 ## Finish pending PHP package configuration
 
+If package configuration fails, the report names the targets and dpkg exit code.
+For FPM packages it also collects limited service state, recent unit journal entries
+and a standard-configuration test. Fix the reported startup/configuration problem
+before retrying; the same incomplete configuration is not offered again in that
+fix run. Website assignments and scheduled jobs determine whether an old PHP
+installation can instead be removed. The script does not edit FPM settings or
+remove packages automatically.
+
 Finish setting up PHP packages left incomplete by an interrupted or failed installation. Their setup scripts run again and can change configuration or services.
 
 Use this when PHP package files have been unpacked but their installation setup
@@ -470,39 +477,54 @@ the PHP website checks.
 sudo bash dephp2shell.sh --fix
 ```
 
-## Wait for another package operation
+## Package-manager locks
+
+A lock conflict stops the update. Ask an administrator to investigate the owning
+operation's progress and logs before retrying. The script does not offer a timed
+wait as a repair. Stopping a package manager or removing its lock can leave package
+installation or configuration unfinished.
 
 An early warning identifies APT/dpkg lock owners running for at least one hour,
 including their PID, parent, process name and runtime. Lock acquisition time is
-unavailable; check the owner's progress before using the suggested `kill -TERM`
-command. Interrupting installation/configuration can leave packages unfinished.
-Warnings never stop jobs or delete locks. They cover the standard APT/dpkg lock
-paths when kernel-lock and process metadata are readable.
+unavailable. The warning supplies read-only `ps` and `lslocks` commands for review;
+it does not suggest killing the owner. Warnings never stop jobs or delete locks.
+They cover standard APT/dpkg lock paths when kernel-lock and process metadata are
+readable.
 
-Give another software update time to finish before retrying this one. The script waits for a limited time without stopping the other update or deleting its locks.
+## Temporarily stop PHP exposure
 
-Use this when an automatic package job or another administrator is already using
-APT/dpkg. Give it a bounded opportunity to finish, then let the selected fix proceed.
-This option does not require `--enable-extra-fixes`. The range is 0–600 seconds; zero is the
-default and disables the extra waiting step.
+After an unresolved fix attempt, DePHP2Shell suggests commands to stop the PHP
+services it observed. Stopping them can interrupt websites, background work and
+panel functions sharing those services. The script prints these commands for you
+to review and run; it never shuts down applications as a mitigation automatically.
 
-**Option:** `--wait-for-package-lock SECONDS`
+For PHP-FPM, each identified instance gets its own service stop command. Apache
+and nginx can keep serving other content when PHP runs only in separate FPM
+workers; PHP requests may fail until PHP is restored. When Apache embeds PHP or
+launches PHP CGI workers, the suggested Apache stop affects every site in that
+instance, including sites without PHP.
+Do not generically disable Apache's PHP module or remove its handler: configuration
+may fail, and some configurations can serve PHP source instead of executing it.
+PHP's [Apache integration guide](https://www.php.net/manual/en/install.unix.apache2.php)
+and Apache's [handler documentation](https://httpd.apache.org/docs/2.4/mod/mod_mime.html)
+describe the separate FPM and embedded-module arrangements and handler mappings.
 
-**Environment equivalent:** `DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS=SECONDS`
+The commands include observed systemd socket, timer and path activation triggers
+that could restart the PHP service. An unavailable or incomplete trigger query
+is reported explicitly. A service stop does not disable it at boot or prevent a
+panel, supervisor or administrator from starting it again. See
+[systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html).
 
-With a positive wait on an APT system, an existing `fuser` command checks whether
-processes have package lock files open. Persistent lock files can remain after their owners exit; the probe checks for processes with those files open. The open-file check is conservative and can wait on a file
-that is open without a conflicting lock.
-
-No repositories or packages change during the waiting step. The script does not
-install `fuser`, remove lock files or stop processes. An unavailable/inconclusive
-probe or an expired wait stops the fix. Waiting cannot repair a stuck package job
-or reserve the package manager for later: APT/dpkg still enforce their locks when
-the actual operation begins. Review a genuinely stalled job before retrying.
-
-```sh
-sudo bash dephp2shell.sh --fix --wait-for-package-lock 120
-```
+The listed commands cover identified services only. Stop separately managed PHP
+workloads in their own environments. Review PHP-specific schedules and background
+jobs; stopping FPM or Apache does not stop running CLI jobs. For Supervisor, use
+`sudo supervisorctl status` to identify the affected PHP programs, then
+`sudo supervisorctl stop PROGRAM`, replacing `PROGRAM` with an affected program's
+exact name. Do not stop all of cron or Supervisor.
+Unidentified launchers require an administrator's review rather than a guessed
+stop command. Verify that the affected PHP workers have stopped and cannot be
+relaunched. Keep those applications offline until their PHP fixes are verified;
+stopping a service does not install a security fix.
 
 ## Shared limits and recovery
 

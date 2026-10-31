@@ -150,6 +150,35 @@ candidate=1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1'''
         self.assertIn('candidate_provider', out)
         self.assertNotIn('INSTALL:', out)
 
+    def test_candidate_origin_refusal_names_versions_repositories_and_release_identity(self):
+        for changes, expected in [
+                ('extra_repo=true', ['matching repository rows: 1; other or unverified rows: 1', 'matching:', 'host=packages.sury.org', 'unverified:', 'host=deb.debian.org']),
+                ('origin=Unrelated', ['matching repository rows: 0', 'o=Unrelated,n=bookworm']),
+                ('no_repo=true', ['No repository rows', 'only in installed dpkg status']),
+                ('extra_repo=true; extra_uri=https://login:private-token@repo.invalid/private-path', ['host=repo.invalid; path redacted'])]:
+            with self.subTest(changes=changes):
+                out = self.shell(self.fixture(changes), isolated_sources=True)
+                self.assertIn('Cannot safely update php7.4-cli (amd64): installed 1:7.4.33-30+', out)
+                self.assertIn('APT candidate 1:7.4.33-31+', out)
+                self.assertIn('Review apt-cache policy php7.4-cli:amd64 and apt-cache policy', out)
+                for text in expected:
+                    self.assertIn(text, out)
+                self.assertNotIn('private-token', out)
+                self.assertNotIn('private-path', out)
+                self.assertNotIn('INSTALL:', out)
+
+    def test_focal_candidate_reports_unreviewed_platform_instead_of_competing_sources(self):
+        out = self.shell(self.fixture('''P2S_DISTRO=ubuntu; P2S_RELEASE=20.04; suite=focal
+uri=http://ppa.launchpad.net/ondrej/php/ubuntu; origin=LP-PPA-ondrej-php
+name=libapache2-mod-php7.4
+old=1:7.4.33-15+ubuntu20.04.1+deb.sury.org+1
+candidate=$old'''), isolated_sources=True)
+        self.assertIn('no reviewed automatic Sury/ondrej update path for ubuntu 20.04', out)
+        self.assertIn('o=LP-PPA-ondrej-php,n=focal', out)
+        self.assertIn('host=ppa.launchpad.net', out)
+        self.assertNotIn('ambiguous origin', out)
+        self.assertNotIn('INSTALL:', out)
+
     def test_debian_bookworm_sury_candidate_cannot_be_installed_on_ubuntu_jammy(self):
         out = self.shell(self.fixture('P2S_DISTRO=ubuntu; P2S_RELEASE=22.04; mixed=false'),
                          isolated_sources=True)
@@ -324,6 +353,24 @@ cat "$P2S_WORK/package-states"
                                      names=('php8.1-cli',), source='php8.1')
         self.assertIn('|comparison=equal', out)
         self.assertNotIn('tool is unavailable', out)
+
+    def test_unreviewed_focal_backport_explains_reference_comparison_limit(self):
+        out = self.installed_summary('1:7.4.33-15+ubuntu20.04.1+deb.sury.org+1',
+                                     names=('libapache2-mod-php7.4',), distro='ubuntu', release='20.04')
+        self.assertIn('libapache2-mod-php7.4|?', out.splitlines())
+        self.assertIn('built-in list of package builds verified to include both PHP2Shell fixes', out)
+        self.assertIn('That list has no entry for libapache2-mod-php7.4 on ubuntu 20.04 (package architecture: amd64)', out)
+        self.assertIn('Without a matching list entry, this check cannot determine whether the installed build includes the fixes', out)
+        self.assertIn('The publisher may still offer a fixed package', out)
+
+    def test_old_ubuntu_support_warning_links_setup_and_distinguishes_ppa_packages(self):
+        out = self.shell('''P2S_DISTRO=ubuntu; P2S_RELEASE=20.04; P2S_MAJOR=20
+p2s_fix_check_distro_recipe
+''')
+        for text in ["outside Canonical's standard security-support window", 'https://ubuntu.com/security/esm',
+                     'https://ubuntu.com/pro/docs/attach-tutorial/', 'pro status', 'does not patch third-party Sury/ondrej packages',
+                     'supported Ubuntu release upgrade', 'supported Debian/Ubuntu server']:
+            self.assertIn(text, out)
 
     def test_different_sury_builds_with_same_php_version_keep_separate_conclusions(self):
         records = [

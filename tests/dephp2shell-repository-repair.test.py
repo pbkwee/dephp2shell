@@ -115,6 +115,24 @@ p2s_repository_sury_installed_source_report
         self.assertNotIn('installed_packages_without_matching_active_source', out)
         self.assertNotIn('Automatic Sury/ondrej updates need an active matching source', out)
 
+    def test_focal_ppa_is_recognised_for_selectors_and_engine_packages(self):
+        for name, arch in [('libapache2-mod-php', 'all'), ('libapache2-mod-php7.4', 'amd64')]:
+            for definition, active in [
+                    ('deb http://ppa.launchpad.net/ondrej/php/ubuntu focal main', True),
+                    ('# deb http://ppa.launchpad.net/ondrej/php/ubuntu focal main', False),
+                    ('deb http://ppa.launchpad.net/ondrej/php/ubuntu jammy main', False),
+                    ('Types: deb\nURIs: https://ppa.launchpadcontent.net/ondrej/php/ubuntu\nSuites: focal\nEnabled: no', False)]:
+                with self.subTest(name=name, definition=definition):
+                    filename = 'ondrej.sources' if definition.startswith('Types:') else 'ondrej.list'
+                    out = self.shell(self.fixture('P2S_DISTRO=ubuntu; P2S_RELEASE=20.04\n'
+                        + 'rm "$P2S_WORK/etc/apt/sources.list.d/php.list"\n'
+                        + 'printf "%s\\n" ' + shlex.quote(definition)
+                        + ' > "$P2S_WORK/etc/apt/sources.list.d/' + filename + '"\n'
+                        + 'printf "%s\\n" ' + shlex.quote(f'{name}|1:7.4.33-15+ubuntu20.04.1+deb.sury.org+1|{arch}|PHP Maintainers')
+                        + ' > "$P2S_WORK/packages"\np2s_repository_sury_installed_source_report\n'),
+                        isolated_sources=True, isolated_paths=True)
+                    self.assertEqual('installed_packages_without_matching_active_source' in out, not active)
+
     def test_debian_sury_bookworm_on_ubuntu_names_the_distribution_suite_and_file(self):
         definition = '''Types: deb deb-src
 URIs: https://packages.sury.org/php
@@ -134,6 +152,8 @@ printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
         self.assertIn('/extrepo_sury.sources: the source supplies Debian packages for suite \'bookworm\'', out)
         self.assertIn('this server runs ubuntu 22.04', out)
         self.assertIn('Ubuntu PHP packages use the ondrej/php PPA for jammy', out)
+        self.assertIn('Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources', out)
+        self.assertNotIn('repository change alone', out)
         self.assertIn('configured=Debian bookworm|host=ubuntu 22.04|expected_suite=jammy', out)
         self.assertNotIn('extrepo update sury', out)
         self.assertNotIn('PHP packages built for another distribution are installed', out)

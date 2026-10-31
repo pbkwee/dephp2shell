@@ -33,14 +33,54 @@ printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
         warnings = '\n'.join(line for line in out.splitlines() if line.startswith('dss:warn:'))
         self.assertEqual(warnings.count('PHP packages from an older OS release'), 1)
         self.assertIn('Their build labels identify Debian 8; this server runs debian 13', warnings)
+        self.assertIn('5.6.40+dfsg-0+deb8u12 (libapache2-mod-php5, php5-cli and 1 other)', warnings)
+        self.assertIn('Full package lists are in the diagnostic report', warnings)
         for name in ('libapache2-mod-php5', 'php5-cli', 'php5-common'):
-            self.assertIn(name + ' (5.6.40+dfsg-0+deb8u12)', warnings)
             self.assertIn('package_release_mismatch:beforefix|' + name + '|', out)
             self.assertIn('package_release_mismatch:afterfix|' + name + '|', out)
         for name in ('php5-gd', 'php5-json', 'php5-mcrypt'):
             self.assertNotIn(name, warnings)
             self.assertNotIn('package_release_mismatch:beforefix|' + name + '|', out)
         self.assertIn('UNKNOWN=false|BLOCKED=false', out)
+
+    def test_build_groups_bound_example_names_and_retain_all_manifest_packages(self):
+        for count in (1, 2, 3, 12):
+            with self.subTest(count=count):
+                first = '7.1.33-45+ubuntu18.04.1+deb.sury.org+1'
+                second = '7.2.34-30+ubuntu18.04.1+deb.sury.org+1'
+                names = ['php7.1-cli', 'php7.1-common'] + [f'php7.1-ext{i}' for i in range(10)]
+                records = [f'{name}|{first}|amd64|PHP Maintainers' for name in names[:count]]
+                records.append(f'php7.2-cli|{second}|amd64|PHP Maintainers')
+                out = self.shell('P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=20.04\n'
+                                 + 'printf "%s\\n" ' + shlex.quote('\n'.join(records))
+                                 + ' > "$P2S_WORK/packages"\np2s_package_release_report\n')
+                warning = next(line for line in out.splitlines() if line.startswith('dss:warn:'))
+                self.assertEqual(warning.count(first), 1)
+                self.assertEqual(warning.count(second), 1)
+                self.assertIn(second + ' (php7.2-cli)', warning)
+                self.assertIn('php7.1-cli', warning)
+                if count > 1:
+                    self.assertIn('php7.1-cli, php7.1-common', warning)
+                if count > 2:
+                    self.assertIn(f'and {count-2} ' + ('other)' if count == 3 else 'others)'), warning)
+                    self.assertNotIn('php7.1-ext', warning)
+                else:
+                    self.assertNotIn(' other)', warning)
+                    self.assertNotIn(' others)', warning)
+                for name in names[:count]:
+                    self.assertIn('package_release_mismatch:beforefix|' + name + '|', out)
+
+    def test_identical_binary_versions_with_different_source_builds_stay_separate(self):
+        out = self.shell(r'''
+P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=13
+printf '%s\n' 'php5-json|1.3.6-1|amd64|Maintainers' 'php5-xml|1.3.6-1|amd64|Maintainers' > "$P2S_WORK/packages"
+printf '%s\n' 'php5-json|1.3.6-1|amd64|php-json|1.3.6-1+deb8u1|source_field' \
+    'php5-xml|1.3.6-1|amd64|php-xml|1.3.6-1+deb8u2|source_field' > "$P2S_WORK/deb-source-records"
+p2s_package_release_report
+''')
+        warning = next(line for line in out.splitlines() if line.startswith('dss:warn:'))
+        self.assertIn('1.3.6-1; source 1.3.6-1+deb8u1 (php5-json)', warning)
+        self.assertIn('1.3.6-1; source 1.3.6-1+deb8u2 (php5-xml)', warning)
 
     def test_current_release_old_php_unlabelled_and_newer_builds_do_not_warn(self):
         cases = [('debian', '13', '8.4.27-1~deb13u1'),
@@ -92,7 +132,7 @@ p2s_package_sources_collect
 p2s_package_release_report
 ''')
         self.assertIn('target=Debian 8|host=debian 13|evidence=source_version_marker|revision=1.3.6-1+deb8u1', out)
-        self.assertIn('php5-json (1.3.6-1; source 1.3.6-1+deb8u1)', out)
+        self.assertIn('1.3.6-1; source 1.3.6-1+deb8u1 (php5-json)', out)
 
     def test_unmatched_or_empty_source_records_cannot_supply_release_labels(self):
         for records in ('', 'php5-json|another-version|amd64|php-json|1.3.6-1+deb8u1|source_field',
@@ -135,7 +175,8 @@ printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
 ''')
                 self.assertIn('target=' + expected, out)
                 self.assertIn('PHP packages built for another distribution', out)
-                self.assertIn('changing the repository alone does not replace these installed packages', out)
+                self.assertIn('Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources', out)
+                self.assertNotIn('repository alone does not replace', out)
                 self.assertNotIn('PHP packages from an older OS release', out)
                 self.assertIn('BLOCKED=false|UNKNOWN=false', out)
 
@@ -175,6 +216,9 @@ p2s_package_release_usage_report
         self.assertIn('is in use by running processes', out)
         self.assertIn('php5-fpm (/usr/sbin/php5-fpm)', out)
         self.assertIn('php5-cli, php5-common, php5-fpm, php5-mcrypt', out)
+        warning = next(line for line in out.splitlines() if 'is in use by running processes' in line)
+        self.assertIn('packages: php5-cli, php5-common and 2 others)', warning)
+        self.assertNotIn('php5-mcrypt', warning)
         self.assertNotIn('consider removing these packages', out)
 
     def test_no_running_use_suggests_reviewed_removal_without_claiming_unused(self):

@@ -14,7 +14,9 @@ class PackageRepairTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='dephp-package-repair-') as work:
             script = Path(work) / 'fixture.sh'
             source = SCRIPT.read_text()
-            script.write_text(source.replace('/var/lib/dpkg/info/', work + '/var/lib/dpkg/info/'))
+            for prefix in ('/var/lib/dpkg/info/', '/usr/sbin/', '/etc/php/'):
+                source = source.replace(prefix, work + prefix)
+            script.write_text(source)
             setup = r'''
 source "$1"
 P2S_WORK=$2; P2S_PHASE=beforefix; P2S_BACKEND=deb; P2S_PANEL=''; P2S_DISTRO=debian; P2S_RELEASE=12
@@ -28,6 +30,7 @@ candidate=$version; metadata_source=$source; metadata_arch=$arch; metadata_hash=
 foreign_origin=false; added_dependency=false; removal=false; conf_unrelated=false
 plan_arch=amd64; purge=false; unknown_action=false
 install_fail=false; configure_fail=false; refresh_fail=false; trigger_fail=false; final_audit=false
+configure_exit=1; journal_exit=0; config_exit=78
 : > "$P2S_WORK/audit-status.err"
 '''
             setup += changes + r'''
@@ -49,7 +52,7 @@ p2s_command_run() {
             case "$3" in
                 --audit) if $final_audit; then printf 'Package audit still blocked\n'; fi ;;
                 *) case "$*" in
-                    *--configure*) if $configure_fail; then return 1; fi ;;
+                    *--configure*) if $configure_fail; then return "$configure_exit"; fi ;;
                     *--triggers-only*) if $trigger_fail; then return 1; fi ;;
                     *) return 97 ;;
                 esac ;;
@@ -81,6 +84,15 @@ p2s_command_run() {
                 *' -y '*) if $install_fail; then return 1; fi ;;
                 *) return 97 ;;
             esac ;;
+        systemctl)
+            printf 'ActiveState=failed\nResult=exit-code\nExecMainStatus=78\n' ;;
+        journalctl)
+            printf 'ERROR: [pool oldsite] cannot get uid for user missing-user\npassword=private-value\nhttps://login:credential@repo.invalid/private-path\n'
+            return "$journal_exit" ;;
+        */php-fpm*)
+            if [ "$config_exit" -eq 0 ]; then printf 'NOTICE: configuration test is successful\n'
+            else printf 'ERROR: [pool oldsite] cannot get uid for user missing-user\n'; fi
+            return "$config_exit" ;;
         *) printf 'UNEXPECTED administrative command %s\n' "$*" >&2; return 97 ;;
     esac
 }
@@ -146,10 +158,45 @@ if grep -- '--triggers-only' "$P2S_WORK/commands"; then exit 2; fi
 ''')
 
     def test_configuration_failure_is_recorded_after_attempt(self):
-        self.shell(r'''
+        for status in (1, 124):
+            out = self.shell(r'''
 if p2s_disruptive_package_configure_pending_php; then exit 1; fi
 $P2S_TRANSACTION_ATTEMPTED && $P2S_BLOCKED || exit 2
-''', 'configure_fail=true\n')
+''', f'configure_fail=true; configure_exit={status}\n')
+            self.assertIn(f'package_repair_exit:beforefix|configure_pending_php|exit={status}|targets=php8.2-cli:amd64', out)
+            self.assertIn(f'Could not finish configuring php8.2-cli:amd64 (dpkg exit {status}', out)
+
+    def test_failed_fpm_configuration_collects_read_only_redacted_diagnostics(self):
+        for tools_available, journal_exit, config_exit in ((True, 0, 78), (True, 124, 78), (False, 0, 78), (True, 0, 0)):
+            with self.subTest(tools_available=tools_available, journal_exit=journal_exit, config_exit=config_exit):
+                out = self.shell(r'''
+mkdir -p "$P2S_WORK/usr/sbin" "$P2S_WORK/etc/php/7.4/fpm"
+touch "$P2S_WORK/usr/sbin/php-fpm7.4" "$P2S_WORK/etc/php/7.4/fpm/php-fpm.conf"
+chmod u+x "$P2S_WORK/usr/sbin/php-fpm7.4"
+p2s_command_exists() { case "$1" in systemctl|journalctl) $tools_available ;; *) command -v "$1" >/dev/null ;; esac; }
+if p2s_disruptive_package_configure_pending_php; then exit 1; fi
+$P2S_TRANSACTION_ATTEMPTED && $P2S_BLOCKED || exit 2
+cat "$P2S_WORK/commands"
+''', f'''package=php7.4-fpm; source=php7.4; version=7.4.33-1~deb12u1; status='install ok half-configured'
+configure_fail=true; tools_available={str(tools_available).lower()}; journal_exit={journal_exit}; config_exit={config_exit}
+''')
+                self.assertIn('exit=1|targets=php7.4-fpm:amd64', out)
+                self.assertIn(f'configtest_exit:beforefix|PHP-FPM (php7.4-fpm standard configuration after failed repair)|{config_exit}', out)
+                self.assertIn('cannot get uid for user missing-user', out)
+                self.assertNotIn('private-value', out)
+                self.assertNotIn('credential', out)
+                self.assertNotIn('private-path', out)
+                if tools_available:
+                    self.assertIn('ExecMainStatus=78', out)
+                    self.assertIn('journalctl --unit=php7.4-fpm.service --since=', out)
+                    self.assertIn('--lines=30 --no-pager --output=cat', out)
+                    self.assertIn(f'php7.4-fpm.service|journalctl|exit={journal_exit}', out)
+                    self.assertIn('[sensitive diagnostic redacted]', out)
+                else:
+                    self.assertIn('php7.4-fpm.service|systemctl|unavailable', out)
+                    self.assertIn('php7.4-fpm.service|journalctl|unavailable', out)
+                for mutation in ('systemctl restart', 'systemctl stop', 'systemctl disable', '--configure -a'):
+                    self.assertNotIn(mutation, out)
 
     def test_exact_reinstall_completes_preserving_version_and_config(self):
         self.shell(r'''

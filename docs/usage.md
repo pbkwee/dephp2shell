@@ -32,7 +32,6 @@ fix attempt; a successful repair can be followed by ordinary PHP updates.
 | [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | With `--enable-extra-fixes`, add a missing matching Debian/Ubuntu `main` security source using the installed archive keyring. |
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | With `--enable-extra-fixes`, configure a verified set of pending standard PHP packages. |
 | [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | With `--enable-extra-fixes`, reinstall PHP from authenticated exact installed-version candidates to restore package metadata. |
-| [`--wait-for-package-lock SECONDS`](resolution-options.md#wait-for-another-package-operation) | Wait up to 0–600 seconds before fix operations on APT systems with `fuser`; default 0. |
 | `--output human` | Show readable progress and results. This is the default. |
 | `--output machine` | Emit the structured line protocol for integrations. |
 | `--log-dir DIR` | Save this run's detailed diagnostics in a private subdirectory of `DIR`. |
@@ -120,7 +119,6 @@ are Boolean defaults, initially false.
 Boolean defaults, initially false. Choose only one of these two repository methods
 per attempt. All method settings require command-line `--enable-extra-fixes`;
 the consent gate has no environment equivalent.
-`DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS` sets the independent 0–600 second wait default.
 Explicit command-line settings take precedence over the environment.
 
 `--check` now prints suggested options when installed or cached evidence supports

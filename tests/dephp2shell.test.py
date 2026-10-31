@@ -946,7 +946,10 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 if unresolved:
                     self.assertIn('If your configured PHP package sources cannot supply a fixed package', advice[0])
                     self.assertIn('websites, applications and scheduled jobs', advice[0])
-                    self.assertIn('Test them before removing old PHP packages.', advice[0])
+                    self.assertIn('Review which versions your websites, applications and scheduled jobs still need.', advice[0])
+                    self.assertIn('migrate affected workloads to a supported, patched PHP version', advice[0])
+                    self.assertIn('Test the migrated workloads before removing unused PHP versions', advice[0])
+                    self.assertIn('review package dependencies and proposed removals', advice[0])
                     self.assertIn('Changing the default PHP version alone', advice[0])
                     for version in unresolved:
                         self.assertEqual(advice[0].count(version), 1)
@@ -1459,6 +1462,7 @@ printf 'RC=%s|BLOCKED=%s\\n' "$rc" "$P2S_BLOCKED"
         output = 'E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4242 (apt-get)\nE: Unable to lock directory /var/lib/apt/lists/'
         out = self.shell(self.apt_fixture('refresh', 100, output), isolated_paths=True)
         self.assertIn('Another package-manager operation is holding a required lock (PID 4242)', out)
+        self.assertIn("investigate the owning operation's progress and logs before retrying", out)
         self.assertIn('blocker:beforefix|package_manager_busy|', out)
         self.assertIn('RC=1|BLOCKED=true', out)
         self.assertNotIn('Check repository availability', out)
@@ -1736,7 +1740,7 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
                 if fix_status == 0 and expected == '?':
                     self.assertIn('update attempt finished, but we could not verify', out)
                     self.assertNotIn('service restart commands completed', out)
-                    self.assertNotIn('take affected PHP services offline', out)
+                    self.assertIn('Temporary exposure reduction:', out)
                 elif fix_status == 1:
                     self.assertIn('The update could not be completed or verified', out)
 

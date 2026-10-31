@@ -103,9 +103,23 @@ compatibility before updating or removing old PHP packages. See
 [Virtualmin's multiple-PHP-version guidance](https://www.virtualmin.com/docs/server-components/configuring-multiple-php-versions/).
 
 When parallel PHP branches remain vulnerable or unverified, the final summary
-names the versions needing attention. It recommends migrating their websites,
-applications and scheduled jobs if no supported security update is available.
-Test those workloads before removing unused older packages. Review and change each website's PHP selection explicitly. Check vendor support for unverified backports before selecting migration.
+names the versions needing attention and asks which versions websites, applications
+and scheduled jobs still require. It recommends migrating those workloads if no
+supported security update is available. Test migrated workloads and review package
+dependencies and proposed removals before removing unused versions. Review and change each website's PHP selection explicitly. Check vendor support for unverified backports before selecting migration.
+
+Fix runs emit `dss:fixmethod: Attempted --fix ...` with effective repair and
+migration options, including environment defaults, before preflight. This records
+an attempt even when blocked; check runs emit no attempt record. Existing
+successful-action records remain separate. These diagnostics stay in machine
+output and detailed logs.
+
+After an unresolved fix, the report includes manual exposure-reduction advice
+and `exposure_stop_command` records. Targets come from the latest PHP process to
+service mappings, not the list of installed packages or every web server.
+Observed systemd activation triggers are included; failed trigger checks and
+unmapped PHP workloads are explicit limitations. See
+[temporary shutdown guidance](resolution-options.md#temporarily-stop-php-exposure).
 
 One aggregate marker is emitted per phase:
 
@@ -153,7 +167,25 @@ The check reads conventional source definitions, including comments, Deb822
 `Enabled`, package architecture options and Ubuntu ondrej sources. Cached APT
 indexes do not count as an active source. A missing source does not change an
 otherwise verified fixed package's CVE assessment. Source activation retains
-its existing explicit opt-in requirements.
+its existing explicit opt-in requirements. Source recognition includes Ubuntu
+20.04's `focal` suite without granting automatic-update eligibility. The script
+compares installed Sury package versions against a built-in list of builds verified
+to include both PHP2Shell fixes. A missing entry identifies the package, host release
+and architecture that the list does not cover. Fix status remains unverified;
+the publisher may still offer a fixed package.
+Candidate refusals show installed and candidate versions, matching/unverified
+repository rows and their release identities. The script reports an unreviewed
+automatic-update platform separately from competing package origins.
+
+Ubuntu releases outside standard security support link to Canonical's
+[ESM coverage](https://ubuntu.com/security/esm) and
+[Pro setup](https://ubuntu.com/pro/docs/attach-tutorial/). Check enabled services with `pro status`;
+the script does not verify an entitlement. Ubuntu Pro covers eligible Canonical
+packages, rather than third-party Sury/PPA builds. Alternatives are a supported
+Ubuntu release upgrade or application migration to a supported Debian/Ubuntu server.
+Canonical's [release cycle](https://ubuntu.com/about/release-cycle), checked
+2026-10-30, lists May 2025 as the end of standard security maintenance for Ubuntu
+20.04. Older releases can require the Legacy add-on.
 
 Operational results omit routine application-testing reminders. Specific material
 compatibility changes remain documented alongside the proposed operation.
@@ -393,8 +425,12 @@ tools or contacting package publishers:
 - `runtime_source`: an executable with no verified package owner has an unknown
   installation method. Possible installation methods include source builds, copied binaries, bundled runtimes and management by another environment; the method remains unknown.
 
-Installed packages with explicit older release markers get a grouped customer
-warning and per-package `package_release_mismatch` evidence. This is separate
+Installed packages with explicit older release markers get one customer warning
+per target OS release. The warning groups packages with identical build versions,
+showing each version once with two example names and an exact remaining count.
+Different source-build evidence stays separate. Usage messages also abbreviate
+package lists. Per-package `package_release_mismatch` and full `package_release_usage`
+records retain all affected package names and build evidence. This is separate
 from CVE state, runtime use and automatic-update eligibility. A package can be
 left over from an OS upgrade and still serve websites; it is not declared unused
 or removed. `config-files`/`not-installed` dpkg records are already excluded from
@@ -595,11 +631,18 @@ manifest method identifiers retain their existing internal names.
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching repository and package publisher identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
 | [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | `DP2S_REINSTALL_PHP_SAME_VERSION=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged package publisher, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
 
-`--wait-for-package-lock SECONDS` / `DP2S_WAIT_FOR_PACKAGE_LOCK_SECONDS`
-has its [operator explanation](resolution-options.md#wait-for-another-package-operation) in the option guide. It
-waits before fix operations on APT systems with `fuser`. The bound is 0–600 seconds. Default zero preserves current behavior.
-The open-file probe is conservative; a file can exist without being held. Unknown
-probe results stop an explicitly requested wait. No locks or processes are removed.
+A failed pending-PHP configuration records its explicit package targets and the
+actual dpkg exit status, distinguishing timeout status 124 from a package-script
+failure. For selected versioned FPM packages, read-only diagnostics collect unit
+state fields, at most 30 journal entries since the repair began, and a standard
+package configuration test. Each probe has a deadline and records its exit or
+unavailability. URL and sensitive-line filtering matches configuration tests.
+The probes do not request configuration dumps, process command lines, a global
+journal or service changes. Unit overrides can choose another configuration;
+the standard-path test is labelled accordingly. Successful diagnostics do not
+clear a failed repair or authorize package removal. Still-pending configuration
+is not recommended again in the same fix run after an attempted configuration;
+resolve the reported error and run a fresh check.
 
 Package configuration runs maintainer scripts and triggers. APT dependency repair
 can select packages outside PHP, and a simulation does not lock package state.
@@ -806,11 +849,13 @@ APT/dpkg kernel write lock has an owner running for at least one hour. It matche
 `/proc/locks` device/inode records to the four standard APT/dpkg lock paths.
 `package_manager_long_running_lock` records the path, PID, parent PID, process
 name and elapsed runtime. Arguments are omitted. Runtime is measured from process
-start; lock acquisition time is unavailable. The warning includes commands to
-recheck the owner and send `kill -TERM PID` after confirming it is stuck. No job
+start; lock acquisition time is unavailable. The warning includes read-only `ps`
+and `lslocks` commands to recheck the owner. It directs an administrator to
+investigate progress and logs, without suggesting that the owner be killed. No job
 is stopped, no lock file is removed and warning collection leaves update eligibility
 unchanged. Missing/unreadable process or lock metadata yields no age warning;
-APT/dpkg still enforce locking. Existing wait and failure diagnostics remain active.
+APT/dpkg still enforce locking. Lock conflicts remain blockers and do not produce
+a timed-wait retry recommendation.
 
 `package_manager_busy` identifies lock contention separately from repository or
 network failures. When APT reports a numeric holder PID, `package_manager_lock_holder`

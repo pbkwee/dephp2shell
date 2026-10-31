@@ -59,23 +59,23 @@ dpkg() { printf 'UNEXPECTED package operation\n' >&2; return 99; }
         self.assertEqual(self.lock.read_text(), 'persistent lock file\n')
         return result.stdout + result.stderr
 
-    def test_old_owner_reports_identity_and_reviewed_term_command(self):
+    def test_old_owner_reports_identity_and_investigation_without_kill_advice(self):
         self.locks()
         output = self.run_warning()
         self.assertIn('PID 4242 (apt-get, parent 99)', output)
         self.assertIn('running for 35-02:03:04', output)
         self.assertIn('Lock acquisition time is unavailable', output)
-        self.assertIn('Check its progress before stopping it', output)
-        self.assertIn('kill -TERM 4242', output)
+        self.assertIn('Ask an administrator to investigate its progress and logs', output)
+        self.assertIn('ps -p 4242 -o pid,ppid,etime,stat,comm; lslocks', output)
         self.assertIn('packages unfinished', output)
-        self.assertNotIn('kill -KILL', output)
+        self.assertNotIn('kill -', output)
 
     def test_threshold_and_legacy_ps_elapsed_formats(self):
         self.locks()
         for elapsed, warns in [('59:59', False), ('00:59:59', False), ('01:00:00', True),
                                ('1-00:00:00', True), ('125:00', True), ('garbage', False), ('', False)]:
             with self.subTest(elapsed=elapsed):
-                self.assertEqual('kill -TERM 4242' in self.run_warning(elapsed), warns)
+                self.assertEqual('held by PID 4242' in self.run_warning(elapsed), warns)
 
     def test_file_without_kernel_lock_and_open_descriptor_are_ignored(self):
         with self.lock.open():
@@ -106,14 +106,14 @@ dpkg() { printf 'UNEXPECTED package operation\n' >&2; return 99; }
     def test_repeat_probe_suppresses_duplicate_warning(self):
         self.locks()
         output = self.run_warning(extra=FUNCTION + '\n')
-        self.assertEqual(output.count('kill -TERM 4242'), 1)
+        self.assertEqual(output.count('held by PID 4242'), 1)
 
     def test_multiple_owners_are_reported_and_process_arguments_are_not_queried(self):
         self.locks('12: POSIX ADVISORY WRITE 4242 ' + self.identity + ' 0 10\n' +
                    '13: POSIX ADVISORY WRITE 4243 ' + self.identity + ' 11 EOF\n')
         output = self.run_warning()
-        self.assertIn('kill -TERM 4242', output)
-        self.assertIn('kill -TERM 4243', output)
+        self.assertIn('ps -p 4242 -o pid,ppid,etime,stat,comm; lslocks', output)
+        self.assertIn('held by PID 4243', output)
         for field in ('args=', 'cmd=', 'command='):
             self.assertNotIn('-o ' + field, self.definitions)
 
@@ -124,11 +124,11 @@ dpkg() { printf 'UNEXPECTED package operation\n' >&2; return 99; }
             self.proc.write_text(''.join(line for line in Path('/proc/locks').read_text().splitlines(True)
                                          if self.identity in line and str(os.getpid()) in line.split()))
             output = self.run_warning()
-            self.assertIn('kill -TERM ' + str(os.getpid()), output)
+            self.assertIn('held by PID ' + str(os.getpid()), output)
 
-    def test_warning_precedes_package_lock_requests(self):
+    def test_warning_precedes_package_preflight_and_script_lock_requests(self):
         fix = re.search(r'^p2s_fix_run\(\) \{\n.*?^}\n', TEXT, re.M | re.S).group()
-        self.assertLess(fix.index(FUNCTION), fix.index('p2s_package_lock_wait'))
+        self.assertLess(fix.index(FUNCTION), fix.index('p2s_fix_preflight'))
         main = TEXT[TEXT.index('p2s_main() {'):]
         self.assertLess(main.index(FUNCTION), main.index('mkdir /var/run/rh-php2shell.lock'))
 

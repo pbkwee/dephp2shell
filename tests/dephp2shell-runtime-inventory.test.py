@@ -121,6 +121,9 @@ p2s_runtime_inventory_collect() { :; }
 p2s_web_listener_inventory_collect() { :; }
 p2s_inventory_collect_and_assess
 printf 'STATE=%s|PENDING=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_RESTART_PENDING" "$P2S_BLOCKED"
+P2S_MODE=fix
+p2s_command_run() { printf 'TriggeredBy=\n'; }
+p2s_fix_print_exposure_advice
 if [ "$P2S_STATE" = N ]; then
     # Exercise the real fix-mode dispatch while denying package/service operations and lock writes.
     p2s_work_directory_init() { :; }
@@ -132,6 +135,11 @@ if [ "$P2S_STATE" = N ]; then
 fi
 ''')
                 self.assertIn(f'STATE={state}|PENDING={str(pending).lower()}|BLOCKED={str(blocked).lower()}', out)
+                self.assertEqual("run: sudo systemctl stop 'httpd.service'" in out,
+                                 name == 'httpd' and maps in ('php', 'deleted_php'))
+                self.assertEqual("run: sudo systemctl stop 'php8.3-fpm.service'" in out,
+                                 name == 'php-fpm8.3')
+                self.assertNotIn("run: sudo systemctl stop 'nginx.service'", out)
                 advice = [line for line in out.splitlines() if 'Separate maintenance:' in line]
                 if state == 'N':
                     # One warning in each inventory; never one per worker.
