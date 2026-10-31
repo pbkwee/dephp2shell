@@ -1289,6 +1289,8 @@ p2s_package_deb_sury_trust_preflight() {
 p2s_package_deb_candidate() {
     local name="$1" installed="$2" arch="$3" sury="$4" target candidate observed matches other seen record metadata source source_version expected suite branch old_branch rest installed_source provider query_status=0
     local origin_details origin_reason
+    # Explicit migration must reach Sury; a native candidate can still lack the requested security fixes.
+    if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then sury=true; fi
     target=${name%:*}; [ "$arch" = all ] || target="$target:$arch"
     p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= policy "$target" > "$P2S_WORK/candidate-policy" 2> "$P2S_WORK/candidate-query.err" || query_status=$?
     if [ "$query_status" -ne 0 ]; then
@@ -1348,6 +1350,9 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
     origin_reason="Expected only the official Sury/ondrej PHP source for $P2S_DISTRO $P2S_RELEASE (suite $suite); matching repository rows: $matches; other or unverified rows: $other."
     if [ "$suite" = unsupported ]; then origin_reason="This script has no reviewed automatic Sury/ondrej update path for $P2S_DISTRO $P2S_RELEASE; its source identity could not be approved."; fi
     if ! p2s_package_deb_is_sury "$candidate"; then origin_reason="$origin_reason The candidate version does not identify a Sury/ondrej build."; fi
+    if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then
+        origin_reason="$origin_reason Sury migration requires a normal candidate from its matching repository. If that source is absent, explicitly select --add-sury-repository with the migration options; otherwise review the source and APT policy. No native-package fallback is permitted."
+    fi
     if [ "$sury" = true ]; then
         if ! p2s_package_deb_is_sury "$candidate" || [ "$matches" -eq 0 ] || [ "$other" -ne 0 ]; then
             p2s_fix_block candidate_provider "Cannot safely update $name ($arch): installed $installed; APT candidate $candidate. $origin_reason Candidate sources: $origin_details. Review apt-cache policy $target and apt-cache policy before changing sources or pins."
@@ -2312,7 +2317,7 @@ p2s_disruptive_package_reinstall_exact_php() {
 
 # Read-only proposal approval; caller must rerun the pinned simulation and guard installation.
 p2s_package_deb_dependency_approve_plan() {
-    local log="$1" name old candidate arch installed_source record target suite origin file parent dep op required installed_version candidate_version maintainer plan_arch
+    local log="$1" name old candidate arch installed_source record target suite origin file parent dep op required installed_version candidate_version maintainer plan_arch sury_pcre policy_status metadata_version
     case "$P2S_BACKEND:$P2S_DISTRO:$P2S_RELEASE" in
         deb:debian:11|deb:debian:11.*) suite=bullseye; origin=Debian ;;
         deb:debian:12|deb:debian:12.*) suite=bookworm; origin=Debian ;;
@@ -2326,16 +2331,26 @@ p2s_package_deb_dependency_approve_plan() {
     : > "$P2S_WORK/dependency-arguments"
     : > "$P2S_WORK/dependency-needed"
     : > "$P2S_WORK/dependency-edges"
-    if ! awk '/^(Remv|Purg|E:|W:) / {exit 1}
-        /^Conf / {if ($0 !~ /^Conf [a-z0-9][a-z0-9+.:_-]* \([^()]+ \[[a-z0-9]+\]\)$/) exit 1; next}
+    # apt-get -s: php is already the newest version (2:7.4+76).
+    # Inst php7.4-cli [old] (new bullseye [amd64]) [php7.4-common:amd64 ]
+    # The trailing list tracks temporary dependency breaks while APT orders the upgrade.
+    # Use 'apt autoremove' to remove them. -> advice only; \047 quotes an apostrophe inside AWK.
+    if ! awk -v rejected="$P2S_WORK/dependency-plan-rejected" '
+        function reject() {print NR "|" $0 > rejected; exit 1}
+        /^(Remv|Purg|E:|W:) / {reject()}
+        /^Inst / {sub(/ \[[a-z0-9+.:_ -]*\]$/, "")}
+        /^[a-z0-9][a-z0-9+.:_-]* is already the newest version \([^()]+\)[.]$/ {next}
+        /^Use \047apt(-get)? autoremove\047 to remove them[.]$/ {next}
+        /^Conf / {if ($0 !~ /^Conf [a-z0-9][a-z0-9+.:_-]* \([^()]+ \[[a-z0-9]+\]\)$/) reject(); next}
         /^Inst / {
-            if ($0 !~ /^Inst [a-z0-9][a-z0-9+.:_-]* \[[^][]+\] \([^()]+ \[[a-z0-9]+\]\)$/) exit 1
+            if ($0 !~ /^Inst [a-z0-9][a-z0-9+.:_-]* \[[^][]+\] \([^()]+ \[[a-z0-9]+\]\)$/) reject()
             name=$2; old=$3; gsub(/[\[\]]/,"",old); line=$0; sub(/^[^(]*\(/,"",line); split(line,a," ")
             arch=$NF; gsub(/[\[\]()]/,"",arch); print name "|" old "|" a[1] "|" arch; next
         }
         /^[ \t]*$/ || /^[ \t]+/ || /^(Reading package lists|Building dependency tree|Reading state information|The following|Suggested packages:|Recommended packages:|[0-9]+ upgraded,|NOTE: This is only a simulation[.]|[ \t]*apt-get needs root privileges)/ {next}
-        {exit 1}' "$log" > "$P2S_WORK/dependency-plan"; then
-        p2s_fix_block dependency_plan "Dependency approval requires a recognized upgrade-only APT plan with no package additions or removals."; return 1
+        {reject()}' "$log" > "$P2S_WORK/dependency-plan"; then
+        p2s_manifest_record apt_plan_rejection "$(p2s_manifest_redact_repository_urls < "$P2S_WORK/dependency-plan-rejected")"
+        p2s_fix_block dependency_plan "The APT dependency simulation contains an unsafe or unrecognized line; see apt_plan_rejection in the diagnostic output. No packages were installed."; return 1
     fi
     while IFS='|' read -r name old candidate plan_arch; do
         if awk -F'|' -v n="$name" '$1==n || $1 ":" $3==n {found=1} END {exit !found}' "$P2S_WORK/apt-approved"; then continue; fi
@@ -2353,22 +2368,35 @@ p2s_package_deb_dependency_approve_plan() {
             p2s_fix_block dependency_state "Installed dependency identity or architecture could not be verified for $name."; return 1;
         }
         case "$name" in *:*) [ "${name##*:}" = "$arch" ] || return 1 ;; esac
-        if [ "$(p2s_package_provider "$name" "$maintainer" "$old")" != "$origin" ]; then
-            p2s_fix_block dependency_provider "The installed dependency $name is not identified as a native OS package."; return 1
+        p2s_manifest_record dependency_installed "$name|$old|$arch|source=$installed_source|maintainer=$maintainer|historical_download_origin=unverified"
+        # Native Debian libraries can name an individual, e.g. Matthew Vernon <matthew@debian.org>.
+        # Maintainer text is not origin evidence; retain foreign revision guards and verify native indexes below.
+        if [ "$(p2s_package_provider "$name" '' "$old")" != 'unverified source' ]; then
+            p2s_fix_block dependency_provider "The installed dependency $name has a third-party package revision; automatic native-library migration requires review."; return 1
         fi
         target="${name%:*}:$arch"
         p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= policy "$target" > "$P2S_WORK/dependency-policy" 2> "$P2S_WORK/dependency-query.err" || return 1
-        if ! awk -v suite="$suite" -v origin="$origin" -v wanted="$candidate" -v old="$old" '
+        # Sury PHP 7.4 on bullseye requires PCRE2 >=10.38; Debian provides 10.36.
+        sury_pcre=false
+        if ${P2S_SURY_MIGRATION_ACTIVE:-false} && [ "$suite" = bullseye ] &&
+            [ "${name%:*}" = libpcre2-8-0 ] && [ "$installed_source" = pcre2 ] && p2s_package_deb_is_sury "$candidate"; then
+            sury_pcre=true
+        fi
+        if awk -v suite="$suite" -v origin="$origin" -v wanted="$candidate" -v old="$old" -v sury_pcre="$sury_pcre" '
             function official(uri) {
                 if (origin=="Debian") return uri ~ /^https?:\/\/(deb[.]debian[.]org\/debian(-security)?|security[.]debian[.]org(\/debian-security)?)\/?$/
                 return uri ~ /^https?:\/\/(([a-z][a-z][.])?archive[.]ubuntu[.]com\/ubuntu|security[.]ubuntu[.]com\/ubuntu)\/?$/
             }
             NR==FNR {
-                if ($1 ~ /^-?[0-9]+$/ && $2 ~ /:\/\// && $5=="Packages") {key=$2 "|" $3 "|" $4; native=official($2); next}
+                if ($1 ~ /^-?[0-9]+$/ && $2 ~ /:\/\// && $5=="Packages") {key=$2 "|" $3 "|" $4; native=official($2); uri=$2; component=$3; repo_arch=$4; next}
                 if ($1=="release" && key!="") {
                     line="," $2 ","
-                    if (native && index(line,",o=" origin ",") &&
-                        (index(line,",n=" suite ",") || index(line,",n=" suite "-updates,") || index(line,",n=" suite "-security,"))) approved[key]=1
+                    if (native && repo_arch=="amd64" && index(line,",b=amd64,") && index(line,",o=" origin ",") &&
+                        (index(line,",n=" suite ",") || index(line,",n=" suite "-updates,") || index(line,",n=" suite "-security,"))) {
+                        native_sources[key]=1; approved[key]=1
+                    }
+                    if (sury_pcre=="true" && uri ~ /^https?:\/\/packages[.]sury[.]org\/php\/?$/ && component==suite "/main" && repo_arch=="amd64" &&
+                        index(line,",o=deb.sury.org,") && index(line,",n=" suite ",") && index(line,",c=main,") && index(line,",b=amd64,")) approved[key]=1
                     key=""
                 }
                 next
@@ -2377,27 +2405,50 @@ p2s_package_deb_dependency_approve_plan() {
             $1=="Candidate:" {candidate=$2; next}
             $1=="***" {version=$2; next}
             NF==2 && $2 ~ /^-?[0-9]+$/ {version=$1; next}
+            version==old && $1 ~ /^-?[0-9]+$/ && NF>=2 {
+                if ($2=="/var/lib/dpkg/status") next
+                if ($5=="Packages" && native_sources[$2 "|" $3 "|" $4]) native_installed++; else foreign_installed++
+            }
             version==wanted && $1 ~ /^-?[0-9]+$/ && NF>=2 {
                 if ($2=="/var/lib/dpkg/status") next
                 if ($5=="Packages" && approved[$2 "|" $3 "|" $4]) matches++; else other++
             }
-            END {exit !(installed==old && candidate==wanted && matches>0 && other==0)}
+            END {
+                if (installed!=old || native_installed<1 || foreign_installed) exit 2
+                exit !(candidate==wanted && matches>0 && other==0)
+            }
         ' "$P2S_WORK/candidate-origins" "$P2S_WORK/dependency-policy"; then
-            p2s_fix_block dependency_provider "The normal candidate for $name is not exclusively from reviewed native sources for this OS suite."; return 1
+            :
+        else
+            policy_status=$?
+            p2s_manifest_record dependency_package_policy "$name|installed=$old|candidate=$candidate
+$(p2s_manifest_redact_repository_urls < "$P2S_WORK/dependency-policy")"
+            if [ "$policy_status" -eq 2 ]; then
+                p2s_fix_block dependency_provider "The installed version of $name could not be matched exclusively to reviewed native sources for this OS suite. Maintainer names do not establish package origin."
+            else
+                p2s_fix_block dependency_provider "The normal candidate for $name is not exclusively from reviewed sources for this OS suite. Sury PCRE2 is permitted only for an explicitly requested Debian 11 Sury migration."
+            fi
+            return 1
         fi
         dpkg --compare-versions "$candidate" gt "$old" || { p2s_fix_block dependency_downgrade "The proposed dependency $name is not an upgrade."; return 1; }
         file="$P2S_WORK/dependency-${name%:*}.metadata"
-        p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= show "$target=$candidate" > "$file" 2> "$P2S_WORK/dependency-query.err" || return 1
-        if ! awk -v n="${name%:*}" -v v="$candidate" -v a="$arch" -v s="$installed_source" '
-            function check() {if (package!="" && (package!=n || version!=v || arch!=a || (source!="" ? source : package)!=s)) bad=1}
-            /^Package:/ {check(); package=$2; version=""; arch=""; source=""}
-            /^Version:/ {version=$2} /^Architecture:/ {arch=$2} /^Source:/ {source=$2}
-            END {check(); exit (bad || package=="")}' "$file"; then
-            p2s_fix_block dependency_identity "The dependency $name changes binary, source or architecture identity."; return 1
-        fi
+        for metadata_version in "$old" "$candidate"; do
+            p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= show "$target=$metadata_version" > "$file" 2> "$P2S_WORK/dependency-query.err" || return 1
+            if ! awk -v n="${name%:*}" -v v="$metadata_version" -v a="$arch" -v s="$installed_source" '
+                function check() {if (package!="" && (package!=n || version!=v || arch!=a || (source!="" ? source : package)!=s)) bad=1}
+                /^Package:/ {check(); package=$2; version=""; arch=""; source=""}
+                /^Version:/ {version=$2} /^Architecture:/ {arch=$2} /^Source:/ {source=$2}
+                END {check(); exit (bad || package=="")}' "$file"; then
+                p2s_fix_block dependency_identity "Package metadata for $name=$metadata_version does not match its installed binary, source or architecture identity."; return 1
+            fi
+        done
         printf '%s|%s|%s|%s\n' "${name%:*}" "$candidate" "$arch" "$name" >> "$P2S_WORK/dependency-approved"
         printf '%s|%s|%s\n' "${name%:*}" "$old" "$candidate" >> "$P2S_WORK/dependency-needed"
         printf '%s=%s\n' "$target" "$candidate" >> "$P2S_WORK/dependency-arguments"
+        if $sury_pcre; then
+            p2s_message_print warn "The proposed Sury migration also upgrades the installed shared PCRE2 library ($name: $old to $candidate). Other applications can use this library; PHP still retains its current version branch."
+            p2s_manifest_record dependency_provider "$name|$old|$candidate|Sury|explicit_bullseye_migration|source=pcre2|architecture=$arch"
+        fi
     done < "$P2S_WORK/dependency-plan"
     [ -s "$P2S_WORK/dependency-approved" ] || return 0
     # Only a versioned, non-alternative dependency unsatisfied by the installed library proves necessity.
@@ -2608,6 +2659,7 @@ p2s_package_deb_update() {
     fi
     if [ -s "$P2S_WORK/dependency-approved" ] && ! awk -F'|' '
         FILENAME==ARGV[1] {v[$1]=$2; v[$1 ":" $3]=$2; arch[$1]=$3; arch[$1 ":" $3]=$3; next}
+        /^Inst / {sub(/ \[[a-z0-9+.:_ -]*\]$/, "")}
         /^(Inst|Conf) / {
             if ($0 ~ /^Inst / && $0 !~ /^Inst [a-z0-9][a-z0-9+.:_-]* \[[^][]+\] \([^()]+ \[[a-z0-9]+\]\)$/) {bad=1; next}
             if ($0 ~ /^Conf / && $0 !~ /^Conf [a-z0-9][a-z0-9+.:_-]* \([^()]+ \[[a-z0-9]+\]\)$/) {bad=1; next}
@@ -2616,6 +2668,8 @@ p2s_package_deb_update() {
             if (!(a[2] in v) || b[1]!=v[a[2]] || observed!=arch[a[2]]) bad=1
             next
         }
+        /^[a-z0-9][a-z0-9+.:_-]* is already the newest version \([^()]+\)[.]$/ {next}
+        /^Use \047apt(-get)? autoremove\047 to remove them[.]$/ {next}
         /^[ \t]*$/ || /^[ \t]+/ || /^(Reading package lists|Building dependency tree|Reading state information|The following|Suggested packages:|Recommended packages:|[0-9]+ upgraded,|NOTE: This is only a simulation[.]|[ \t]*apt-get needs root privileges)/ {next}
         {bad=1}
         END {exit bad}' "$P2S_WORK/apt-approved" "$log"; then
@@ -3872,6 +3926,7 @@ p2s_summary_print_versions() {
             if ($5 ~ /^Sury\//) key=key SUBSEP $6
             if (!(key in version)) { order[++count]=key; version[key]=$1; state[key]=$2; provider[key]=$5 }
             if (!seen_role[key SUBSEP $3]++) roles[key]=roles[key] (roles[key] ? ", " : "") $3
+            if ($4 != "" && !seen_build[key SUBSEP $3 SUBSEP $4]++) builds[key]=builds[key] (builds[key] ? "; " : "") $3 ": " $4
             if ($7 == "Y") affected_upstream[key]=1
             if ($2 == "Y" && $7 == "?") presumed_affected[key]=1
             if ($8 != "") evidence[key SUBSEP $8]=1
@@ -3896,6 +3951,7 @@ p2s_summary_print_versions() {
                 source=provider[key]; sub(/ [(](revision|namespace) hint[)]$/, "", source)
                 if (source) text=text " Package publisher: " source "."
                 if (packages[key]) text=text " Installed packages: " packages[key] "."
+                if (builds[key]) text=text " Reported build dates: " builds[key] "."
                 if (provider[key] ~ /^Sury\// && revisions[key]) text=text " Installed package build: " revisions[key] "."
                 if (state[key]=="N" && affected_upstream[key]) text=text " The PHP package publisher added the security fixes without changing the PHP version."
                 if (state[key]=="?") {
@@ -4492,7 +4548,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-10-31.1
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-01.4
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -4548,7 +4604,7 @@ p2s_main() {
     p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-29'
     p2s_manifest_record script_revision "$script_revision"
     p2s_manifest_record source_preservation 'policy=explicit_provider_migrations_only|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|other_providers_and_panel_transactions_require_separate_review'
-    p2s_manifest_record dependency_policy 'required_installed_native_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources|no_additions_removals_or_downgrades'
+    p2s_manifest_record dependency_policy 'required_installed_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources_or_explicit_bullseye_Sury_PCRE2_migration|no_additions_removals_or_downgrades'
     p2s_manifest_record disruptive_options "enabled=${P2S_DISRUPTIVE:-false}|allow_sury_migration=${P2S_ALLOW_SURY_MIGRATION:-false}|allow_sury_repository=${P2S_ALLOW_SURY_REPOSITORY:-false}|repository_repair=${P2S_REPOSITORY_REPAIR:-none}|pending_php_configuration=${P2S_ALLOW_PENDING_PHP_CONFIGURATION:-false}|exact_php_reinstall=${P2S_ALLOW_EXACT_PHP_REINSTALL:-false}"
     p2s_manifest_record bash "$BASH_VERSION"
     # SSH can deliver source on stdin; $0 would identify Bash, not the delivered script.

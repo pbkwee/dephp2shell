@@ -190,7 +190,10 @@ On Debian, the alternative package repository is Sury's PHP repository at
 `https://ppa.launchpadcontent.net/ondrej/php/ubuntu`. These are third-party PHP
 sources, separate from Debian's and Ubuntu's own security repositories.
 
-With this option alone, the repository must already be configured. The script
+With this option alone, the repository must already be configured. An explicit
+migration requires Sury candidates; a native candidate stops it before package
+installation. If the source is missing, separately select
+`--add-sury-repository`; existing pins are never overridden to force a switch. The script
 refreshes APT indexes and asks APT for eligible packages through that source. It
 checks the normal selected candidate, package publisher, OS suite, architecture and exact
 package version. It does not fetch a guessed `.deb` URL or search an old archive
@@ -201,7 +204,9 @@ extension API. For example, an eligible PHP 8.2 installation remains PHP 8.2; th
 is not permission to move its websites to PHP 8.4. Unversioned selectors,
 `php-common`, `php-pear` and unreviewed extensions remain at their installed versions. A plan requiring new packages,
 removals or unrelated changes is refused. Verified necessary upgrades of reviewed installed native libraries are included
-as part of the update.
+as part of the update. On Debian 11, explicit Sury migration can also upgrade
+the already-installed shared PCRE2 library from Sury when the chosen PHP build
+requires it. That library can be used by other applications.
 
 The supported migration combinations are Debian 11/12/13 and Ubuntu 22.04/24.04,
 on amd64. Panel-managed installations and unverified equivalents stay blocked.
@@ -456,7 +461,12 @@ amd64 native packages from this reviewed list: `libpcre2-8-0`, `libonig5`,
 `libargon2-1`, `libxml2`, `libzip4`, `libzip5` and `libsodium23`.
 
 Candidates come from the matching official native distribution sources through
-APT, not directly from Sury or a hard-coded package URL. The supported dependency
+APT. An explicit Debian 11 Sury migration can additionally select Sury's
+`libpcre2-8-0` candidate from its authenticated matching bullseye source, retaining
+the source package and amd64 architecture, when a versioned PHP dependency proves
+the upgrade necessary. This exception does not permit other Sury libraries or
+apply to an ordinary native update. Packages are never fetched from a hard-coded
+package URL. The supported dependency
 method covers Debian 11/12/13 and Ubuntu 22.04/24.04/26.04. Other selected methods
 still have their own OS limits. The script pins the approved normal candidate
 versions, repeats the simulation and checks the actual plan before installation.

@@ -974,7 +974,8 @@ p2s_summary_print_versions
         info = [row for row in out.splitlines() if row.startswith('dss:info:')]
         self.assertEqual(len(info), 1)
         self.assertIn('PHP-FPM, command line', info[0])
-        self.assertNotIn('Oct 21 2026 08:21:27', info[0])
+        self.assertIn('Reported build dates: PHP-FPM: Oct 21 2026 08:21:27; command line: Oct 21 2026 08:21:27.', info[0])
+        self.assertEqual(info[0].count('Oct 21 2026 08:21:27'), 2)
         self.assertRegex(out, r'dss:manifest:php_version:beforefix\|.*Oct 21 2026 08:21:27')
         self.assertNotIn('/usr/', info[0])
 
@@ -1124,6 +1125,7 @@ printf 'UNKNOWN=%s\n' "$P2S_UNKNOWN"
         self.assertEqual(len(rows), 2)
         self.assertTrue(any('fixes verified' in row and 'Package publisher: cPanel EasyApache.' in row for row in rows))
         self.assertTrue(any('patch status not verified' in row and 'Package publisher: cPanel internal.' in row for row in rows))
+        self.assertTrue(all('Reported build dates: command line: Oct 21 2026 12:00:00.' in row for row in rows))
         self.assertEqual(out.count('dss:manifest:runtime_identity:beforefix|'), 2)
         self.assertEqual(out.count('dss:manifest:runtime_assessment:beforefix|'), 2)
         self.assertIn('UNKNOWN=true', out)

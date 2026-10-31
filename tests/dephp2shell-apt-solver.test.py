@@ -1,4 +1,4 @@
-"""Real offline APT regression for recursive PHP selector upgrades.
+"""Offline APT regressions for selector upgrades and pinned dependency plans.
 
 Synthetic versions retain the captured PHP dependency shape. Sury unit tests
 separately check the script's generated arguments; no customer fixtures are used.
@@ -6,10 +6,79 @@ separately check the script's generated arguments; no customer fixtures are used
 from pathlib import Path
 import os
 import re
+import runpy
+import shlex
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+DEPENDENCY_HELPERS = runpy.run_path(str(Path(__file__).with_name('dephp2shell-dependency-repair.test.py')))
+
+
+class PinnedDependencyPlanTest(unittest.TestCase):
+    shell = DEPENDENCY_HELPERS['DependencyRepairTest'].shell
+
+    def test_only_unchanged_pinned_resimulation_reaches_installation(self):
+        fixture = DEPENDENCY_HELPERS['DependencyRepairTest']().fixture().replace(
+            'p2s_command_run() {', 'fixture_dependency_command() {')
+        for scenario in ('unchanged', 'architecture', 'version', 'removal', 'unapproved'):
+            with self.subTest(scenario=scenario):
+                out = self.shell(fixture + '\nscenario=' + shlex.quote(scenario) + r'''
+P2S_MODE=fix
+cp "$P2S_WORK/candidate-origins" "$P2S_WORK/fixture-origins"
+sed -i '1s/$/ []/; 2s/$/ [php8.2-cli:amd64 ]/' "$P2S_WORK/plan"
+printf '%s\n' 'php is already the newest version (2:7.4+76).' >> "$P2S_WORK/plan"
+printf '%s\n' "Use 'apt autoremove' to remove them." "Use 'apt-get autoremove' to remove them." >> "$P2S_WORK/plan"
+p2s_command_exists() { case "$1" in apt-get|apt-cache|dpkg|apt-mark) return 0 ;; *) return 1 ;; esac; }
+p2s_package_deb_candidate() { P2S_DEB_CANDIDATE=8.2.35-1; }
+p2s_command_run() {
+    local last
+    for last in "$@"; do :; done
+    case "$2" in
+        apt-mark|dpkg) return 0 ;;
+        dpkg-query) fixture_dependency_command "$@" ;;
+        apt-cache)
+            if [ "$last" = policy ]; then cat "$P2S_WORK/fixture-origins"; return 0; fi
+            fixture_dependency_command "$@" ;;
+        apt-get)
+            case " $* " in
+                *' update ') return 0 ;;
+                *' -s '*)
+                    printf '%s\n' "$*" >> "$P2S_WORK/simulations"
+                    cp "$P2S_WORK/plan" "$P2S_WORK/current-plan"
+                    case " $* " in
+                        *' libxml2:amd64=2.9.15-1 '*)
+                            case "$scenario" in
+                                architecture) sed -i '2s/\[amd64\]/[arm64]/' "$P2S_WORK/current-plan" ;;
+                                version) sed -i '2s/(2.9.15-1 /(2.9.16-1 /' "$P2S_WORK/current-plan" ;;
+                                removal) printf 'Remv libold [1.0-1]\n' >> "$P2S_WORK/current-plan" ;;
+                                unapproved) printf 'Inst libother [1.0-1] (2.0-1 Debian:12 [amd64]) []\n' >> "$P2S_WORK/current-plan" ;;
+                            esac ;;
+                    esac
+                    cat "$P2S_WORK/current-plan" ;;
+                *' install '*) printf 'INSTALLED %s\n' "$*" >> "$P2S_WORK/installations" ;;
+                *) printf 'UNEXPECTED_APT_OPERATION\n'; return 97 ;;
+            esac ;;
+        *) printf 'UNEXPECTED_UPDATE_OPERATION\n'; return 97 ;;
+    esac
+}
+p2s_package_deb_update
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+printf 'SIMULATIONS=%s\n' "$(wc -l < "$P2S_WORK/simulations")"
+cat "$P2S_WORK/installations" 2>/dev/null
+:
+''')
+                self.assertIn('SIMULATIONS=2', out)
+                self.assertIn('dependency_approval:', out)
+                self.assertNotIn('UNEXPECTED_', out)
+                if scenario == 'unchanged':
+                    self.assertIn('RC=0|BLOCKED=false', out)
+                    self.assertRegex(out, r'INSTALLED .*php8\.2-cli:amd64=8\.2\.35-1 libxml2:amd64=2\.9\.15-1')
+                else:
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    self.assertIn('pinned dependency simulation changed scope', out)
+                    self.assertNotIn('INSTALLED', out)
 
 
 @unittest.skipUnless(shutil.which('apt-get'), 'requires APT')

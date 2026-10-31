@@ -717,7 +717,7 @@ printf 'STATE=%s\n' "$P2S_STATE"
                          "p2s_version_package_state php8.1-cli 8.1.34-9+0~20261021.82+ubuntu22.04~1 'Ubuntu Developers'")
         self.assertEqual(out.strip(), '?')
 
-    def test_grouped_versions_keep_component_states_and_omit_build_dates(self):
+    def test_grouped_versions_keep_component_states_and_report_build_dates(self):
         out = self.shell(r'''
 printf '%s\n' '8.4.27|N|command line|Oct 21 2026 08:21:27' \
     '8.4.27|N|command line|Oct 21 2026 08:21:27' \
@@ -737,9 +737,25 @@ p2s_summary_print_versions
             fixed = next(row for row in phase if row.startswith('dss:info:'))
             self.assertIn(prefix + 'PHP 8.4.27', fixed)
             self.assertIn('PHP-FPM, command line', fixed)
-            self.assertNotIn('Oct 21 2026 08:21:27', fixed)
+            self.assertIn('Reported build dates: PHP-FPM: Oct 21 2026 08:21:27; command line: Oct 21 2026 08:21:27.', fixed)
             self.assertTrue(any('Apache module): patch status not verified' in row for row in phase))
             self.assertTrue(any('CGI): vulnerable;' in row for row in phase))
+            self.assertTrue(all('Reported build dates:' not in row for row in phase if row != fixed))
+
+    def test_build_dates_belong_to_observed_components_and_do_not_verify_fixes(self):
+        out = self.shell(r'''
+printf '%s\n' '7.4.33|?|command line|Aug 11 2026 00:09:31|Debian|7.4.33-1+deb11u12|Y|executable' \
+    '7.4.33|?|PHP-FPM|Aug 12 2026 01:02:03|Debian|7.4.33-1+deb11u12|Y|executable' \
+    '7.4.33|?|Apache module||Debian|7.4.33-1+deb11u12|Y|running_path' \
+    '7.4.33|?|runtime libraries||Debian|7.4.33-1+deb11u12|Y|package' > "$P2S_WORK/summary-versions"
+p2s_summary_print_versions
+''')
+        self.assertEqual(len(out.splitlines()), 1)
+        self.assertIn('patch status not verified', out)
+        self.assertIn('PHP-FPM: Aug 12 2026 01:02:03; command line: Aug 11 2026 00:09:31', out)
+        self.assertNotIn('Apache module: Aug', out)
+        self.assertNotIn('runtime libraries: Aug', out)
+        self.assertIn('Installed package build: 7.4.33-1+deb11u12.', out)
 
     def test_summary_labels_backports_and_only_describes_actual_update_attempts(self):
         records = [
@@ -767,8 +783,10 @@ p2s_summary_print_versions
                 self.assertIn('Package publisher: cPanel internal.', customer[1])
                 self.assertIn('patch status not verified', customer[1])
                 self.assertIn('This script has no verified fix record for the installed build', customer[1])
+                self.assertIn('Reported build dates: PHP-FPM: Oct 21 2026 14:22:13.', customer[0])
+                self.assertIn('Reported build dates: command line: Jun 10 2026 00:00:00.', customer[1])
                 for row in customer:
-                    for detail in ['revision hint', 'Oct 21', 'Jun 10', 'Before update attempt:']:
+                    for detail in ['revision hint', 'Before update attempt:']:
                         self.assertNotIn(detail, row)
                 self.assertIn('dss:manifest:package:afterfix|php7.4-fpm|1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1', out)
 

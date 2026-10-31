@@ -197,7 +197,7 @@ example, fixed PHP 8.3/8.4 alongside vulnerable PHP 8.2 still produces aggregate
 aggregate `N` but does not override a known vulnerable result.
 
 Fixed upstream floors are 8.2.35, 8.3.36, 8.4.27 and 8.5.12, separately by branch.
-Build dates are displayed as package metadata; fix classification uses reviewed version and backport rules. Prereleases and unrecognised
+Runtime build dates reported by version probes appear in readable messages, labelled by component. Dates are not inferred for Apache modules from a CLI build, and they never establish a security fix; fix classification uses reviewed version and backport rules. Prereleases and unrecognised
 versions are unknown. Debian PHP metapackages are inventoried but not mistaken
 for engine versions, including the unversioned `libapache*-mod-php` selectors.
 Panel and LiteSpeed extension/library package versions are not PHP engine versions.
@@ -320,7 +320,11 @@ selectors. Verified necessary upgrades of reviewed installed native libraries ar
 other dependency changes still block the plan. Mixed panel-vendor and Sury Debian updates are refused before
 either updater runs.
 
-Every selected Sury package must use its normal APT candidate. The candidate
+Every selected Sury package must use its normal APT candidate. Explicit Sury
+migration also requires Sury candidates for native packages being replaced. A
+missing source or a native normal candidate blocks the migration before package
+installation; it does not fall back to an ordinary native update. Source addition
+still needs the separate `--add-sury-repository` consent. The candidate
 must match a canonical Sury/PPA URI, expected release Origin and measured OS
 suite. Its package architecture and source-package name must match the installed
 package. Engine candidates must retain the PHP branch and have a reviewed fix
@@ -371,6 +375,28 @@ provide that API marker. Exact fixed Sury engine candidates and all existing
 transaction/restart safeguards still apply. Reject cPanel/Plesk-managed PHP, unknown
 engine owners, missing equivalents, removals, additions and unrelated dependency changes.
 Migration retains the PHP branch. Test application compatibility with the selected publisher's PHP packages.
+
+For an explicitly selected Debian 11 migration, the dependency guard also permits
+an upgrade of the installed native amd64 `libpcre2-8-0` from Sury's authenticated
+bullseye/main source. Binary name, source package `pcre2`, architecture and upgrade
+direction must match. Duplicate candidate versions from other sources are refused.
+An unsatisfied versioned dependency from the approved PHP upgrade must prove the
+library upgrade necessary. The exact candidate is pinned and resimulated before
+installation. Other library updates retain the official native-source policy.
+Sury's reviewed PHP 7.4 bullseye CLI and Apache builds require PCRE2 >=10.38;
+Debian's 10.36 cannot satisfy that requirement. The publisher's
+[binary index](https://packages.sury.org/php/dists/bullseye/main/binary-amd64/Packages.gz)
+was checked on 2026-11-01 and supplies PCRE2
+`10.40-1+0~20220713.16+debian11~1.gbpb6cec5`. Other applications may use this
+shared library; the migration message and option help disclose that impact.
+
+APT simulation parsing accepts unchanged-selector messages and the trailing
+`[]` or `[php7.4-cli:amd64 ]` dependency annotations emitted while ordering
+upgrades. The exact `Use 'apt autoremove' to remove them.` advice (including its
+`apt-get` variant) is informational in both simulation passes; it does not request
+removals. Actual `Remv`/`Purg` actions still block the transaction. The final pinned simulation still validates exact package versions,
+architecture and transaction scope. Unknown or unsafe lines fail closed;
+`apt_plan_rejection` records the offending line with repository URLs redacted.
 
 `--add-sury-repository` / `DP2S_ADD_SURY_REPOSITORY=true` additionally permits
 one matching official repository, only with both migration consents. It uses an
@@ -603,6 +629,17 @@ a newer normal candidate exclusively from matching official OS sources and no
 library hold. Pin exact approved candidates, repeat the simulation and recheck
 scope, versions and architecture before installation. Additions, removals,
 replacements, downgrades, RPM and base-system library changes remain excluded.
+Installed native-library identity is verified against exact installed-version rows
+from the reviewed matching native APT indexes and exact binary/source/architecture
+metadata. Maintainer text is descriptive, not origin proof: Debian's PCRE2 can
+name Matthew Vernon <matthew@debian.org> rather than a team containing "Debian".
+The installed version must have exclusive native-source evidence; a dpkg status
+row alone, missing old-version metadata, conflicting source records or a mismatched
+source package blocks the update. The Sury candidate exception never establishes
+native origin for the installed package. `dependency_installed` records installed
+identity, while a refusal also retains redacted `dependency_package_policy`.
+These checks identify declared package metadata, not historical download origin
+or the integrity of installed file contents.
 Check-mode assessments use cached metadata only and perform no package mutations.
 See the [operator limits and risks](resolution-options.md#allow-the-native-libraries-php-needs).
 

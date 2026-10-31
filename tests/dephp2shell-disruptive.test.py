@@ -62,6 +62,7 @@ old=8.2.29-1~deb12u1
 candidate=8.2.35-1+0~20261021.94+debian12~1.gbp8bff78
 arch=amd64; proposed_arch=amd64; source=php8.2
 suite=bookworm; origin=deb.sury.org; installed_api=phpapi-20220829; proposed_api=phpapi-20220829
+repository_uri=https://packages.sury.org/php
 held=false; duplicate_origin=false; metadata_error=false; installed_api_error=false
 ''' + changes + r'''
 mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
@@ -77,6 +78,7 @@ dpkg() { [ "$1" = --compare-versions ] || return 97; command dpkg "$@"; }
 p2s_command_exists() { case "$1" in apt-get|apt-cache|apt-config|dpkg|dpkg-query|apt-mark) return 0;; *) return 1;; esac; }
 fixture_candidate=$candidate; fixture_source=$source; fixture_suite=$suite
 fixture_old=$old; fixture_origin=$origin; fixture_proposed_arch=$proposed_arch
+fixture_repository_uri=$repository_uri
 p2s_command_run() {
     local last cmd name
     for last in "$@"; do :; done
@@ -92,10 +94,10 @@ p2s_command_run() {
             case " $* " in
                 *' policy '*)
                     if [ "$last" = policy ]; then
-                        printf ' 500 https://packages.sury.org/php %s/main amd64 Packages\n     release o=%s,n=%s,c=main,b=amd64\n' "$fixture_suite" "$fixture_origin" "$fixture_suite"
+                        printf ' 500 %s %s/main amd64 Packages\n     release o=%s,n=%s,c=main,b=amd64\n' "$fixture_repository_uri" "$fixture_suite" "$fixture_origin" "$fixture_suite"
                     else
                         name=${last%:*}
-                        printf '%s:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n        500 https://packages.sury.org/php %s/main amd64 Packages\n' "$name" "$fixture_old" "$fixture_candidate" "$fixture_candidate" "$fixture_suite"
+                        printf '%s:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n        500 %s %s/main amd64 Packages\n' "$name" "$fixture_old" "$fixture_candidate" "$fixture_candidate" "$fixture_repository_uri" "$fixture_suite"
                         if $duplicate_origin; then printf '        500 https://deb.debian.org/debian bookworm/main amd64 Packages\n'; fi
                     fi ;;
                 *' show '*)
@@ -151,6 +153,33 @@ printf 'RC=%s|ATTEMPTED=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
         self.assertIn('RC=1|ATTEMPTED=false', out)
         self.assertIn('candidate_provider', out)
         self.assertNotIn('INSTALL:', out)
+
+    def test_explicit_migration_requires_sury_candidate_before_simulation(self):
+        for mode in ('fix', 'check'):
+            for candidate in ('8.2.35-1~deb12u1', '8.2.29-1~deb12u1'):
+                with self.subTest(mode=mode, candidate=candidate):
+                    changes = ('P2S_MODE=' + mode + '; candidate=' + candidate +
+                               '; repository_uri=https://deb.debian.org/debian; origin=Debian')
+                    out = self.shell(self.fixture(changes), isolated_sources=True)
+                    self.assertIn('RC=1|ATTEMPTED=false', out)
+                    self.assertIn('candidate_provider', out)
+                    self.assertNotIn('SIMULATE:', out)
+                    self.assertNotIn('INSTALL:', out)
+                    if mode == 'check':
+                        self.assertNotIn('REFRESH', out)
+
+    def test_ordinary_native_update_still_uses_native_candidate(self):
+        fixture = self.fixture(
+            'P2S_MODE=fix; P2S_DISRUPTIVE=false; P2S_ALLOW_SURY_MIGRATION=false; '
+            'candidate=8.2.35-1~deb12u1; repository_uri=https://deb.debian.org/debian; origin=Debian')
+        fixture = fixture.replace('\np2s_package_deb_update\n', '''
+sed -i '/^php8.2-redis|/d; /^php-common|/d; /^php-cli|/d' "$P2S_WORK/packages"
+p2s_package_deb_update
+''')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        self.assertIn('INSTALL:', out)
+        self.assertIn('php8.2-cli:amd64=8.2.35-1~deb12u1', out)
 
     def test_incompatible_or_unverified_candidates_never_install(self):
         cases = {'wrong_arch': 'proposed_arch=i386', 'installed_32bit': 'arch=i386',

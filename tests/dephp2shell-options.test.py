@@ -397,9 +397,9 @@ p2s_command_run() {
         dpkg-query:libxml2|dpkg-query:libxml2:amd64)
             printf 'install ok installed|libxml2:amd64|2.9.14-1|amd64|libxml2|Debian XML Team\n'; return 0 ;;
         apt-cache:libxml2:amd64)
-            printf 'libxml2:\n Installed: 2.9.14-1\n Candidate: 2.9.15-1\n Version table:\n  2.9.15-1 500\n   500 https://deb.debian.org/debian bookworm/main amd64 Packages\n'; return 0 ;;
-        apt-cache:libxml2:amd64=2.9.15-1)
-            printf 'Package: libxml2\nVersion: 2.9.15-1\nArchitecture: amd64\nSource: libxml2\n'; return 0 ;;
+            printf 'libxml2:\n Installed: 2.9.14-1\n Candidate: 2.9.15-1\n Version table:\n  2.9.15-1 500\n   500 https://deb.debian.org/debian bookworm/main amd64 Packages\n *** 2.9.14-1 500\n   500 https://deb.debian.org/debian bookworm/main amd64 Packages\n   100 %s/var/lib/dpkg/status\n' "$P2S_WORK"; return 0 ;;
+        apt-cache:libxml2:amd64=2.9.14-1|apt-cache:libxml2:amd64=2.9.15-1)
+            printf 'Package: libxml2\nVersion: %s\nArchitecture: amd64\nSource: libxml2\n' "${last##*=}"; return 0 ;;
     esac
     p2s_fixture_command_run "$@" || return $?
     case " $* " in
