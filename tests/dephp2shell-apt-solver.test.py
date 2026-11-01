@@ -29,7 +29,8 @@ P2S_MODE=fix
 cp "$P2S_WORK/candidate-origins" "$P2S_WORK/fixture-origins"
 sed -i '1s/$/ []/; 2s/$/ [php8.2-cli:amd64 ]/' "$P2S_WORK/plan"
 printf '%s\n' 'php is already the newest version (2:7.4+76).' >> "$P2S_WORK/plan"
-printf '%s\n' "Use 'apt autoremove' to remove them." "Use 'apt-get autoremove' to remove them." >> "$P2S_WORK/plan"
+printf '%s\n' "Use 'apt autoremove' to remove it." "Use 'apt autoremove' to remove them." \
+    "Use 'apt-get autoremove' to remove it." "Use 'apt-get autoremove' to remove them." >> "$P2S_WORK/plan"
 p2s_command_exists() { case "$1" in apt-get|apt-cache|dpkg|apt-mark) return 0 ;; *) return 1 ;; esac; }
 p2s_package_deb_candidate() { P2S_DEB_CANDIDATE=8.2.35-1; }
 p2s_command_run() {

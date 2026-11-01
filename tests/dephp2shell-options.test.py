@@ -10,6 +10,23 @@ DISRUPTIVE = runpy.run_path(str(Path(__file__).with_name('dephp2shell-disruptive
 class RepairOptionsTest(unittest.TestCase):
     shell = HELPERS['PHP2ShellTest'].shell
 
+    def test_negative_pin_does_not_offer_repository_or_migration_retries(self):
+        for phase in ('beforefix', 'afterfix'):
+            with self.subTest(phase=phase):
+                out = self.shell(HELPERS['PHP2ShellTest'].apt_pin_policy(self) + '\nP2S_PHASE=' + phase + r'''
+p2s_package_deb_policy_collect php8.2-common libapache2-mod-php8.2
+P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
+printf 'no_candidate\n' > "$P2S_WORK/blocker-keys"
+p2s_repository_repair_assess() { printf 'UNEXPECTED_REPOSITORY_REPAIR\n'; return 97; }
+p2s_disruptive_sury_validate_equivalents() { printf 'UNEXPECTED_MIGRATION\n'; return 97; }
+p2s_fix_recommend_options
+printf 'STATE=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_BLOCKED"
+''', isolated_sources=True)
+                self.assertIn('Resolve the reported negative APT priorities', out)
+                self.assertIn('STATE=Y|BLOCKED=true', out)
+                self.assertNotIn('fix_recommendation:', out)
+                self.assertNotIn('UNEXPECTED_', out)
+
     def test_fix_method_records_effective_options_before_failed_preflight(self):
         setup = r'''
 p2s_command_exists() { return 1; }

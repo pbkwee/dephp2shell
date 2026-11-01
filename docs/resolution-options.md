@@ -137,6 +137,52 @@ Checks and fixes report recognised source layouts without changing them:
 Disabled Deb822 stanzas remain visible in the manifest. The advice does not enable
 those sources, replace keys or execute repository setup commands. Layout findings describe configured sources. Repository failures are reported from package-manager output, and PHP fix status comes from package/runtime assessment.
 
+## Virtualmin blocks an installed Apache PHP module
+
+Virtualmin normally creates
+`/etc/apt/preferences.d/debian-virtualmin-restricted-packages` (or the Ubuntu
+counterpart) to prevent installing `libapache2-mod-php*`. Its preferred setup uses
+PHP-FPM pools under separate website accounts. The negative pin also blocks
+updates to an already-installed Apache PHP module and can hold back other PHP
+packages with matching-version dependencies. It does not unload the module.
+[Virtualmin explains the isolation concerns](https://www.virtualmin.com/docs/server-components/php-execution-modes/).
+
+Inspect the named pin file and effective policy, and list Apache's loaded modules
+and virtual hosts:
+
+```sh
+apt-cache policy 'libapache2-mod-php*'
+apt-mark showhold
+apache2ctl -M
+apache2ctl -S
+```
+
+Then choose a manual path:
+
+- Check every site's selected PHP handler in Virtualmin. If sites still use
+  mod_php, migrate them to a supported, patched FPM version and test them. If all
+  sites already use FPM, investigate removing the unused mod_php packages while
+  keeping the restriction. Running FPM processes alone does not prove every site
+  uses FPM. Review Apache includes and `.htaccess` files for `php_value`, `php_flag`
+  and `php_admin_*` directives, including directives inside module guards that
+  could silently stop applying. Simulate removal with `apt-get -s remove` and the
+  exact unused package names; check dependencies, configuration validity and site
+  behaviour before proceeding. Disabling a module alone leaves its installed
+  package and dependency restrictions in place.
+- If mod_php must remain, review a narrow APT exception for the existing package
+  names and intended Debian/Ubuntu source, confirm candidates with `apt-cache
+  policy`, then retry `--fix`. Changing package policy alone does not change
+  website handlers. Keeping mod_php retains Virtualmin's isolation concerns;
+  removing the entire restriction permits future mod_php installations too.
+  Re-running Virtualmin's configuration action can recreate its restriction file.
+
+Adding Sury does not remove the pin. The script gives manual guidance and
+suppresses extra repository/migration suggestions while an installed PHP package
+has no candidate and a negative priority. It does not alter pins or website
+handlers, disable modules or remove packages. After an operator changes the
+configuration, rerun `--check`, apply the remaining PHP updates and verify the
+websites. Removing unused mod_php does not patch FPM, CGI or CLI.
+
 ## Compare the options
 
 These options permit specific additional changes during a fix attempt. The attempt checks candidate availability before installing packages. After a successful repair, the script checks PHP again and can continue

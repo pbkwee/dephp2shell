@@ -792,7 +792,8 @@ p2s_package_policy_collect() {
 }
 
 p2s_package_deb_policy_collect() {
-    local record kind missing note=''
+    local record kind missing file note=''
+    : > "$P2S_WORK/apt-policy-records"
     if ! p2s_command_exists apt-cache || ! p2s_command_run 60 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= policy "$@" > "$P2S_WORK/apt-policy" 2> "$P2S_WORK/apt-policy.err"; then
         p2s_manifest_record source_gap 'APT package policy unavailable|repository matches unverified'
         if [ -s "$P2S_WORK/apt-policy.err" ]; then p2s_manifest_record apt_policy_error "$(p2s_manifest_redact_repository_urls < "$P2S_WORK/apt-policy.err")"; fi
@@ -839,9 +840,17 @@ p2s_package_deb_policy_collect() {
         if grep '^missing|.*|1$' "$P2S_WORK/apt-policy-records" >/dev/null; then
             note=' Negative APT priorities were reported for at least one of these packages; they prohibit matching versions and can also block dependent PHP components.'
         fi
-        if [ -f /etc/apt/preferences.d/debian-virtualmin-restricted-packages ]; then
-            note="$note Review /etc/apt/preferences.d/debian-virtualmin-restricted-packages as well as other APT preferences."
-        fi
+        for file in /etc/apt/preferences.d/debian-virtualmin-restricted-packages /etc/apt/preferences.d/ubuntu-virtualmin-restricted-packages; do
+            if [ -f "$file" ]; then
+                note="$note Review $file as well as other APT preferences."
+                if grep '^missing|libapache2-mod-php[^|]*|1$' "$P2S_WORK/apt-policy-records" >/dev/null; then
+                    p2s_message_print warn "Virtualmin's configuration tool normally creates $file to prevent installation of Apache's embedded PHP module (mod_php), favouring PHP-FPM and separate website users. An installed mod_php package now has no candidate and a negative APT priority; this can also hold back other PHP security updates. Inspect the file and effective package priorities before changing policy."
+                    p2s_message_print warn "Manual path: check every website's PHP handler in Virtualmin. PHP-FPM may already be running, but that alone does not prove every website uses it. Move any remaining mod_php sites to a supported, patched FPM version and test them; if all sites already use FPM, review removal of the unused mod_php packages while keeping Virtualmin's restriction. Check Apache configuration and .htaccess files for php_value, php_flag and php_admin_* directives before disabling or removing the module; review an apt-get -s remove simulation with the exact unused package names first."
+                    p2s_message_print warn "Alternative: if mod_php is still required, an administrator can add a narrow APT exception for its installed package names and intended Debian/Ubuntu source, then retry --fix. Changing the pin alone does not change website handlers; it allows mod_php package updates, and Virtualmin configuration can recreate its restriction. Adding Sury does not remove an APT pin. No package removal, PHP handler change or pin override is automatic."
+                    p2s_message_print info "Read-only checks: apache2ctl -M; apache2ctl -S; apt-cache policy 'libapache2-mod-php*'; apt-mark showhold. Virtualmin's PHP execution-mode guidance: https://www.virtualmin.com/docs/server-components/php-execution-modes/"
+                fi
+            fi
+        done
         p2s_message_print warn "APT currently reports no allowed installation candidate for these installed PHP packages: $missing.$note Check package pins and configured sources. The metadata may be stale; a fix attempt refreshes it before simulation. This diagnostic does not change pin files or website PHP handlers."
         p2s_manifest_record package_policy_effect "APT|installed_without_candidate|$missing|cached_metadata_only"
     fi
@@ -2334,13 +2343,14 @@ p2s_package_deb_dependency_approve_plan() {
     # apt-get -s: php is already the newest version (2:7.4+76).
     # Inst php7.4-cli [old] (new bullseye [amd64]) [php7.4-common:amd64 ]
     # The trailing list tracks temporary dependency breaks while APT orders the upgrade.
-    # Use 'apt autoremove' to remove them. -> advice only; \047 quotes an apostrophe inside AWK.
+    # Use 'apt autoremove' to remove it. / Use 'apt autoremove' to remove them.
+    # These are advice only; \047 quotes an apostrophe inside AWK.
     if ! awk -v rejected="$P2S_WORK/dependency-plan-rejected" '
         function reject() {print NR "|" $0 > rejected; exit 1}
         /^(Remv|Purg|E:|W:) / {reject()}
         /^Inst / {sub(/ \[[a-z0-9+.:_ -]*\]$/, "")}
         /^[a-z0-9][a-z0-9+.:_-]* is already the newest version \([^()]+\)[.]$/ {next}
-        /^Use \047apt(-get)? autoremove\047 to remove them[.]$/ {next}
+        /^Use \047apt(-get)? autoremove\047 to remove (it|them)[.]$/ {next}
         /^Conf / {if ($0 !~ /^Conf [a-z0-9][a-z0-9+.:_-]* \([^()]+ \[[a-z0-9]+\]\)$/) reject(); next}
         /^Inst / {
             if ($0 !~ /^Inst [a-z0-9][a-z0-9+.:_-]* \[[^][]+\] \([^()]+ \[[a-z0-9]+\]\)$/) reject()
@@ -2669,7 +2679,7 @@ p2s_package_deb_update() {
             next
         }
         /^[a-z0-9][a-z0-9+.:_-]* is already the newest version \([^()]+\)[.]$/ {next}
-        /^Use \047apt(-get)? autoremove\047 to remove them[.]$/ {next}
+        /^Use \047apt(-get)? autoremove\047 to remove (it|them)[.]$/ {next}
         /^[ \t]*$/ || /^[ \t]+/ || /^(Reading package lists|Building dependency tree|Reading state information|The following|Suggested packages:|Recommended packages:|[0-9]+ upgraded,|NOTE: This is only a simulation[.]|[ \t]*apt-get needs root privileges)/ {next}
         {bad=1}
         END {exit bad}' "$P2S_WORK/apt-approved" "$log"; then
@@ -4392,6 +4402,11 @@ p2s_fix_recommend_options() {
             return 0
         fi
     fi
+    # Adding a source cannot repair an effective negative pin on an installed PHP package.
+    if [ -r "$P2S_WORK/apt-policy-records" ] && grep '^missing|.*|1$' "$P2S_WORK/apt-policy-records" >/dev/null; then
+        p2s_message_print warn "Resolve the reported negative APT priorities and recheck package candidates before choosing extra fixes. Repository additions and PHP provider migrations do not remove package pins."
+        return 0
+    fi
     if [ -s "$P2S_WORK/summary-versions" ] && ! ${P2S_RESTART_PENDING:-false} && p2s_state_has_only_fixed_versions; then return 0; fi
     if ! p2s_fix_blockers_match '|unsupported_os|candidate_provider|no_candidate|repositories|source_authentication|'; then return 0; fi
     if p2s_repository_repair_assess sury-key && p2s_command_exists gpg &&
@@ -4548,7 +4563,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-01.4
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-01.6
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;

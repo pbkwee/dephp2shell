@@ -392,8 +392,8 @@ shared library; the migration message and option help disclose that impact.
 
 APT simulation parsing accepts unchanged-selector messages and the trailing
 `[]` or `[php7.4-cli:amd64 ]` dependency annotations emitted while ordering
-upgrades. The exact `Use 'apt autoremove' to remove them.` advice (including its
-`apt-get` variant) is informational in both simulation passes; it does not request
+upgrades. The exact `Use 'apt autoremove' to remove it.` and `remove them.` advice
+(including their `apt-get` variants) is informational in both simulation passes; it does not request
 removals. Actual `Remv`/`Purg` actions still block the transaction. The final pinned simulation still validates exact package versions,
 architecture and transaction scope. Unknown or unsafe lines fail closed;
 `apt_plan_rejection` records the offending line with repository URLs redacted.
@@ -962,6 +962,26 @@ Package: libapache2-mod-php*
 Pin: release *
 Pin-Priority: -1
 ```
+
+Virtualmin's `virtualmin-config-system` configuration action writes this file
+on Debian (and the corresponding `ubuntu-virtualmin-restricted-packages` on Ubuntu).
+Its purpose is to prevent mod_php installation in a setup designed for per-site
+PHP-FPM pools and user isolation. It also blocks upgrades if the module is already
+installed; the pin does not disable or remove that module. Re-running that
+configuration action can recreate the file. See the
+[configuration source](https://github.com/virtualmin/virtualmin-config/blob/master/lib/Virtualmin/Config/Plugin/Virtualmin.pm)
+and [Virtualmin's execution-mode guidance](https://www.virtualmin.com/docs/server-components/php-execution-modes/).
+
+When a standard Virtualmin restriction file is present and APT reports an installed
+mod_php package with no candidate and a negative version priority, the report
+explains the manual FPM/removal and narrow pin-exception paths. File presence
+alone does not establish effective policy; the report asks the operator to inspect
+both. It does not infer website handlers from running FPM processes or remove,
+disable or reconfigure anything. Missing candidates with effective negative
+priorities suppress extra repository/migration recommendations for any installed
+PHP package: adding a repository does not remove a pin. Ordinary fix metadata
+refreshes remain available; a later successful policy query replaces stale evidence.
+See [operator steps](resolution-options.md#virtualmin-blocks-an-installed-apache-php-module).
 
 With mod_php already installed, its exact-version dependency on `php8.2-common`
 prevented other PHP components from upgrading. APT proposed removing the Apache

@@ -1,6 +1,6 @@
 """Offline tests of the shipped PHP2Shell functions; no package/service operations.
 
-Run: python3 rimuhosting/test/dephp2shell.test.py
+Run: python3 tests/dephp2shell.test.py
 Set DP2S_TEST_BASH to an older Bash binary to repeat compatibility fixtures.
 All administrative entry points are replaced with fixture functions before use.
 """
@@ -47,14 +47,17 @@ systemctl() { return 97; }; service() { return 97; }; rpm() { return 97; }
 
     def test_failed_apt_policy_keeps_error_without_repository_credentials(self):
         out = self.shell(r'''
+printf 'missing|libapache2-mod-php8.2|1\n' > "$P2S_WORK/apt-policy-records"
 p2s_command_exists() { [ "$1" = apt-cache ]; }
 p2s_command_run() { printf 'E: failed https://login:private-token@repo.invalid/private-path\n' >&2; return 1; }
 p2s_package_deb_policy_collect php8.2-cli
+if [ -s "$P2S_WORK/apt-policy-records" ]; then printf 'STALE_POLICY\n'; fi
 ''')
         self.assertIn('apt_policy_error:beforefix|E: failed [repository host=repo.invalid; path redacted]', out)
         self.assertIn('APT package policy unavailable', out)
         self.assertNotIn('private-token', out)
         self.assertNotIn('private-path', out)
+        self.assertNotIn('STALE_POLICY', out)
 
     def test_failed_candidate_query_keeps_operation_exit_and_redacted_error(self):
         out = self.shell(r'''
@@ -330,6 +333,44 @@ printf 'STATE=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_BLOCKED"
         self.assertIn('patchability:beforefix|unknown', out)
         self.assertIn('package_policy_review=true', out)
         self.assertIn('STATE=Y|BLOCKED=false', out)
+
+    def test_virtualmin_modphp_pin_explains_manual_fpm_and_update_paths(self):
+        for distro in ('debian', 'ubuntu'):
+            with self.subTest(distro=distro):
+                out = self.shell(self.apt_pin_policy() + '\ndistro=' + distro + r'''
+mkdir -p "$P2S_WORK/etc/apt/preferences.d"
+pin="$P2S_WORK/etc/apt/preferences.d/$distro-virtualmin-restricted-packages"
+printf 'Package: libapache2-mod-php*\nPin: release *\nPin-Priority: -1\n' > "$pin"
+p2s_package_deb_policy_collect php8.2-common libapache2-mod-php8.2
+printf 'PIN_AFTER='; cat "$pin"
+printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
+''', isolated_sources=True)
+                for expected in ("Virtualmin's configuration tool", 'separate website users',
+                                 'does not prove every website uses it', 'if all sites already use FPM',
+                                 '.htaccess', 'apt-get -s remove', 'narrow APT exception',
+                                 'Adding Sury does not remove an APT pin', 'apache2ctl -M',
+                                 'PIN_AFTER=Package: libapache2-mod-php*\nPin: release *\nPin-Priority: -1',
+                                 'UNKNOWN=false|BLOCKED=false'):
+                    self.assertIn(expected, out)
+
+    def test_virtualmin_pin_file_alone_does_not_establish_modphp_block(self):
+        for scenario in ('candidate_allowed', 'no_negative_priority', 'different_package', 'no_virtualmin_file'):
+            with self.subTest(scenario=scenario):
+                policy = self.apt_pin_policy()
+                if scenario == 'candidate_allowed':
+                    policy = policy.replace('Candidate: (none)', 'Candidate: 8.2.35-1~deb12u1')
+                elif scenario == 'no_negative_priority':
+                    policy = policy.replace(' -1', ' 500')
+                elif scenario == 'different_package':
+                    policy = policy.replace('libapache2-mod-php8.2', 'php8.2-cli')
+                out = self.shell(policy + '\nscenario=' + scenario + r'''
+mkdir -p "$P2S_WORK/etc/apt/preferences.d"
+if [ "$scenario" != no_virtualmin_file ]; then
+    : > "$P2S_WORK/etc/apt/preferences.d/debian-virtualmin-restricted-packages"
+fi
+p2s_package_deb_policy_collect php8.2-common libapache2-mod-php8.2
+''', isolated_sources=True)
+                self.assertNotIn("Virtualmin's configuration tool", out)
 
     def test_apt_missing_candidate_without_negative_priority_does_not_blame_a_pin(self):
         out = self.shell(r"""

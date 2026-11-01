@@ -103,15 +103,15 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
                 self.assertNotIn('UNEXPECTED_', out)
 
     def test_autoremove_advice_is_not_a_removal_action(self):
-        for command in ('apt', 'apt-get'):
-            advice = "Use '" + command + " autoremove' to remove them."
+        for command, target in (('apt', 'it'), ('apt', 'them'), ('apt-get', 'it'), ('apt-get', 'them')):
+            advice = "Use '" + command + " autoremove' to remove " + target + "."
             before = "printf '%s\\n' " + shlex.quote(advice) + ' >> "$P2S_WORK/plan"\n'
-            with self.subTest(command=command):
+            with self.subTest(command=command, target=target):
                 out = self.run_plan(before=before)
                 self.assertIn('RC=0', out)
                 self.assertIn('libxml2:amd64=2.9.15-1', out)
                 self.assertNotIn('UNEXPECTED_', out)
-            with self.subTest(command=command, removal=True):
+            with self.subTest(command=command, target=target, removal=True):
                 out = self.run_plan(before=before +
                                     "printf '%s\\n' 'Remv libold [1.0-1]' >> \"$P2S_WORK/plan\"\n")
                 self.assertIn('RC=1', out)
@@ -119,7 +119,10 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
 
     def test_malformed_or_extended_autoremove_advice_is_refused(self):
         for advice in ("Use 'apt autoremove' to remove them. extra text",
+                       "Use 'apt autoremove' to remove it. extra text",
+                       "Use 'apt-get autoremove' to remove it. Remv libold [1.0-1]",
                        "Use 'apt-get autoremove' to remove them. Remv libold [1.0-1]",
+                       "Use 'apt autoremove' to remove it",
                        "Use 'apt autoremove' to remove them", "Use apt autoremove to remove them.",
                        "Use 'apt --purge autoremove' to remove them."):
             with self.subTest(advice=advice):
