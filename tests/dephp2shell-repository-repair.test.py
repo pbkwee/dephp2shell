@@ -151,13 +151,41 @@ printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
         self.assertIn('PHP repository mismatch in ', out)
         self.assertIn('/extrepo_sury.sources: the source supplies Debian packages for suite \'bookworm\'', out)
         self.assertIn('this server runs ubuntu 22.04', out)
-        self.assertIn('Ubuntu PHP packages use the ondrej/php PPA for jammy', out)
+        self.assertIn('Ubuntu PHP packages use packages.sury.org/php or the ondrej/php PPA for jammy', out)
         self.assertIn('Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources', out)
         self.assertNotIn('repository change alone', out)
         self.assertIn('configured=Debian bookworm|host=ubuntu 22.04|expected_suite=jammy', out)
         self.assertNotIn('extrepo update sury', out)
         self.assertNotIn('PHP packages built for another distribution are installed', out)
         self.assertIn('BLOCKED=false|UNKNOWN=false', out)
+
+    def test_sury_ubuntu_sources_match_the_host_suite_and_package_architecture(self):
+        for release, suite in [('22.04', 'jammy'), ('24.04', 'noble'), ('26.04', 'resolute')]:
+            for enabled, arch, active in [('yes', 'amd64', True), ('no', 'amd64', False),
+                                           ('yes', 'arm64', False)]:
+                with self.subTest(release=release, enabled=enabled, arch=arch):
+                    definition = (f'Types: deb\nURIs: https://packages.sury.org/php\nSuites: {suite}\n'
+                                  f'Architectures: {arch}\nEnabled: {enabled}\n'
+                                  'Signed-By: FIXTURE_ROOT/var/lib/extrepo/keys/sury.asc')
+                    out = self.shell(self.source_fixture(definition, 'extrepo_sury.sources',
+                        f'P2S_DISTRO=ubuntu; P2S_RELEASE={release}\n' + r'''
+rm "$P2S_WORK/etc/apt/sources.list.d/php.list"
+printf '%s\n' 'php8.4-cli|8.4.27-1+0~20261021.57+ubuntu''' + release + r'''~1.gbp7636b9|amd64|PHP Maintainers' > "$P2S_WORK/packages"
+p2s_repository_inventory_collect
+p2s_repository_sury_installed_source_report
+'''), isolated_paths=True, isolated_sources=True)
+                    self.assertNotIn('PHP repository mismatch', out)
+                    self.assertIn('|sury|extrepo|enabled=' + enabled + '|suite=matching', out)
+                    self.assertEqual('installed_packages_without_matching_active_source' in out, not active)
+
+    def test_sury_ubuntu_suite_still_mismatches_a_debian_host_or_another_ubuntu_release(self):
+        for distro, release in [('debian', '12'), ('ubuntu', '24.04')]:
+            with self.subTest(distro=distro, release=release):
+                out = self.shell(self.source_fixture('deb https://packages.sury.org/php jammy main',
+                    'php.list', f'P2S_DISTRO={distro}; P2S_RELEASE={release}\np2s_repository_inventory_collect\n'),
+                    isolated_paths=True, isolated_sources=True)
+                self.assertIn("source supplies Ubuntu packages for suite 'jammy'", out)
+                self.assertIn('PHP repository mismatch', out)
 
     def test_ubuntu_php_ppa_on_debian_is_reported_but_matching_ppa_is_not(self):
         for distro, release, suite, mismatch in [('debian', '12', 'jammy', True),

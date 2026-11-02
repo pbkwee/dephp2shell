@@ -286,6 +286,10 @@ p2s_version_sury_fixed_build_output() {
         ubuntu:22.04|ubuntu:24.04) suffix="ubuntu$P2S_RELEASE.1+deb.sury.org+1" ;;
         *) return 1 ;;
     esac
+    # Jammy mirror builds share the reviewed Debian revision/hash, unlike the PPA builds.
+    case "$P2S_DISTRO:$P2S_RELEASE:${3:-}" in
+        ubuntu:22.04:*+0~*) suffix='ubuntu22.04~1' ;;
+    esac
     case "$name" in
         php5.6-*|libapache2-mod-php5.6) revision='5.6.40-105+0~20261022.135'; release=37a17e ;;
         php7.0-*|libapache2-mod-php7.0) revision='7.0.33-93+0~20261022.119'; release=952195 ;;
@@ -298,7 +302,7 @@ p2s_version_sury_fixed_build_output() {
         *) return 1 ;;
     esac
     p2s_package_is_engine "$name" || return 1
-    if [ "$P2S_DISTRO" = debian ]; then
+    if [ "$P2S_DISTRO" = debian ] || [ "$suffix" = ubuntu22.04~1 ]; then
         printf '%s\n' "$revision+$suffix.gbp$release"
     else
         revision=${revision%%+0~*}
@@ -310,7 +314,7 @@ p2s_version_sury_fixed_build_output() {
 p2s_version_sury_backport_fixed() {
     local fixed source=${1#libapache2-mod-}
     source=${source%%-*}
-    fixed=$(p2s_version_sury_fixed_build_output "$1" "$3") || return 1
+    fixed=$(p2s_version_sury_fixed_build_output "$1" "$3" "$2") || return 1
     [ "$4" = "$source" ] && [ "$5" = "$2" ] && [ "$2" = "$fixed" ]
 }
 
@@ -664,7 +668,7 @@ p2s_package_inventory_assess() {
             p2s_manifest_record package_assessment "$name|$version|$arch|$vendor|$provider|$state|$reason|upstream=$upstream_state"
             summary_reason=$reason; fixed_build=
             case "$P2S_BACKEND:$provider" in deb:Sury/*)
-                fixed_build=$(p2s_version_sury_fixed_build_output "$name" "$arch")
+                fixed_build=$(p2s_version_sury_fixed_build_output "$name" "$arch" "$version")
                 comparison=not_compared
                 if [ -n "$fixed_build" ]; then comparison=tool_unavailable; fi
                 if [ -n "$fixed_build" ] && p2s_command_exists dpkg; then
@@ -1245,9 +1249,10 @@ p2s_package_refresh_failure_report() {
 
 p2s_package_deb_is_sury() {
     # Revision families, not generic +0~/PPA hints or Debian maintainer names.
+    # Sury mirror: +0~20261021.82+ubuntu22.04~1.gbp4e430a; PPA: +ubuntu22.04.1+deb.sury.org+1.
     printf '%s\n' "$1" | LC_ALL=C awk '
         /\+deb[.]sury[.]org\+[0-9]+$/ {ok=1}
-        /\+0~[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][.][0-9]+\+debian[0-9]+~[0-9]+[.]gbp[0-9a-f]+$/ {ok=1}
+        /\+0~[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][.][0-9]+\+(debian[0-9]+|ubuntu[0-9][0-9][.][0-9][0-9])~[0-9]+[.]gbp[0-9a-f]+$/ {ok=1}
         END {exit !ok}'
 }
 
@@ -1731,13 +1736,15 @@ p2s_repository_source_layouts_output() {
                 if(active_arch!="") {
                     if(enabled=="yes" && contains(types,"deb") && suite!="" && contains(suites,suite) &&
                        (active_arch=="all" || ((architectures=="" || contains(architectures,active_arch) || contains(added_architectures,active_arch)) && !contains(excluded_architectures,active_arch))) &&
-                       ((distro=="debian" && host=="packages.sury.org" && path ~ /^\/php\/?$/) ||
+                       (((distro=="debian" || distro=="ubuntu") && host=="packages.sury.org" && path ~ /^\/php\/?$/) ||
                         (distro=="ubuntu" && host ~ /^ppa[.]launchpad(content)?[.]net$/ && path ~ /^\/ondrej\/php\/ubuntu\/?$/))) print "active"
                     continue
                 }
                 provider=""; family=""
                 if(host=="packages.sury.org" && path ~ /^\/php\/?$/ && types!="rpm") {
                     provider="sury"; family="Debian"
+                    # This archive also publishes Ubuntu suites; its hostname alone does not identify Debian.
+                    if(contains(suites,"jammy") || contains(suites,"noble") || contains(suites,"resolute")) family="Ubuntu"
                     layout="standard"
                     if(file ~ /\/extrepo_sury[.]sources$/ || signing==extrepo_key) {
                         layout="extrepo"
@@ -1845,7 +1852,7 @@ p2s_repository_maintenance_report() {
         fi
         case "$provider:$matching" in sury:different|ondrej:different)
             case "$P2S_DISTRO" in
-                ubuntu) advice="Ubuntu PHP packages use the ondrej/php PPA for ${expected:-the installed Ubuntu release}." ;;
+                ubuntu) advice="Ubuntu PHP packages use packages.sury.org/php or the ondrej/php PPA for ${expected:-the installed Ubuntu release}." ;;
                 debian) advice="Debian PHP packages use packages.sury.org/php for ${expected:-the installed Debian release}." ;;
                 *) advice='Check the PHP publisher support for this distribution and release.' ;;
             esac

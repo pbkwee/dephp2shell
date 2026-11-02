@@ -159,12 +159,14 @@ package names and full package revision. `package_fix_reference` records the
 reviewed fixed build and `dpkg` version comparison. Older/newer comparisons explain
 an unknown result; they do not broaden the exact backport recognition rules.
 Equal versions still require the reviewed source identity and architecture.
+Ubuntu Sury mirror and PPA revisions use their respective reviewed fixed-build
+references; their version formats and PHP 7.0/7.1 source revisions differ.
 Different Sury package revisions stay separate even when `php -v` is identical.
 
 Installed Sury/ondrej packages with no recognised active binary APT source matching
 the OS release and package architecture produce an update-source warning.
 The check reads conventional source definitions, including comments, Deb822
-`Enabled`, package architecture options and Ubuntu ondrej sources. Cached APT
+`Enabled`, package architecture options and Ubuntu Sury mirror/ondrej sources. Cached APT
 indexes do not count as an active source. A missing source does not change an
 otherwise verified fixed package's CVE assessment. Source activation retains
 its existing explicit opt-in requirements. Source recognition includes Ubuntu
@@ -563,7 +565,7 @@ options. Obtain approval for repository changes and verify the selected package 
 
 | Package publisher | Relevant scope and caveat |
 | --- | --- |
-| [Sury / ondrej PHP](https://sury.org/) | Debian PHP repository and Ubuntu `ondrej/php` PPA; alternate parallel branches. The revision format supplies a package publisher hint; repository identity and support entitlement require their own checks. |
+| [Sury / ondrej PHP](https://sury.org/) | Debian/Ubuntu PHP archive and Ubuntu `ondrej/php` PPA; alternate parallel branches. The revision format supplies a package publisher hint; repository identity and support entitlement require their own checks. |
 | [Freexian PHP LTS](https://www.freexian.com/lts/php/) | Commercial extended PHP security maintenance for specific Debian/Ubuntu and PHP combinations, working with the Sury maintainer. Check its platform/architecture matrix and subscription terms. |
 | [Remi](https://rpms.remirepo.net/) | PHP RPM repositories and stream/parallel-install choices for supported RPM platforms. Check its configuration wizard and release-specific support; archived repositories alone do not supply ongoing fixes. |
 | [TuxCare / alt-PHP](https://docs.tuxcare.com/els-for-runtimes/php/) | Commercial maintenance of EOL PHP with distro/PHP/architecture-specific availability. CloudLinux also uses the alt-PHP namespace; check supplier metadata and licence entitlement separately. |
@@ -1331,7 +1333,7 @@ Records include `schema`, `observed_at`, `kernel`, `hostname`, `uptime`, `disk`,
 Additional diagnostic records preserve the reasons behind readable summaries:
 
 - `repository_layout`: source file, recognised package publisher, layout, enabled state
-  and whether a Sury suite matches a reviewed installed Debian release. APT list
+  and whether a Sury/ondrej suite matches the measured Debian or Ubuntu release. APT list
   lines, Deb822 continuation fields and Virtualmin RPM definitions are inspected.
   The classification omits URLs, credentials and inline signing keys.
 - `repository_guidance`: a manual review recommendation and `not_executed`, or
@@ -1339,7 +1341,7 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   Extrepo is recognised by `extrepo_sury.sources` or its
   `/var/lib/extrepo/keys/sury.asc` signing path; edited layouts still exclude
   package-owned Sury key repair. Review the detected manager's installed tools and configuration before running repository repair. See [repository repair advice](resolution-options.md#repository-repair-advice).
-  Active Sury Debian and ondrej Ubuntu PPA definitions are checked against the
+  Active Sury Debian/Ubuntu and ondrej Ubuntu PPA definitions are checked against the
   measured OS and expected suite. A mismatch warning includes the source file,
   configured distribution/suite and host release, and `repository_guidance`
   adds `configured`, `host` and `expected_suite`. Wrong-distribution sources
@@ -1353,7 +1355,10 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   Ubuntu Jammy; APT metadata may have refreshed before that rejection. These
   diagnostics add no repository rewrite or package conversion procedure.
   Primary publisher distinction: [Sury Ubuntu PPA and Debian DPA](https://deb.sury.org/),
-  reviewed 2026-10-29.
+  reviewed 2026-10-29. The official [Sury suite index](https://packages.sury.org/php/dists/),
+  checked 2026-11-03, also lists Jammy, Noble and Resolute. Mirror builds use
+  `+0~DATE.N+ubuntuRELEASE~N.gbpHASH`, distinct from PPA revisions. Suite and
+  architecture checks still apply; a matching source alone does not verify fixes.
 - `panel_path`: cPanel core and updater paths, plus a detected CloudLinux selector
   directory. Records include file type, readability, executability, symlink target
   and resolved path when `readlink` is available. Missing and inaccessible paths

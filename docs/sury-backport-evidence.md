@@ -194,6 +194,59 @@ terminate a worker immediately, and session upload-progress handling is disabled
 Those differences are part of the upstream EOL strategy. Do not promise normal
 OOM request cleanup or preservation of session upload-progress functionality.
 
+## Ubuntu Jammy mirror backports
+
+Reviewed 3 November 2026, New Zealand time. The official
+[Sury archive suite index](https://packages.sury.org/php/dists/) also lists
+Ubuntu Jammy, Noble and Resolute. The `packages.sury.org/php` hostname does not
+identify a Debian-only archive. Ubuntu mirror builds and PPA builds use different
+revision formats; one must not be compared as if it were the other.
+
+These additional bounded rules cover PHP 5.6, 7.0–7.4, 8.0 and 8.1 on Ubuntu
+22.04, `amd64`. Use the exact Debian revision/hash table above, replacing
+`+debianN~1.gbpHASH` with `+ubuntu22.04~1.gbpHASH`. Each corresponding source
+package is `php` followed by its branch. The mirror PHP 7.0/7.1 revisions are
+`-93`/`-81`, whereas the PPA revisions are `-92`/`-80`. Comparisons use the
+reference for the observed packaging family, preserving epochs.
+The installed binary/source/version checks still apply. These rules do not
+extend recognition to other mirror suites, architectures or later revisions.
+
+The review used the official archive keyring package and validated
+[Jammy InRelease](https://packages.sury.org/php/dists/jammy/InRelease) with
+`gpgv`: `VALIDSIG 15058500A0235D97F5D10063B188E2B695BD4743`.
+The signed release date was 25 October 2026 23:01:15 UTC.
+
+| Artifact | Size (bytes) | SHA256 |
+| --- | ---: | --- |
+| `InRelease` | — | `020b3a73f934c3775a9c9bae0e664a152100f5ef7af312cfcce3c3ccae4debbb` |
+| `main/source/Sources.gz` | 61343 | `bef260a6b8ba6fc44ba73175b35964132499e2d9c06fb2df19351fe87789f228` |
+| `main/binary-amd64/Packages.gz` | 309914 | `9bf15dbd1cbc841c84bf6b08eda8c3a3eab1d540996657f8f8a524a190820f16` |
+| PHP 8.1 Debian packaging archive | 147696 | `d251e1e1cc9d05d6ac5d810fb446ccebda8fc0f094f063ebab263f2f33a023cc` |
+
+Index sizes and digests matched the signed release. For each branch, the
+packaging archive matched its source-index entry. Its enabled fix patch explicitly
+covers both CVEs and is byte-identical to the reviewed Debian 12 patch.
+A fresh signed Bookworm release/source index authenticated the comparison
+archives with the same key; its `InRelease` SHA256 was
+`e4bfc63a9c4936708171b9584c68f9a28fbfbabdc7b567cc122b4242254ed706`.
+
+| Branch | Jammy packaging archive SHA256 | Enabled fix patch SHA256 |
+| --- | --- | --- |
+| 5.6 | `fea3b963dfeba5c4399f6eb24c22c4e2221fd2d9c19b00a1b10a8e92c77fe033` | `d945982b5ab29bc5c42d1892750d72d39ae911df8b9f4f5ea47d133707ab72a4` |
+| 7.0 | `19a6190a24d5781b83feb7a129bad3a45f70e07d191515b75560cb35f409d8a0` | `d987fefd88dc7cd0b51990fc26507c959eef1a2eb6559fa7761da8a4ad86d316` |
+| 7.1 | `5e7739aa3829c1ef27f0061223615f60c147307848400b2b406e82dcd31e5043` | `111d7f8ccd217e4b5db83629105d12613bf0809791bf7f446069db9257fce5ba` |
+| 7.2 | `e6d47b3d16ce2b54b16b099db765a0d0525bea2aa13d4be9b577da04c0d7e107` | `35f4820ab80594899db860be6f6d695657509d6186a830fefd5f442bc2bd0330` |
+| 7.3 | `ba1c656d60d5a62836336312ec08058e6cf0318f27e8d5ca1d6d11fc0672c313` | `38b59430a69a7d61919f8875c5d2fa6ff8d4dfaa9277fefc3098be41371af3f0` |
+| 7.4 | `15be7b2b48e868e6093d0990a54d6a32d6e92f30933126928d8ee9b77ddb27e9` | `f299907678a90feef3d69d8686f666a45430fa2d556dc28f59f0ad52b7e1b382` |
+| 8.0 | `8617556041d4506fc203551684ceadc5b508d0902b1c48979438b1a6ef4972bc` | `106cbf22830a5ac33b0ef62d530f0c54caa13df2fda3956589367ff2f33d62e7` |
+| 8.1 | `d251e1e1cc9d05d6ac5d810fb446ccebda8fc0f094f063ebab263f2f33a023cc` | `a02d7c25bacafde3059347799065695967cc15e8b1b7adf52d33f04309de9996` |
+
+For each branch, the review downloaded the `-common`, `-cli`, `-cgi`, `-fpm`,
+`-phpdbg` and Apache-module binaries (48 packages), matched their sizes and
+SHA256 values to the signed binary index, and checked actual package control
+name, source, exact version and amd64 architecture. No package was installed
+or executed. A higher version number alone does not add a build to this list.
+
 ## Review limits
 
 The review authenticated Sury's declared source-to-binary relationship

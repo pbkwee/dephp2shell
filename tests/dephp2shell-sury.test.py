@@ -150,6 +150,22 @@ candidate=1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1'''
         self.assertIn('candidate_provider', out)
         self.assertNotIn('INSTALL:', out)
 
+    def test_sury_ubuntu_mirror_packages_keep_the_existing_provider(self):
+        changes = '''P2S_DISTRO=ubuntu; P2S_RELEASE=22.04; suite=jammy; mixed=false
+name=php8.4-cli; source=php8.4; selected_source=php8.4
+old=8.4.26-1+0~20261001.56+ubuntu22.04~1.gbpabcdef
+candidate=8.4.27-1+0~20261021.57+ubuntu22.04~1.gbp7636b9'''
+        out = self.shell(self.fixture(changes), isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        self.assertIn('INSTALL:', out)
+        for invalid in ['origin=Unrelated', 'suite=noble', 'proposed_arch=i386',
+                        'source=php8.3', 'extra_repo=true',
+                        'candidate=8.4.27-1+0~20261021.57+ubuntu22.04~1.gbp7636b9+local']:
+            with self.subTest(invalid=invalid):
+                out = self.shell(self.fixture(changes + '\n' + invalid), isolated_sources=True)
+                self.assertIn('RC=1|ATTEMPTED=false', out)
+                self.assertNotIn('INSTALL:', out)
+
     def test_candidate_origin_refusal_names_versions_repositories_and_release_identity(self):
         for changes, expected in [
                 ('extra_repo=true', ['matching repository rows: 1; other or unverified rows: 1', 'matching:', 'host=packages.sury.org', 'unverified:', 'host=deb.debian.org']),
@@ -316,6 +332,39 @@ p2s_package_inventory_assess
 p2s_summary_print_versions
 cat "$P2S_WORK/package-states"
 ''')
+
+    def test_exact_jammy_mirror_backports_preserve_source_architecture_and_revision_checks(self):
+        builds = [
+            ('5.6', '5.6.40-105+0~20261022.135', '37a17e'),
+            ('7.0', '7.0.33-93+0~20261022.119', '952195'),
+            ('7.1', '7.1.33-81+0~20261022.128', 'a88ccf'),
+            ('7.2', '7.2.34-66+0~20261021.122', 'e0bcd4'),
+            ('7.3', '7.3.33-35+0~20261021.144', 'ecf76f'),
+            ('7.4', '1:7.4.33-31+0~20261021.121', 'e9c428'),
+            ('8.0', '1:8.0.30-25+0~20261021.88', 'abebea'),
+            ('8.1', '8.1.34-9+0~20261021.82', '4e430a')]
+        for branch, revision, checksum in builds:
+            version = f'{revision}+ubuntu22.04~1.gbp{checksum}'
+            source = f'php{branch}'
+            names = tuple(f'{source}-{sapi}' for sapi in ('common', 'cli', 'cgi', 'fpm', 'phpdbg')) + (f'libapache2-mod-{source}',)
+            with self.subTest(branch=branch):
+                out = self.installed_summary(version, names, source, 'ubuntu', '22.04')
+                self.assertIn('fixes verified for both PHP2Shell vulnerabilities', out)
+                self.assertIn('reviewed_fixed=' + version + '|comparison=equal', out)
+                for name in names:
+                    self.assertIn(name + '|N', out.splitlines())
+            for distro, release, arch, proposed_source, source_version, installed in [
+                    ('ubuntu', '24.04', 'amd64', source, version, version),
+                    ('debian', '12', 'amd64', source, version, version),
+                    ('ubuntu', '22.04', 'arm64', source, version, version),
+                    ('ubuntu', '22.04', 'amd64', 'other-source', version, version),
+                    ('ubuntu', '22.04', 'amd64', source, version + '+local', version),
+                    ('ubuntu', '22.04', 'amd64', source, version, version + '+local')]:
+                with self.subTest(branch=branch, distro=distro, release=release, arch=arch, installed=installed):
+                    args = [f'{source}-cli', installed, 'PHP Maintainers', arch, proposed_source, source_version]
+                    out = self.shell(f'P2S_BACKEND=deb; P2S_DISTRO={distro}; P2S_RELEASE={release}\n'
+                                     + 'p2s_version_package_state ' + ' '.join(map(shlex.quote, args)))
+                    self.assertEqual(out.strip(), '?')
 
     def test_fixed_php74_names_packages_and_the_backported_build(self):
         version = '1:7.4.33-31+0~20261021.121+debian12~1.gbpe9c428'
