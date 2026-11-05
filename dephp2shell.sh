@@ -1257,47 +1257,79 @@ p2s_package_deb_is_sury() {
 }
 
 p2s_package_deb_sury_trust_preflight() {
-    local file
+    local file kind key value line blocked=false
     # APT normally verifies repository signatures. Explicit trust overrides defeat that guarantee.
     p2s_command_exists apt-config && p2s_command_run 30 apt-config dump > "$P2S_WORK/apt-config" 2>/dev/null || {
         p2s_fix_block source_authentication "APT authentication settings could not be inspected; the Sury update needs manual review."; return 1;
     }
-    # apt-config dump: APT::Get::AllowUnauthenticated "true";
+    # apt-config dump: APT::Get::AllowUnauthenticated "true"; -> authentication_override|key|true
+    # The dump has effective values, not the names of the files that supplied them.
     if ! awk '{
-        key=tolower($1); value=tolower($2); gsub(/[";\r]/,"",value)
-        if (key ~ /(allowunauthenticated|allowinsecurerepositories|allowweakrepositories|allowdowngradetoinsecurerepositories)$/ && value ~ /^(1|true|yes|on|enable)$/) bad=1
-        if (key ~ /verify-(peer|host)$/ && value ~ /^(0|false|no|off|disable)$/) bad=1
-        if (key=="dir" && value!="/") bad=1
-        if (key=="dir::etc" && value!="etc/apt" && value!="/etc/apt") bad=1
-        if (key=="dir::etc::sourcelist" && value!="sources.list" && value!="/etc/apt/sources.list") bad=1
-        if (key=="dir::etc::sourceparts" && value!="sources.list.d" && value!="/etc/apt/sources.list.d") bad=1
+        key=tolower($1); value=$0; sub(/^[^ \t]+[ \t]+"/,"",value); sub(/";[ \t\r]*$/,"",value)
+        normal=tolower(value); kind=""
+        if (key ~ /(allowunauthenticated|allowinsecurerepositories|allowweakrepositories|allowdowngradetoinsecurerepositories)$/ && normal ~ /^(1|true|yes|on|enable)$/) kind="authentication_override"
+        if (key ~ /verify-(peer|host)$/ && normal ~ /^(0|false|no|off|disable)$/) kind="authentication_override"
+        if (key=="dir" && normal!="/") kind="custom_source_paths"
+        if (key=="dir::etc" && normal!="etc/apt" && normal!="/etc/apt") kind="custom_source_paths"
+        if (key=="dir::etc::sourcelist" && normal!="sources.list" && normal!="/etc/apt/sources.list") kind="custom_source_paths"
+        if (key=="dir::etc::sourceparts" && normal!="sources.list.d" && normal!="/etc/apt/sources.list.d") kind="custom_source_paths"
+        if (kind!="") {
+            display_key=$1
+            if (display_key !~ /^[a-zA-Z0-9:._+\/-]+$/) display_key="[nonstandard APT key redacted]"
+            gsub(/[\001-\037\177|]/,"?",value)
+            print kind "|" display_key "|" value
         }
-        END {exit bad}' "$P2S_WORK/apt-config"; then
-        p2s_fix_block source_authentication "Insecure or custom APT source settings require review before a Sury update; no trust settings were changed."
+        }' "$P2S_WORK/apt-config" > "$P2S_WORK/apt-trust-settings"; then
+        p2s_fix_block source_authentication "APT authentication settings could not be assessed; the Sury update needs manual review."
         return 1
     fi
+    if ! p2s_manifest_redact_repository_urls < "$P2S_WORK/apt-trust-settings" > "$P2S_WORK/apt-trust-settings.redacted"; then
+        p2s_fix_block source_authentication "APT authentication diagnostics could not be prepared; the Sury update needs manual review."
+        return 1
+    fi
+    while IFS='|' read -r kind key value; do
+        p2s_manifest_record apt_trust_setting "effective_config|reason=$kind|key=$key|value=$value|origin_file=unverified"
+        case "$kind" in
+            authentication_override) p2s_fix_block source_authentication "Effective APT setting $key=$value weakens package/repository authentication or TLS verification. Review /etc/apt/apt.conf, /etc/apt/apt.conf.d and any APT_CONFIG file; apt-config dump does not identify the defining file. No trust settings were changed." ;;
+            custom_source_paths) p2s_fix_block source_authentication "Effective APT setting $key=$value redirects source lookup outside the paths checked by this script. A custom path is not itself evidence of disabled authentication. Review /etc/apt/apt.conf, /etc/apt/apt.conf.d and any APT_CONFIG file; the defining file is unverified. No source paths were changed." ;;
+        esac
+        blocked=true
+    done < "$P2S_WORK/apt-trust-settings.redacted"
     for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [ -f "$file" ] || continue
         # sources.list: deb [trusted=yes] https://packages.sury.org/php bookworm main
         # Deb822 php.sources can also fold "Trusted:" onto a following indented "yes".
-        # Reject overrides without copying source contents or credentials into diagnostics.
+        # Report only the option and its line, never source contents, credentials or signing keys.
         if ! awk '
             /^[ \t]*#/ {next}
             /^[ \t]*$/ {key=""; next}
             {
                 line=tolower($0); sub(/\r$/,"",line)
-                if (line ~ /(^|[ \t\[])(trusted|allow-insecure|allow-weak|allow-downgrade-to-insecure)[ \t]*=[ \t]*(yes|true|1|on|enable)([ \t\]]|$)/) bad=1
+                rest=line
+                while (match(rest,/(^|[ \t\[])(trusted|allow-insecure|allow-weak|allow-downgrade-to-insecure)[ \t]*=[ \t]*(yes|true|1|on|enable)([ \t\]]|$)/)) {
+                    option=substr(rest,RSTART,RLENGTH); gsub(/[ \t\[\]]/,"",option); split(option,parts,"=")
+                    print NR "|" parts[1] "|" parts[2]; rest=substr(rest,RSTART+RLENGTH)
+                }
                 if (line ~ /^[a-z-]+:/) {
-                    key=line; sub(/:.*/,"",key); sub(/^[^:]*:[ \t]*/,"",line)
+                    key=line; sub(/:.*/,"",key); key_line=NR; sub(/^[^:]*:[ \t]*/,"",line)
                 } else if (line !~ /^[ \t]/) key=""
                 sub(/^[ \t]*/,"",line)
-                if (key ~ /^(trusted|allow-insecure|allow-weak|allow-downgrade-to-insecure)$/ && line ~ /^(yes|true|1|on|enable)([ \t]|$)/) bad=1
+                if (key ~ /^(trusted|allow-insecure|allow-weak|allow-downgrade-to-insecure)$/ && line ~ /^(yes|true|1|on|enable)([ \t]|$)/) {
+                    sub(/[ \t].*$/,"",line); print key_line "|" key "|" line
+                }
             }
-            END {exit bad}' "$file"; then
-            p2s_fix_block source_authentication "A source-local APT trust override or unreadable source file prevents a verified Sury update. Review the existing source settings."
+            ' "$file" > "$P2S_WORK/apt-source-trust-settings"; then
+            p2s_manifest_record apt_trust_setting "$file|read_or_assessment_failed"
+            p2s_fix_block source_authentication "APT source file $file could not be assessed; a verified Sury update needs manual review."
             return 1
         fi
+        while IFS='|' read -r line key value; do
+            p2s_manifest_record apt_trust_setting "$file|line=$line|reason=source_override|key=$key|value=$value"
+            p2s_fix_block source_authentication "APT source $file line $line sets $key=$value, bypassing part of repository authentication. Review this definition and its publisher key; replacing a signing key alone does not remove this override. No trust settings were changed."
+            blocked=true
+        done < "$P2S_WORK/apt-source-trust-settings"
     done
+    ! $blocked
 }
 
 p2s_package_deb_candidate() {
@@ -1726,15 +1758,26 @@ p2s_repository_source_layouts_output() {
         -v extrepo_key=/var/lib/extrepo/keys/sury.asc '
         function trim(value) {gsub(/^[ \t]+|[ \t]+$/,"",value); return value}
         function contains(value,item) {gsub(/[, \t]+/," ",value); return index(" " trim(value) " "," " item " ")>0}
-        function emit(n,a,i,uri,host,path,layout,matching,provider,family,reported_suites) {
+        # APT: Suites: bookworm + Components: main; exact-path Suites: ./ omits Components.
+        function components_valid(n,a,i) {
+            n=split(trim(suites),a,/[ \t]+/); if(trim(suites)=="") return 0
+            for(i=1;i<=n;i++) {
+                if(a[i] ~ /\/$/) {if(trim(components)!="") return 0}
+                else if(trim(components)=="") return 0
+            }
+            return 1
+        }
+        function emit(n,a,i,uri,host,path,layout,matching,provider,family,reported_suites,suite_count,suite_names,suite_index,configured_suite,matching_suite) {
             if(types !~ /(^|[ \t])(deb|deb-src|rpm)([ \t]|$)/) return
+            suite_count=split(trim(suites),suite_names,/[ \t]+/); matching_suite=0
+            for(suite_index=1;suite_index<=suite_count;suite_index++) if(suite_names[suite_index]==suite) matching_suite=1
             n=split(uris,a,/[ \t]+/)
             for(i=1;i<=n;i++) {
                 uri=a[i]; if(uri !~ /^https?:\/\//) continue
                 host=uri; sub(/^https?:\/\//,"",host); sub(/[\/?#].*$/,"",host); sub(/^.*@/,"",host)
                 path=uri; sub(/^https?:\/\/[^\/]+/,"",path); sub(/[?#].*$/,"",path)
                 if(active_arch!="") {
-                    if(enabled=="yes" && contains(types,"deb") && suite!="" && contains(suites,suite) &&
+                    if(enabled=="yes" && contains(types,"deb") && components_valid() && suite!="" && matching_suite &&
                        (active_arch=="all" || ((architectures=="" || contains(architectures,active_arch) || contains(added_architectures,active_arch)) && !contains(excluded_architectures,active_arch))) &&
                        (((distro=="debian" || distro=="ubuntu") && host=="packages.sury.org" && path ~ /^\/php\/?$/) ||
                         (distro=="ubuntu" && host ~ /^ppa[.]launchpad(content)?[.]net$/ && path ~ /^\/ondrej\/php\/ubuntu\/?$/))) print "active"
@@ -1742,9 +1785,7 @@ p2s_repository_source_layouts_output() {
                 }
                 provider=""; family=""
                 if(host=="packages.sury.org" && path ~ /^\/php\/?$/ && types!="rpm") {
-                    provider="sury"; family="Debian"
-                    # This archive also publishes Ubuntu suites; its hostname alone does not identify Debian.
-                    if(contains(suites,"jammy") || contains(suites,"noble") || contains(suites,"resolute")) family="Ubuntu"
+                    provider="sury"
                     layout="standard"
                     if(file ~ /\/extrepo_sury[.]sources$/ || signing==extrepo_key) {
                         layout="extrepo"
@@ -1754,17 +1795,29 @@ p2s_repository_source_layouts_output() {
                     provider="ondrej"; family="Ubuntu"; layout="ppa"
                 }
                 if(provider!="") {
-                    matching="unreviewed"
-                    if(suite!="") {matching="different"; if(trim(suites)==suite) matching="matching"}
-                    if((distro=="debian" && family!="Debian") || (distro=="ubuntu" && family!="Ubuntu")) matching="different"
-                    reported_suites=trim(suites); gsub(/[ \t]+/," ",reported_suites)
-                    if(reported_suites !~ /^[a-zA-Z0-9_.+~\/-]+( [a-zA-Z0-9_.+~\/-]+)*$/) reported_suites="unrecognised"
-                    print provider "|" layout "|" enabled "|" matching "|" family "|" reported_suites "|" suite
+                    # Suites: bookworm bookworm bullseye -> matching bookworm, different bullseye.
+                    reported_suites=""
+                    if(suite_count==0 || trim(suites)=="") {suite_count=1; suite_names[1]="unrecognised"}
+                    for(suite_index=1;suite_index<=suite_count;suite_index++) {
+                        configured_suite=suite_names[suite_index]
+                        if(configured_suite !~ /^[a-zA-Z0-9_.+~\/-]+$/) configured_suite="unrecognised"
+                        if(contains(reported_suites,configured_suite)) continue
+                        reported_suites=reported_suites " " configured_suite
+                        family="unverified"
+                        # Hostnames do not establish the distribution of every suite in a mixed stanza.
+                        if(provider=="ondrej" || contains("trusty xenial bionic focal jammy noble resolute",configured_suite)) family="Ubuntu"
+                        else if(contains("stretch buster bullseye bookworm trixie",configured_suite)) family="Debian"
+                        matching="unreviewed"
+                        if(suite!="") {matching="different"; if(configured_suite==suite) matching="matching"}
+                        if((distro=="debian" && family=="Ubuntu") || (distro=="ubuntu" && family=="Debian")) matching="different"
+                        if(!components_valid()) {layout="invalid_components"; matching="unreviewed"}
+                        print provider "|" layout "|" enabled "|" matching "|" family "|" configured_suite "|" suite
+                    }
                 } else if(host=="software.virtualmin.com") print "virtualmin|legacy|" enabled "|unreviewed"
                 else if(host=="download.virtualmin.com") print "virtualmin|current|" enabled "|unreviewed"
             }
         }
-        function reset() {types=""; uris=""; suites=""; signing=""; enabled="yes"; key=""; architectures=""; added_architectures=""; excluded_architectures=""}
+        function reset() {types=""; uris=""; suites=""; components=""; signing=""; enabled="yes"; key=""; architectures=""; added_architectures=""; excluded_architectures=""}
         BEGIN {apt=(file ~ /[.](list|sources)$/); reset()}
         {
             if($0 ~ /^[ \t]*#/) next
@@ -1785,7 +1838,8 @@ p2s_repository_source_layouts_output() {
                         if(option[j] ~ /^arch-=/) excluded_architectures=substr(option[j],7)
                     }
                 }
-                split(line,entry,/[ \t]+/); uris=entry[1]; suites=entry[2]
+                count=split(line,entry,/[ \t]+/); uris=entry[1]; suites=entry[2]
+                for(j=3;j<=count;j++) components=components " " entry[j]
                 emit(); reset(); next
             }
             if(file ~ /[.]sources$/) {
@@ -1794,6 +1848,7 @@ p2s_repository_source_layouts_output() {
                 if(key=="types") types=types " " line
                 if(key=="uris") uris=uris " " line
                 if(key=="suites") suites=suites " " line
+                if(key=="components") components=components " " line
                 if(key=="signed-by") signing=trim(signing " " line)
                 if(key=="enabled") enabled=(tolower(line)=="no" ? "no" : tolower(line)=="yes" ? "yes" : "unknown")
                 if(key=="architectures") architectures=architectures " " line
@@ -1826,7 +1881,7 @@ p2s_repository_sury_installed_source_report() {
         if ! $active; then
             if $inspected; then
                 case "${P2S_PANEL:-}" in
-                    ''|none) advice='Automatic Sury/ondrej updates need an active matching source. Review missing, commented-out or disabled sources and their release and architecture settings.' ;;
+                    ''|none) advice='Automatic Sury/ondrej updates need an active matching source. Review missing, malformed, commented-out or disabled sources and their release and architecture settings.' ;;
                     *) advice="This server also uses $P2S_PANEL-managed PHP. Review the mixed package sources with the panel administrator before enabling a repository; Sury packages do not replace the panel's own PHP packages." ;;
                 esac
                 p2s_message_print warn "Sury/ondrej PHP packages are installed, but no active matching Sury/ondrej source was recognised in /etc/apt/sources.list or /etc/apt/sources.list.d (OS release $P2S_RELEASE; architecture $arch). $advice"
@@ -1850,13 +1905,18 @@ p2s_repository_maintenance_report() {
             p2s_manifest_record repository_guidance "$file|$provider|inactive_or_unknown_state|review_intended_state_before_repair_or_activation"
             continue
         fi
+        if [ "$layout" = invalid_components ]; then
+            p2s_message_print warn "PHP source definition in $file has an invalid Components setting for suite '$suites'. Named suites require Components; exact-path suites ending '/' must omit them. This definition was not counted as an active matching source."
+            p2s_manifest_record source_gap "$file|PHP_source_components_invalid|suite=$suites"
+            continue
+        fi
         case "$provider:$matching" in sury:different|ondrej:different)
             case "$P2S_DISTRO" in
-                ubuntu) advice="Ubuntu PHP packages use packages.sury.org/php or the ondrej/php PPA for ${expected:-the installed Ubuntu release}." ;;
-                debian) advice="Debian PHP packages use packages.sury.org/php for ${expected:-the installed Debian release}." ;;
+                ubuntu) advice="Confirm current publisher support for ${expected:-the installed Ubuntu release} at https://launchpad.net/~ondrej/+archive/ubuntu/php or https://packages.sury.org/php/dists/, or plan a supported OS/application migration." ;;
+                debian) advice="Confirm a maintained package source for ${expected:-the installed Debian release}; review current Sury suites at https://packages.sury.org/php/dists/ or plan a supported OS/application migration." ;;
                 *) advice='Check the PHP publisher support for this distribution and release.' ;;
             esac
-            p2s_message_print warn "PHP repository mismatch in $file: the source supplies $family packages for suite '$suites', but this server runs $P2S_DISTRO $P2S_RELEASE. $advice Review the installed PHP packages before replacing the source. Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources."
+            p2s_message_print warn "PHP repository mismatch in $file: configured $family suite '$suites'; this server runs $P2S_DISTRO $P2S_RELEASE (expected suite '${expected:-unverified}'). $advice Do not substitute another release's repository. This source configuration does not establish the origin of installed packages. Changing or disabling the source does not replace packages or verify PHP fixes. Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources."
             p2s_manifest_record repository_guidance "$file|$provider|different_suite|manual_review=match_installed_OS_and_provider_support|configured=$family $suites|host=$P2S_DISTRO $P2S_RELEASE|expected_suite=$expected|not_executed"
             continue ;;
         esac
@@ -4201,6 +4261,9 @@ p2s_fix_check_distro_recipe() {
                     return 0 ;;
             esac ;;
         almalinux:*|rocky:*|rhel:*|ol:*) [ "$P2S_MAJOR" -ge 8 ] && return 0 ;;
+        centos:7)
+            p2s_fix_block unsupported_os "No automatic update recipe for $P2S_DISTRO $P2S_RELEASE is implemented in this script. CentOS Linux 7 reached end of life on 30 June 2024. Standard CentOS 7 archives contain historical PHP packages, including PHP 5.4.16-48.el7 from April 2020, without the PHP2Shell fixes. Updating those packages with yum upgrade or repairing archive mirror access will not resolve PHP2Shell. Use a maintained PHP publisher with a verified fix, or migrate applications to a supported OS and patched PHP."
+            return 1 ;;
         centos:*) [ "$P2S_MAJOR" -ge 9 ] && return 0 ;;
     esac
     p2s_fix_block unsupported_os "No automatic update recipe for $P2S_DISTRO $P2S_RELEASE is implemented in this script. Check maintained package sources for a suitable fix; archived repositories retain historical packages."
@@ -4211,6 +4274,23 @@ p2s_fix_check_distro_recipe() {
 # Fix mode repeats them because a saved check is not permission to bypass changing prerequisites.
 p2s_fix_preflight() {
     local low_space name version arch vendor
+    # Disk diagnostics remain useful when another prerequisite already blocks the update.
+    if p2s_command_exists df; then
+        if ! p2s_command_run 10 df -Pk / /var /usr /tmp > "$P2S_WORK/fix-disk" 2>/dev/null; then
+            p2s_fix_block disk_check "Free disk space could not be checked; manual review is required."
+            return 1
+        fi
+        p2s_manifest_record disk_preflight "$(cat "$P2S_WORK/fix-disk")"
+        if ! awk 'NR > 1 && $4 ~ /^[0-9]+$/ && $4 < 131072 { low=1 } END { exit low }' "$P2S_WORK/fix-disk"; then
+            # df -Pk row: /dev/root 12582912 12582912 0 100% / ; columns 4/6 give free KiB and mount.
+            low_space=$(awk '
+                NR>1 && $4 ~ /^[0-9]+$/ && $4<131072 && !seen[$1 SUBSEP $6]++ {
+                    printf "%s%s (%s): %s KiB available", separator, $6, $1, $4; separator="; "
+                }' "$P2S_WORK/fix-disk")
+            p2s_fix_block disk_space "Insufficient free space for a PHP update: $low_space. At least 128 MiB free is required on the checked system filesystems; larger updates may need more. Free space or check whether an enlarged VM disk still needs its partition/filesystem grown, then retry."
+            return 1
+        fi
+    fi
     if $P2S_BLOCKED; then return 1; fi
     if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
         if [ "$P2S_BACKEND" != deb ]; then
@@ -4233,22 +4313,6 @@ p2s_fix_preflight() {
         return 1
     fi
     [ "$(id -u)" = 0 ] || { p2s_fix_block privileges "Root access is required for package updates and service restarts."; return 1; }
-    if p2s_command_exists df; then
-        if ! p2s_command_run 10 df -Pk / /var /usr /tmp > "$P2S_WORK/fix-disk" 2>/dev/null; then
-            p2s_fix_block disk_check "Free disk space could not be checked; manual review is required."
-            return 1
-        fi
-        p2s_manifest_record disk_preflight "$(cat "$P2S_WORK/fix-disk")"
-        if ! awk 'NR > 1 && $4 ~ /^[0-9]+$/ && $4 < 131072 { low=1 } END { exit low }' "$P2S_WORK/fix-disk"; then
-            # df -Pk row: /dev/root 12582912 12582912 0 100% / ; columns 4/6 give free KiB and mount.
-            low_space=$(awk '
-                NR>1 && $4 ~ /^[0-9]+$/ && $4<131072 && !seen[$1 SUBSEP $6]++ {
-                    printf "%s%s (%s): %s KiB available", separator, $6, $1, $4; separator="; "
-                }' "$P2S_WORK/fix-disk")
-            p2s_fix_block disk_space "Insufficient free space for a PHP update: $low_space. At least 128 MiB free is required on the checked system filesystems; larger updates may need more. Free space or check whether an enlarged VM disk still needs its partition/filesystem grown, then retry."
-            return 1
-        fi
-    fi
     [ -s "$P2S_WORK/packages" ] || { p2s_fix_block no_packages "There are no identified PHP packages this script can update."; return 1; }
     case "$P2S_BACKEND" in
         deb) p2s_command_exists apt-get || { p2s_fix_block apt_missing "apt-get is unavailable; cannot update Debian PHP packages."; return 1; } ;;
@@ -4570,7 +4634,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-01.6
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-05.1
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;

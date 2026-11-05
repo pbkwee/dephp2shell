@@ -336,6 +336,19 @@ installation. The ordinary transaction cannot add or remove packages, change pac
 override pins or trust settings, or install an unreviewed dependency.
 The existing supported-OS guard remains in place.
 
+`apt_trust_setting` reports each blocking effective APT key/value with its reason
+(`authentication_override` or `custom_source_paths`) and unverified defining-file
+provenance. Source-local findings identify the file, option line, key and boolean
+value; unreadable/unassessable sources are reported separately. Only selected
+settings are emitted, with URL redaction and control-character filtering; raw
+source contents, proxy configuration and signing-key blocks are omitted.
+Custom source paths remain unsupported without being labelled insecure. The
+existing global and source-local rejection predicates remain conservative, and
+diagnostic preparation failures also block updates. No trust/source setting is
+rewritten. See [manual recovery routes](resolution-options.md#authentication-overrides-and-custom-apt-paths)
+for the distinction between repairing authentication and migrating publishers or
+unsupported releases.
+
 Packages already at their approved candidate are not requested for upgrade.
 Every other inventoried PHP package receives an exact installed-version constraint
 for this command. This prevents APT from advancing branch selectors through
@@ -1212,8 +1225,10 @@ version. `runtime_assessment` keeps both values and the independent-version reas
 Both Plesk and cPanel WP Toolkit use `sw-engine`; identify the panel from its installation paths and updater. See
 [cPanel's sw-engine explanation](https://support.cpanel.net/hc/en-us/articles/1500011785822-How-To-Enable-Debug-Level-Logging-In-sw-engine).
 
-Disk preflight records the checked `df -Pk` output as `disk_preflight`. Low-space
-warnings identify the filesystem, mount and available KiB, with duplicate mounts
+Disk preflight records the checked `df -Pk` output as `disk_preflight`. It runs
+before early update blockers in both check and fix assessments, so an unsupported
+OS or an existing blocker does not hide a full filesystem. Other update guards
+remain enforced. Low-space warnings identify the filesystem, mount and available KiB, with duplicate mounts
 removed from the message. The 128 MiB threshold is a minimum prerequisite; it is
 not a package download/unpack space estimate. Check inodes and compare VM disk,
 partition/LVM and filesystem sizes before choosing a growth or cleanup operation.
@@ -1349,8 +1364,17 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   Disabled/commented sources do not get an active mismatch warning. Both legacy
   `.list` and Deb822 `.sources` definitions use the existing parser; it keeps
   folded fields, exact official hosts/paths, redaction and architecture filtering.
+  Each distinct Deb822 suite is assessed separately; duplicate suite tokens are
+  ignored and mixed stanzas identify the offending suite. Known Debian/Ubuntu
+  codenames determine the Sury distribution label; unknown suites remain unverified.
+  Named suites require components, while exact-path suites ending `/` must omit
+  them. Invalid definitions receive `invalid_components` layout and
+  `PHP_source_components_invalid` gap records and do not count as an active
+  matching source. This is a component check, not complete APT syntax validation.
   This source finding does not infer installed package provenance or change CVE
-  status. Replacing a source alone does not replace installed packages. The normal
+  status. Advice asks operators to confirm maintained publisher support rather
+  than promising that a suite is available. Replacing or disabling a source alone
+  does not replace installed packages or verify PHP fixes. The normal
   package candidate check already refuses a Debian Bookworm Sury candidate on
   Ubuntu Jammy; APT metadata may have refreshed before that rejection. These
   diagnostics add no repository rewrite or package conversion procedure.

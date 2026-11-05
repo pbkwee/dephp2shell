@@ -22,6 +22,29 @@ Existing Sury/ondrej packages can use a recognised fixed revision from their con
 
 A successful package update still needs an application check. Other PHP copies, isolated environments and workers using old code can keep the overall result unresolved.
 
+## CentOS 7 archive updates
+
+CentOS Linux 7 [reached end of life on 30 June 2024](https://blog.centos.org/2023/04/end-dates-are-coming-for-centos-stream-8-and-centos-linux-7/).
+Its standard archives retain historical packages. For example, a YUM upgrade
+from PHP `5.4.16-36.el7_1` to `5.4.16-48.el7` installs an older maintenance update:
+the [CentOS archive](https://vault.centos.org/7.7.1908/cr/x86_64/Packages/)
+lists the latter package in April 2020. It lacks the PHP2Shell fixes released in
+2026. Repairing archive mirror access or completing that upgrade leaves
+PHP2Shell unresolved.
+
+The script keeps automatic CentOS 7 updates blocked and explains this in both
+check and fix reports. Use a maintained PHP publisher with a verified fix for
+the exact build, or migrate the applications to a supported OS and patched PHP.
+Review website and extension compatibility before changing the PHP branch or
+publisher. A full `yum upgrade` also changes unrelated system packages.
+
+Evidence checked 5 November 2026. Red Hat's
+[PHP2Shell bulletin](https://access.redhat.com/security/vulnerabilities/RHSB-2026-013)
+identifies the default RHEL 7 PHP as affected by CVE-2026-109619; its vulnerable
+code for CVE-2026-109618 is absent. The CentOS archive date establishes that the
+offered build predates the fixes. This diagnostic keeps the existing package
+assessment rules and aggregate CVE status.
+
 ## Move a retired Rocky/Alma PHP stream
 
 An OS can still receive updates while its selected PHP stream has retired.
@@ -114,7 +137,19 @@ Check the detected panel's update description as well as the option chosen here.
 
 ## Repository repair advice
 
-Checks and fixes report recognised source layouts without changing them:
+Checks and fixes report recognised source layouts without changing them.
+A suite matching the OS codename does not establish that maintained packages are
+available; confirm current publisher support. Mismatch advice describes configured
+sources and does not prove the origin of installed packages. Changing or disabling
+a source does not replace packages or verify PHP fixes.
+
+Deb822 suite lists are checked one distinct suite at a time, so a mixed definition
+names its wrong suite and repeated matching tokens do not create a mismatch.
+Named suites need components; exact-path suites ending `/` must omit components.
+A definition with invalid components is reported and is not counted as an active
+matching source. Other APT syntax or repository problems can still require review.
+
+The recognised layouts have these manual recovery routes:
 
 - Legacy or custom Sury PHP definitions receive a recommendation to review the
   [Sury instructions](https://packages.sury.org/php/README.txt), the installed OS
@@ -136,6 +171,60 @@ Checks and fixes report recognised source layouts without changing them:
 
 Disabled Deb822 stanzas remain visible in the manifest. The advice does not enable
 those sources, replace keys or execute repository setup commands. Layout findings describe configured sources. Repository failures are reported from package-manager output, and PHP fix status comes from package/runtime assessment.
+
+### Authentication overrides and custom APT paths
+
+The Sury trust check reports the effective blocking APT key and value, or the
+source filename, line and option. `apt_trust_setting` records retain the same
+evidence. Global configuration output does not identify the file that set a value:
+review `/etc/apt/apt.conf`, `/etc/apt/apt.conf.d` and any file selected by
+`APT_CONFIG`. A selected `apt-config dump` value is effective configuration,
+not proof that a particular file supplied it. Avoid sharing a full configuration
+dump: proxy settings can contain credentials.
+
+There are two different problems:
+
+- Authentication overrides such as `APT::Get::AllowUnauthenticated=true`,
+  `Acquire::AllowInsecureRepositories=true`, disabled HTTPS `Verify-Peer` or
+  `Verify-Host`, and source-local `trusted=yes` bypass checks. Review the named
+  setting and the repository's actual signing/TLS failure. A new key alone does
+  not remove these overrides. HTTP alone is not proof that APT package-signature
+  verification is disabled.
+- Custom `Dir`, `Dir::Etc`, `Dir::Etc::sourcelist` or `Dir::Etc::sourceparts`
+  settings redirect source lookup outside the script's reviewed paths. They may
+  be intentional; they are not evidence of disabled signatures. Inspect the actual
+  sources and their owner before restoring conventional paths. Do not discard an
+  intentional custom layout merely to make this check pass.
+
+The trust check conservatively examines all conventional source files, including
+non-PHP definitions. A finding does not prove that Sury supplied the override or
+that an installed package failed authentication. Raw source contents, proxy
+credentials and inline signing keys are not copied into these diagnostics.
+
+There is no general automatic conversion from arbitrary custom sources to a
+supported configuration. Use the route matching the measured OS and source owner:
+
+| Existing setup | Recovery route |
+| --- | --- |
+| Supported Debian with the standard Sury source | Follow the [publisher's keyring and same-release source instructions](https://packages.sury.org/php/README.txt). Use a dedicated `Signed-By` keyring. The script's narrower `--refresh-sury-signing-key` repair applies only to its reviewed standard Debian layouts; it does not rewrite sources or remove overrides. |
+| Supported Ubuntu with ondrej PHP | Follow the [Ubuntu PPA's instructions](https://launchpad.net/~ondrej/+archive/ubuntu/php) and verify its published signing-key identity. Retain the installed Ubuntu suite. Debian keyring repair is not the Ubuntu PPA key procedure. |
+| Extrepo or hosting-panel managed sources | Use the owning tool's documented repair procedure and reconcile duplicate definitions. Do not overwrite a managed source with a generic Sury example. |
+| Old release, mixed releases, local mirror or third-party PHP PPA | Establish publisher support and package provenance before replacing anything. The [current Sury archive suites](https://packages.sury.org/php/dists/) and PPA support policy determine availability; the OS codename alone does not. Never substitute a newer release's suite on an older OS. |
+| RPM distribution | Use the actual distribution, panel or RPM PHP publisher's repository/key procedure. APT/Sury source recipes do not apply. Preserve package-signature and TLS verification. |
+
+For example, Ubuntu 16.04/Xenial is outside the public ondrej PPA's current LTS
+support. Removing an override or refreshing a key cannot make that archive
+maintained. Ubuntu Pro/Legacy coverage for eligible Canonical packages does not
+patch third-party PPA PHP; review the [coverage and release schedule](https://ubuntu.com/security/esm)
+and the actual PHP publisher, or plan a supported OS/application migration.
+
+For a reviewed same-release repair, save the old definition and key references,
+establish the authentic publisher key and matching source, then remove only the
+identified bypass. Retain signatures and TLS checks. Refresh indexes and resolve
+all signature/download errors, inspect exact package candidates and simulate the
+proposed transaction before installation. Verify PHP fixes and application health
+afterward. These are separate steps: a secure source configuration does not prove
+that its PHP package includes either PHP2Shell fix.
 
 ## Virtualmin blocks an installed Apache PHP module
 

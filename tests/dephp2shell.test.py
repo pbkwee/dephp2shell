@@ -1146,6 +1146,7 @@ p2s_command_run 5 fixture-command
     def test_unsupported_os_preflight_does_not_claim_an_update_recipe(self):
         cases = [('debian', '3', '3', True), ('debian', '13', '13', False),
                  ('whitebox', '3', '3', True), ('centos', '7', '7', True),
+                 ('centos', '7', '7.9.2009', True), ('centos', '9', '9', False),
                  ('rocky', '8', '8', False), ('almalinux', '9', '9', False),
                  ('ubuntu', '20', '20.04', False), ('unknown', '0', 'unknown', True)]
         for distro, major, release, blocked in cases:
@@ -1153,6 +1154,13 @@ p2s_command_run 5 fixture-command
                 out = self.shell(f'P2S_DISTRO={distro}; P2S_MAJOR={major}; P2S_RELEASE={release}\n'
                                  'p2s_fix_check_distro_recipe\nprintf "BLOCKED=%s\\n" "$P2S_BLOCKED"')
                 self.assertIn('BLOCKED=' + str(blocked).lower(), out)
+                if distro == 'centos' and major == '7':
+                    self.assertIn('end of life on 30 June 2024', out)
+                    self.assertIn('PHP 5.4.16-48.el7 from April 2020', out)
+                    self.assertIn('yum upgrade or repairing archive mirror access will not resolve PHP2Shell', out)
+                    self.assertIn('maintained PHP publisher with a verified fix', out)
+                else:
+                    self.assertNotIn('Standard CentOS 7 archives', out)
 
     def test_filter_removed_and_detect_partial_php_packages(self):
         out = self.shell('''
@@ -2036,6 +2044,40 @@ printf 'RC=%s|BLOCKED=%s\\n' "$?" "$P2S_BLOCKED"
                     self.assertIn('disk_preflight:beforefix|', out)
                     self.assertIn('partition/filesystem grown', out)
                 self.assertNotIn('UNEXPECTED_UPDATE', out)
+
+    def test_disk_diagnostics_survive_existing_and_unsupported_os_blockers(self):
+        for scenario in ('unsupported_os', 'existing_blocker'):
+            for available in (0, 900000):
+                for mode in ('check', 'fix'):
+                    with self.subTest(scenario=scenario, available=available, mode=mode):
+                        out = self.shell('scenario=' + scenario + '; available=' + str(available)
+                                         + '; mode=' + mode + r'''
+P2S_STATE=Y; P2S_COUNT=1; P2S_BACKEND=deb
+P2S_DISTRO=debian; P2S_MAJOR=10; P2S_RELEASE=10
+p2s_command_exists() { [ "$1" = df ]; }
+p2s_command_run() {
+    [ "$2:$3" = df:-Pk ] || return 97
+    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fixture 999999 999999 %s 100%% /\n' "$available"
+}
+p2s_package_lock_warn() { :; }
+p2s_package_deb_update() { printf 'UNEXPECTED_UPDATE\n'; return 91; }
+if [ "$scenario" = unsupported_os ]; then p2s_fix_check_distro_recipe
+else p2s_fix_block fixture 'Existing update blocker'
+fi
+if [ "$mode" = check ]; then p2s_fix_report_patchability
+else p2s_fix_run; printf 'RC=%s\n' "$?"
+fi
+printf 'BLOCKED=%s|STATE=%s\n' "$P2S_BLOCKED" "$P2S_STATE"
+''')
+                        self.assertIn('BLOCKED=true|STATE=Y', out)
+                        self.assertIn('blocker:beforefix|' + ('unsupported_os' if scenario == 'unsupported_os'
+                                                            else 'fixture') + '|', out)
+                        self.assertIn('disk_preflight:beforefix|', out)
+                        self.assertEqual('blocker:beforefix|disk_space|' in out, available == 0)
+                        if available == 0:
+                            self.assertIn('/ (/dev/fixture): 0 KiB available', out)
+                        self.assertIn('patchability:beforefix|blocked' if mode == 'check' else 'RC=1', out)
+                        self.assertNotIn('UNEXPECTED_UPDATE', out)
 
     def test_fpm_preflight_uses_active_master_config_and_preserves_failure(self):
         for exit_status in (1, 124):

@@ -247,6 +247,10 @@ uri=https://deb.debian.org/debian; origin=Debian'''
             out = self.shell('''
 P2S_BACKEND=deb; P2S_PANEL=''' + panel + '''
 printf '%s\\n' 'php7.4-cli|1:7.4.33-30+0~20261010.120+debian12~1.gbpabcdef|amd64|Debian' > "$P2S_WORK/packages"
+p2s_command_run() {
+    [ "$2:$3" = df:-Pk ] || return 97
+    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 999999 0 999999 0%% /\\n'
+}
 p2s_fix_preflight
 printf 'RC=%s\\n' "$?"
 ''')
@@ -291,6 +295,86 @@ cat "$P2S_WORK/package-states"
                 self.assertIn('source_authentication', out)
                 self.assertNotIn('REFRESH', out)
                 self.assertNotIn('INSTALL:', out)
+
+    def test_global_trust_diagnostics_distinguish_overrides_and_custom_paths(self):
+        config = '''APT::Get::AllowUnauthenticated "true";
+Acquire::https::repo.invalid::Verify-Peer "false";
+Dir::Etc::sourcelist "custom sources.list";
+Acquire::http::Proxy "https://account:private-token@proxy.invalid/private-path";
+'''
+        out = self.shell(self.fixture('config=' + shlex.quote(config)), isolated_sources=True)
+        self.assertIn('reason=authentication_override|key=APT::Get::AllowUnauthenticated|value=true|origin_file=unverified', out)
+        self.assertIn('key=Acquire::https::repo.invalid::Verify-Peer|value=false', out)
+        self.assertIn('reason=custom_source_paths|key=Dir::Etc::sourcelist|value=custom sources.list', out)
+        self.assertIn('A custom path is not itself evidence of disabled authentication', out)
+        self.assertIn('apt-config dump does not identify the defining file', out)
+        self.assertNotIn('private-token', out)
+        self.assertNotIn('private-path', out)
+        self.assertNotIn('REFRESH', out)
+        self.assertNotIn('INSTALL:', out)
+
+    def test_custom_path_diagnostics_redact_urls_and_nonstandard_keys(self):
+        config = '''Dir::Etc::sourceparts "https://account:private-token@repo.invalid/private-path";
+Acquire::https::account:secret@repo.invalid::Verify-Peer "false";
+'''
+        out = self.shell(self.fixture('config=' + shlex.quote(config)), isolated_sources=True)
+        self.assertIn('key=Dir::Etc::sourceparts|value=[repository host=repo.invalid; path redacted]', out)
+        self.assertIn('key=[nonstandard APT key redacted]|value=false', out)
+        for secret in ('private-token', 'private-path', 'secret@'):
+            self.assertNotIn(secret, out)
+
+    def test_source_trust_diagnostics_name_every_file_line_and_setting_without_contents(self):
+        out = self.shell(self.fixture(r'''
+mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
+printf '%s\n' '# comment' 'deb [trusted=yes allow-weak=on password=private-option] https://account:private-token@repo.invalid/private-path bookworm main # private-comment' > "$P2S_WORK/etc/apt/sources.list"
+printf 'Types: deb\r\nURIs: https://account:private-token@repo.invalid/private-path\r\nSuites: bookworm\r\nComponents: main\r\nTrusted:\r\n yes\r\nSigned-By:\r\n private-signing-content\r\n' > "$P2S_WORK/etc/apt/sources.list.d/php.sources"
+'''), isolated_sources=True)
+        self.assertIn('/etc/apt/sources.list|line=2|reason=source_override|key=trusted|value=yes', out)
+        self.assertIn('/etc/apt/sources.list|line=2|reason=source_override|key=allow-weak|value=on', out)
+        self.assertIn('/etc/apt/sources.list.d/php.sources|line=5|reason=source_override|key=trusted|value=yes', out)
+        self.assertIn('replacing a signing key alone does not remove this override', out)
+        for secret in ('private-option', 'private-token', 'private-path', 'private-comment', 'private-signing-content'):
+            self.assertNotIn(secret, out)
+        self.assertNotIn('REFRESH', out)
+        self.assertNotIn('INSTALL:', out)
+
+    def test_trust_diagnostics_write_failure_blocks_before_refresh(self):
+        for target in ('apt-trust-settings', 'apt-trust-settings.redacted', 'apt-source-trust-settings'):
+            with self.subTest(target=target):
+                out = self.shell(self.fixture('mkdir "$P2S_WORK/' + target + '"\n' + r'''
+mkdir -p "$P2S_WORK/etc/apt"
+touch "$P2S_WORK/etc/apt/sources.list"
+'''), isolated_sources=True)
+                self.assertIn('source_authentication', out)
+                self.assertIn('needs manual review', out)
+                self.assertNotIn('REFRESH', out)
+                self.assertNotIn('INSTALL:', out)
+
+    def test_unreadable_source_assessment_names_the_file(self):
+        out = self.shell(self.fixture(r'''
+mkdir -p "$P2S_WORK/etc/apt/sources.list.d"
+touch "$P2S_WORK/etc/apt/sources.list.d/unreadable.sources"
+awk() {
+    case "$*" in *unreadable.sources*) return 2 ;; *) command awk "$@" ;; esac
+}
+'''), isolated_sources=True)
+        self.assertIn('/etc/apt/sources.list.d/unreadable.sources|read_or_assessment_failed', out)
+        self.assertIn('unreadable.sources could not be assessed', out)
+        self.assertNotIn('REFRESH', out)
+        self.assertNotIn('INSTALL:', out)
+
+    def test_secure_explicit_settings_remain_eligible(self):
+        config = '''APT::Get::AllowUnauthenticated "false";
+Acquire::AllowInsecureRepositories "no";
+Acquire::AllowWeakRepositories "off";
+Acquire::https::Verify-Peer "true";
+Acquire::https::Verify-Host "yes";
+Dir::Etc::sourcelist "sources.list";
+Dir::Etc::sourceparts "sources.list.d";
+'''
+        out = self.shell(self.fixture('config=' + shlex.quote(config)), isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        self.assertNotIn('apt_trust_setting:', out)
 
     def test_exact_reviewed_backports_require_matching_source_suite_and_architecture(self):
         debian = [

@@ -68,16 +68,20 @@ printf '%s\n' "$definition" > "$P2S_WORK/etc/apt/sources.list.d/''' + filename +
             ('', 'php.list', False),
             ('#deb https://packages.sury.org/php/ bookworm main', 'php.list', False),
             ('deb-src https://packages.sury.org/php/ bookworm main', 'php.list', False),
+            ('deb https://packages.sury.org/php/ bookworm', 'php.list', False),
             ('deb https://packages.sury.org/php/ bullseye main', 'php.list', False),
             ('deb [arch=arm64] https://packages.sury.org/php/ bookworm main', 'php.list', False),
             ('deb [arch-=amd64] https://packages.sury.org/php/ bookworm main', 'php.list', False),
             ('deb https://packages.sury.org/php/ bookworm main', 'php.list', True),
             ('deb [arch=arm64 arch+=amd64] https://packages.sury.org/php/ bookworm main', 'php.list', True),
-            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nEnabled: no', 'php.sources', False),
-            ('Types: deb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm', 'php.sources', False),
-            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nArchitectures: arm64', 'php.sources', False),
-            ('Types: deb deb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nArchitectures: amd64 arm64', 'php.sources', True),
-            ('Types: deb\tdeb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nArchitectures: arm64\tamd64', 'php.sources', True),
+            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents: main\nEnabled: no', 'php.sources', False),
+            ('Types: deb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents: main', 'php.sources', False),
+            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents: main\nArchitectures: arm64', 'php.sources', False),
+            ('Types: deb deb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents: main\nArchitectures: amd64 arm64', 'php.sources', True),
+            ('Types: deb\tdeb-src\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents: main\nArchitectures: arm64\tamd64', 'php.sources', True),
+            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm', 'php.sources', False),
+            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm,bullseye\nComponents: main', 'php.sources', False),
+            ('Types: deb\nURIs: https://packages.sury.org/php/\nSuites: bookworm\nComponents:\n main', 'php.sources', True),
         ]
         for definition, filename, active in cases:
             with self.subTest(definition=definition):
@@ -90,6 +94,61 @@ printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
 '''), isolated_sources=True, isolated_paths=True)
                 self.assertEqual(out.count('Automatic Sury/ondrej updates need an active matching source'), 0 if active else 1)
                 self.assertIn('BLOCKED=false|UNKNOWN=false', out)
+
+    def test_named_and_exact_path_suites_have_different_component_requirements(self):
+        for suite, components, invalid in [('bookworm', '', True),
+                                           ('bookworm', 'Components: main', False),
+                                           ('./', '', False),
+                                           ('./', 'Components: main', True)]:
+            with self.subTest(suite=suite, components=components):
+                definition = f'Types: deb\nURIs: https://packages.sury.org/php\nSuites: {suite}\n{components}'
+                out = self.shell(self.source_fixture(definition, 'php.sources', r'''
+rm "$P2S_WORK/etc/apt/sources.list.d/php.list"
+p2s_repository_inventory_collect
+'''), isolated_sources=True, isolated_paths=True)
+                self.assertEqual('PHP_source_components_invalid' in out, invalid)
+                self.assertEqual('invalid Components setting' in out, invalid)
+
+    def test_suite_tokens_are_deduplicated_and_only_wrong_suites_warn(self):
+        cases = [('debian', '12', 'bookworm bookworm', None, True),
+                 ('debian', '12', 'bookworm\n bullseye bookworm', 'Debian bullseye', True),
+                 ('ubuntu', '22.04', 'jammy\tbookworm', 'Debian bookworm', True),
+                 ('ubuntu', '20.04', 'focal', None, True),
+                 ('debian', '12', 'future-suite', 'unverified future-suite', False)]
+        for distro, release, suites, wrong, active in cases:
+            with self.subTest(distro=distro, suites=suites):
+                definition = f'Types: deb\nURIs: https://packages.sury.org/php\nSuites: {suites}\nComponents: main'
+                out = self.shell(self.source_fixture(definition, 'php.sources',
+                    f'P2S_DISTRO={distro}; P2S_RELEASE={release}\n' + r'''
+rm "$P2S_WORK/etc/apt/sources.list.d/php.list"
+printf '%s\n' 'php7.4-cli|7.4.33-1+deb.sury.org+1|amd64|PHP Maintainers' > "$P2S_WORK/packages"
+p2s_repository_inventory_collect
+p2s_repository_sury_installed_source_report
+'''), isolated_sources=True, isolated_paths=True)
+                self.assertEqual(out.count('PHP repository mismatch'), 1 if wrong else 0)
+                self.assertEqual('installed_packages_without_matching_active_source' in out, not active)
+                if active:
+                    self.assertEqual(out.count('|sury|legacy_or_custom|enabled=yes|suite=matching'), 1)
+                if wrong:
+                    self.assertIn('configured=' + wrong + '|host=', out)
+                if 'future-suite' in suites:
+                    self.assertNotIn('configured Debian', out)
+
+    def test_buster_ppa_mismatch_does_not_promise_supported_sury_packages(self):
+        out = self.shell(self.source_fixture('deb https://ppa.launchpadcontent.net/ondrej/php/ubuntu kinetic main',
+            'ondrej.list', r'''
+P2S_DISTRO=debian; P2S_RELEASE=10
+rm "$P2S_WORK/etc/apt/sources.list.d/php.list"
+p2s_repository_inventory_collect
+[ ! -e "$P2S_WORK/calls" ] && printf 'NO_NETWORK\n'
+'''), isolated_sources=True, isolated_paths=True)
+        self.assertIn("configured Ubuntu suite 'kinetic'; this server runs debian 10 (expected suite 'buster')", out)
+        self.assertIn('Confirm a maintained package source for buster', out)
+        self.assertIn('does not establish the origin of installed packages', out)
+        self.assertIn('does not replace packages or verify PHP fixes', out)
+        self.assertIn("Do not substitute another release's repository", out)
+        self.assertNotIn('packages use packages.sury.org/php for buster', out)
+        self.assertIn('NO_NETWORK', out)
 
     def test_missing_sury_source_on_vendor_panel_requires_mixed_source_review(self):
         out = self.shell(self.fixture(r'''
@@ -121,7 +180,7 @@ p2s_repository_sury_installed_source_report
                     ('deb http://ppa.launchpad.net/ondrej/php/ubuntu focal main', True),
                     ('# deb http://ppa.launchpad.net/ondrej/php/ubuntu focal main', False),
                     ('deb http://ppa.launchpad.net/ondrej/php/ubuntu jammy main', False),
-                    ('Types: deb\nURIs: https://ppa.launchpadcontent.net/ondrej/php/ubuntu\nSuites: focal\nEnabled: no', False)]:
+                    ('Types: deb\nURIs: https://ppa.launchpadcontent.net/ondrej/php/ubuntu\nSuites: focal\nComponents: main\nEnabled: no', False)]:
                 with self.subTest(name=name, definition=definition):
                     filename = 'ondrej.sources' if definition.startswith('Types:') else 'ondrej.list'
                     out = self.shell(self.fixture('P2S_DISTRO=ubuntu; P2S_RELEASE=20.04\n'
@@ -149,9 +208,9 @@ p2s_repository_inventory_collect
 printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
 '''), isolated_paths=True, isolated_sources=True)
         self.assertIn('PHP repository mismatch in ', out)
-        self.assertIn('/extrepo_sury.sources: the source supplies Debian packages for suite \'bookworm\'', out)
+        self.assertIn('/extrepo_sury.sources: configured Debian suite \'bookworm\'', out)
         self.assertIn('this server runs ubuntu 22.04', out)
-        self.assertIn('Ubuntu PHP packages use packages.sury.org/php or the ondrej/php PPA for jammy', out)
+        self.assertIn('Confirm current publisher support for jammy', out)
         self.assertIn('Use apt-cache policy PACKAGE to inspect installed and candidate versions and their sources', out)
         self.assertNotIn('repository change alone', out)
         self.assertIn('configured=Debian bookworm|host=ubuntu 22.04|expected_suite=jammy', out)
@@ -164,7 +223,7 @@ printf 'BLOCKED=%s|UNKNOWN=%s\n' "$P2S_BLOCKED" "$P2S_UNKNOWN"
             for enabled, arch, active in [('yes', 'amd64', True), ('no', 'amd64', False),
                                            ('yes', 'arm64', False)]:
                 with self.subTest(release=release, enabled=enabled, arch=arch):
-                    definition = (f'Types: deb\nURIs: https://packages.sury.org/php\nSuites: {suite}\n'
+                    definition = (f'Types: deb\nURIs: https://packages.sury.org/php\nSuites: {suite}\nComponents: main\n'
                                   f'Architectures: {arch}\nEnabled: {enabled}\n'
                                   'Signed-By: FIXTURE_ROOT/var/lib/extrepo/keys/sury.asc')
                     out = self.shell(self.source_fixture(definition, 'extrepo_sury.sources',
@@ -184,7 +243,7 @@ p2s_repository_sury_installed_source_report
                 out = self.shell(self.source_fixture('deb https://packages.sury.org/php jammy main',
                     'php.list', f'P2S_DISTRO={distro}; P2S_RELEASE={release}\np2s_repository_inventory_collect\n'),
                     isolated_paths=True, isolated_sources=True)
-                self.assertIn("source supplies Ubuntu packages for suite 'jammy'", out)
+                self.assertIn("configured Ubuntu suite 'jammy'", out)
                 self.assertIn('PHP repository mismatch', out)
 
     def test_ubuntu_php_ppa_on_debian_is_reported_but_matching_ppa_is_not(self):
@@ -198,11 +257,11 @@ p2s_repository_sury_installed_source_report
                                  isolated_paths=True, isolated_sources=True)
                 self.assertEqual('PHP repository mismatch' in out, mismatch)
                 if mismatch:
-                    self.assertIn(f"source supplies Ubuntu packages for suite '{suite}'", out)
-                    self.assertIn('Debian PHP packages use packages.sury.org/php for bookworm', out)
+                    self.assertIn(f"configured Ubuntu suite '{suite}'", out)
+                    self.assertIn('Confirm a maintained package source for bookworm', out)
 
     def test_inactive_or_commented_cross_distribution_source_does_not_get_active_warning(self):
-        definitions = [('Types: deb\nURIs: https://packages.sury.org/php\nSuites: bookworm\nEnabled: no', 'php.sources'),
+        definitions = [('Types: deb\nURIs: https://packages.sury.org/php\nSuites: bookworm\nComponents: main\nEnabled: no', 'php.sources'),
                        ('# deb https://packages.sury.org/php bookworm main', 'php.list')]
         for definition, filename in definitions:
             out = self.shell(self.source_fixture(definition, filename, r'''
@@ -283,6 +342,7 @@ cat "$P2S_WORK/usr/share/keyrings/debsuryorg-archive-keyring.gpg"
         definition = '''Types: deb
 URIs: https://packages.sury.org/php
 Suites: bookworm
+Components: main
 Signed-By:
  FIXTURE_ROOT/var/lib/extrepo/keys/sury.asc
 Enabled: no
