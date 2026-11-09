@@ -812,7 +812,8 @@ p2s_summary_print_versions
                                  + 'P2S_RESTART_ATTEMPTED=' + str(restart).lower() + '\n'
                                  + 'p2s_summary_print_versions\n'
                                  + 'p2s_manifest_record package "php7.4-fpm|1:7.4.33-31+ubuntu22.04.1+deb.sury.org+1"\n')
-                customer = [row for row in out.splitlines() if row.startswith(('dss:info:', 'dss:warn:'))]
+                customer = [row for row in out.splitlines() if row.startswith(('dss:info:', 'dss:warn:'))
+                            and 'Process observations cover this check only.' not in row]
                 self.assertEqual(len(customer), 4 if transaction or restart else 2)
                 self.assertTrue(all('Initial check: PHP ' in row for row in customer[:2]))
                 self.assertEqual(sum('After update attempt:' in row for row in customer), 2 if transaction else 0)
@@ -839,7 +840,7 @@ printf '%s\n' '4.4.4|?|runtime libraries||unknown|4.4.4-1|?|package' \
 p2s_summary_print_versions
 ''')
         rows = out.splitlines()
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
         for row in rows[:2]:
             self.assertIn("outside this detector's verified PHP2Shell coverage", row)
             self.assertIn('review its security support', row)
@@ -981,19 +982,21 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 self.assertIn(phrase, out)
                 self.assertEqual(out.count('RimuHosting offers a no-cost, no-obligation investigation'),
                                  0 if state == 'N' else 1)
-                self.assertEqual(len(out.splitlines()), 1 if state == 'N' else 2)
+                self.assertEqual(len(out.splitlines()), 1 if state == 'N' else 3)
+                self.assertEqual(out.count('dss:warn: Next action:'), 0 if state == 'N' else 1)
                 if state != 'N':
                     self.assertIn('including for servers hosted elsewhere', out)
                     self.assertIn('Any changes or further work are agreed separately.', out)
 
-    def test_mixed_php_branches_get_conditional_migration_guidance(self):
+    def test_unresolved_php_versions_get_conditional_migration_or_removal_guidance(self):
         cases = [
             ('?', ['7.3.33|?|command line|', '7.3.33|?|Apache module|', '8.4.27|N|PHP-FPM|'], ['PHP 7.3.33']),
             ('Y', ['8.2.34|Y|command line|', '8.4.27|N|PHP-FPM|'], ['PHP 8.2.34']),
             ('?', ['7.3.33|?|command line|', '7.4.33|?|CGI|', '8.4.27|N|PHP-FPM|'], ['PHP 7.3.33', 'PHP 7.4.33']),
             ('N', ['8.3.36|N|command line|', '8.4.27|N|PHP-FPM|'], []),
-            ('?', ['8.4.27|?|Apache module|', '8.4.27|N|PHP-FPM|'], []),
-            ('Y', ['8.2.34|Y|command line|', '8.2.35|N|PHP-FPM|'], []),
+            ('?', ['8.4.27|?|Apache module|', '8.4.27|N|PHP-FPM|'], ['PHP 8.4.27']),
+            ('Y', ['8.2.34|Y|command line|', '8.2.35|N|PHP-FPM|'], ['PHP 8.2.34']),
+            ('?', ['7.4.33|?|command line|'], ['PHP 7.4.33']),
         ]
         for state, records, unresolved in cases:
             with self.subTest(state=state, records=records):
@@ -1001,19 +1004,62 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                                  "printf '%s\\n' " + ' '.join(map(shlex.quote, records))
                                  + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_result')
                 advice = [row for row in out.splitlines() if 'PHP versions needing attention:' in row]
+                actions = [row for row in out.splitlines() if row.startswith('dss:warn: Next action:')]
                 self.assertEqual(len(advice), 1 if unresolved else 0)
+                self.assertEqual(len(actions), 0 if state == 'N' else 1)
                 if unresolved:
-                    self.assertIn('If your configured PHP package sources cannot supply a fixed package', advice[0])
-                    self.assertIn('websites, applications and scheduled jobs', advice[0])
-                    self.assertIn('Review which versions your websites, applications and scheduled jobs still need.', advice[0])
-                    self.assertIn('migrate affected workloads to a supported, patched PHP version', advice[0])
-                    self.assertIn('Test the migrated workloads before removing unused PHP versions', advice[0])
-                    self.assertIn('review package dependencies and proposed removals', advice[0])
+                    self.assertIn('Check the full package builds with their publishers for verified fixes.', advice[0])
+                    self.assertIn('End-of-life status and PHP2Shell fix status are separate.', advice[0])
+                    self.assertIn('websites, applications, scheduled jobs and dependencies require PHP', actions[0])
+                    self.assertIn('Obtain verified fixed packages or migrate required workloads', actions[0])
+                    self.assertIn('Remove unneeded PHP packages only after reviewing dependencies', actions[0])
                     self.assertIn('Changing the default PHP version alone', advice[0])
                     for version in unresolved:
                         self.assertEqual(advice[0].count(version), 1)
-                    self.assertNotIn('PHP 8.4.27', advice[0])
+                        self.assertEqual(actions[0].count(version), 1)
+                    for record in records:
+                        version = 'PHP ' + record.split('|')[0]
+                        if version not in unresolved:
+                            self.assertNotIn(version, advice[0])
+                            self.assertNotIn(version, actions[0])
                     self.assertNotIn('others have no supported', advice[0])
+
+    def test_next_action_preserves_state_and_respects_scope_and_update_blockers(self):
+        for state, record, blocked, expected in [
+                ('?', '8.2.35|N|PHP-FPM|', False, 'Verify the remaining inventory'),
+                ('?', '8.2.35|N|PHP-FPM|', True, 'Verify the remaining inventory'),
+                ('?', '7.4.33|?|command line|', True, 'Confirm which websites'),
+                ('?', 'unknown|?|command line|', False, 'Confirm which websites'),
+                ('?', '', False, 'Confirm which websites'),
+                ('Y', '8.2.35|N|PHP-FPM|', False, 'Confirm which websites')]:
+            with self.subTest(state=state, record=record, blocked=blocked):
+                out = self.shell('P2S_STATE=' + shlex.quote(state) + '; P2S_COUNT=1; P2S_BLOCKED=' + str(blocked).lower() + '\n'
+                                 'P2S_RESTART_PENDING=true; P2S_SEPARATE_ENVIRONMENT_REVIEW=true\n'
+                                 "printf '%s\\n' " + shlex.quote(record)
+                                 + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_result\n'
+                                 'printf "STATE=%s|BLOCKED=%s|RESTART=%s\\n" "$P2S_STATE" "$P2S_BLOCKED" "$P2S_RESTART_PENDING"')
+                action = next(row for row in out.splitlines() if row.startswith('dss:warn: Next action:'))
+                self.assertEqual(out.count('dss:warn: Next action:'), 1)
+                self.assertIn(expected, action)
+                self.assertEqual('Resolve the reported update blockers before retrying.' in action, blocked)
+                self.assertIn('STATE=' + state + '|BLOCKED=' + str(blocked).lower() + '|RESTART=true', out)
+                if state == '?' and '|N|' in record:
+                    self.assertNotIn('Obtain verified fixed packages', action)
+                    self.assertIn('pending PHP restarts', action)
+                else:
+                    self.assertNotIn('For unknown', action)
+
+    def test_idle_process_observation_gets_one_shared_requirement_review(self):
+        for observations, expected in [('executable module', 1), ('running_path running_path', 0)]:
+            with self.subTest(observations=observations):
+                records = [version + '|?|command line||Remi|custom|Y|' + observation
+                           for version, observation in zip(('7.3.33', '7.4.33'), observations.split())]
+                out = self.shell("printf '%s\\n' " + ' '.join(map(shlex.quote, records))
+                                 + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_versions')
+                self.assertEqual(out.count('Process observations cover this check only.'), expected)
+                if expected:
+                    self.assertIn('may still be required by websites, scheduled jobs or other packages', out)
+                    self.assertEqual(out.count('no matching running process was found.'), 2)
 
     def test_unknown_result_names_mixed_verification_without_inventing_it(self):
         cases = [

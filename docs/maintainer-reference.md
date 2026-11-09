@@ -192,6 +192,17 @@ Canonical's [release cycle](https://ubuntu.com/about/release-cycle), checked
 Operational results omit routine application-testing reminders. Specific material
 compatibility changes remain documented alongside the proposed operation.
 
+Unresolved final results emit one `dss:warn: Next action:` line for reporting.
+Advice covers a single unresolved PHP version as well as mixed installations:
+confirm website, application, scheduled-job and dependency requirements, then
+choose verified fixed packages, workload migration or reviewed removal of
+unneeded PHP. Existing blockers require resolution before retrying. If assessed
+builds are fixed but scope/restart verification remains incomplete, the next
+action requests that verification instead. Fixed/no-PHP results emit no action.
+Upstream end-of-life status remains separate from the PHP2Shell assessment.
+Idle-process wording describes this check's snapshot and asks for a requirements
+review; it never establishes that an installation is unused or safe to remove.
+
 Each engine package retains its own fixed, vulnerable or unknown manifest result;
 readable messages group only matching versions and conclusions. For
 example, fixed PHP 8.3/8.4 alongside vulnerable PHP 8.2 still produces aggregate

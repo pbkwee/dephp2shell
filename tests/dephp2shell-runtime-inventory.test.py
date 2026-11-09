@@ -971,7 +971,7 @@ p2s_runtime_inventory_collect
 p2s_summary_print_versions
 ''')
         self.assertEqual(out.count('dss:manifest:php_version:beforefix|'), 3)
-        info = [row for row in out.splitlines() if row.startswith('dss:info:')]
+        info = [row for row in out.splitlines() if row.startswith('dss:info:') and 'PHP 8.4.27 (' in row]
         self.assertEqual(len(info), 1)
         self.assertIn('PHP-FPM, command line', info[0])
         self.assertIn('Reported build dates: PHP-FPM: Oct 21 2026 08:21:27; command line: Oct 21 2026 08:21:27.', info[0])

@@ -4057,11 +4057,12 @@ p2s_summary_print_versions() {
                 }
                 if (state[key]=="Y" && provider[key]=="AlmaLinux") text=text " AlmaLinux has published security updates for this PHP stream; check your configured package sources for an available fix."
                 if (evidence[key SUBSEP "running_path"]) text=text " Running processes use this installation."
-                else if (evidence[key SUBSEP "executable"]) text=text " Installed; no matching running process was found."
-                else if (evidence[key SUBSEP "module"]) text=text " Apache module installed; no matching running process was found."
+                else if (evidence[key SUBSEP "executable"]) { text=text " Installed; no matching running process was found."; idle_observation=1 }
+                else if (evidence[key SUBSEP "module"]) { text=text " Apache module installed; no matching running process was found."; idle_observation=1 }
                 else if (evidence[key SUBSEP "package"]) text=text " Checked installed packages; no PHP executable or Apache module was matched."
                 print level "|" text
             }
+            if (idle_observation) print "info|Process observations cover this check only. PHP with no matching running process may still be required by websites, scheduled jobs or other packages. Review those requirements before considering removal."
         }' | while IFS='|' read -r level message; do p2s_message_print "$level" "$message"; done
 }
 
@@ -4139,7 +4140,7 @@ p2s_fix_print_exposure_advice() {
 }
 
 p2s_summary_print_result() {
-    local unresolved_versions
+    local unresolved_versions='' update_blockers=''
     # This describes the final phase only; before/after protocol markers remain unchanged.
     case "$P2S_STATE" in
         Y) p2s_message_print warn "Result: This VM has at least one PHP installation identified as vulnerable to PHP2Shell. Update every affected installation and restart the services using it. If a prompt fix is not possible, temporarily disable the affected PHP applications." ;;
@@ -4170,13 +4171,19 @@ p2s_summary_print_result() {
         # Check package publisher support for unverified backports; migrate sites/jobs explicitly when a branch lacks a supported fix.
         unresolved_versions=$(sort -u "$P2S_WORK/summary-versions" | awk -F'|' '
             $1 ~ /^[0-9]+[.][0-9]+[.][0-9]+$/ {
-                split($1, parts, "[.]"); branch=parts[1] "." parts[2]
-                if (!seen_branch[branch]++) branches++
                 if ($2 != "N" && !seen_version[$1]++) versions=versions (versions ? ", " : "") "PHP " $1
             }
-            END { if (branches > 1 && versions != "") print versions }')
+            END { if (versions != "") print versions }')
         if [ -n "$unresolved_versions" ]; then
-            p2s_message_print warn "PHP versions needing attention: $unresolved_versions. Review which versions your websites, applications and scheduled jobs still need. If your configured PHP package sources cannot supply a fixed package, migrate affected workloads to a supported, patched PHP version. Test the migrated workloads before removing unused PHP versions, and review package dependencies and proposed removals. Changing the default PHP version alone does not move individual websites."
+            p2s_message_print warn "PHP versions needing attention: $unresolved_versions. Check the full package builds with their publishers for verified fixes. End-of-life status and PHP2Shell fix status are separate. Test migrated workloads and review package dependencies and proposed removals. Changing the default PHP version alone does not move individual websites."
+        fi
+    fi
+    if [ "$P2S_STATE" != N ]; then
+        if ${P2S_BLOCKED:-false}; then update_blockers='Resolve the reported update blockers before retrying. '; fi
+        if [ "$P2S_STATE" = '?' ] && p2s_state_has_only_fixed_versions; then
+            p2s_message_print warn "Next action: ${update_blockers}Verify the remaining inventory, separate application environments and pending PHP restarts identified in this report, then rerun --check. The assessed PHP builds already have verified fixes."
+        else
+            p2s_message_print warn "Next action: ${update_blockers}Confirm which websites, applications, scheduled jobs and dependencies require ${unresolved_versions:-PHP}. Obtain verified fixed packages or migrate required workloads to supported, patched PHP. Remove unneeded PHP packages only after reviewing dependencies and the proposed removals."
         fi
     fi
     case "$P2S_STATE" in
@@ -4634,7 +4641,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-05.1
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-05.2
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
