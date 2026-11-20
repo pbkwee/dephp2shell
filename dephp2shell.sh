@@ -323,14 +323,52 @@ p2s_version_sury_fixed_build_output() {
 }
 
 p2s_version_sury_backport_fixed() {
-    local fixed source=${1#libapache2-mod-}
+    local fixed=${6:-} source=${1#libapache2-mod-}
     source=${source%%-*}
-    fixed=$(p2s_version_sury_fixed_build_output "$1" "$3" "$2") || return 1
+    if [ -z "$fixed" ]; then
+        fixed=$(p2s_version_sury_fixed_build_output "$1" "$3" "$2") || return 1
+    fi
     [ "$4" = "$source" ] && [ "$5" = "$2" ] && [ "$2" = "$fixed" ]
 }
 
+p2s_version_sury_november_build_output() {
+    local name=$1 arch=$2 version=$3 branch release layout=mirror revision suffix=+php
+    p2s_package_is_engine "$name" || return 1
+    branch=${name#libapache2-mod-}; branch=${branch%%-*}
+    case "$P2S_DISTRO:$P2S_RELEASE:$version" in
+        ubuntu:22.04:*+deb.sury.org+1|ubuntu:24.04:*+deb.sury.org+1) layout=ppa; release=$P2S_RELEASE ;;
+        debian:12:*|debian:12.*:*) release=12 ;;
+        debian:13:*|debian:13.*:*) release=13 ;;
+        ubuntu:22.04:*|ubuntu:24.04:*|ubuntu:26.04:*) release=$P2S_RELEASE ;;
+        *) return 1 ;;
+    esac
+    case "$layout:$release:$arch" in
+        *:amd64|*:arm64|ppa:*:armhf|ppa:*:ppc64el|mirror:12:armhf|mirror:13:armhf|mirror:26.04:armhf) ;;
+        *) return 1 ;;
+    esac
+    # Exact signed builds checked against their source patch series. See docs/sury-backport-evidence.md.
+    case "$layout:$branch" in
+        ppa:php5.6) revision=5.6.40-109 ;;
+        ppa:php7.0) revision=7.0.33-97 ;;
+        ppa:php7.1) revision=7.1.33-85 ;;
+        mirror:php5.6) revision=5.6.40-110; suffix='' ;;
+        mirror:php7.0) revision=7.0.33-98; suffix='' ;;
+        mirror:php7.1) revision=7.1.33-86; suffix='' ;;
+        ppa:php7.2) revision=7.2.34-70 ;;
+        ppa:php7.3|mirror:php7.3)
+            case "$layout:$release" in ppa:*|mirror:12|mirror:13) ;; *) return 1 ;; esac
+            revision=7.3.33-41 ;;
+        *:php7.4) revision=1:7.4.33-37 ;;
+        *:php8.0) revision=1:8.0.30-31 ;;
+        *:php8.1) revision=8.1.34-14 ;;
+        *) return 1 ;;
+    esac
+    if [ "$layout" = ppa ]; then printf '%s\n' "$revision+ubuntu$release.1+deb.sury.org+1"
+    else printf '%s\n' "$revision+debsuryorg$release.1$suffix+1"; fi
+}
+
 p2s_version_november_package_reference() {
-    local name=$1 version=$2 vendor=$3 arch=$4 provider upstream release branch family affected='' fixed=''
+    local name=$1 version=$2 vendor=$3 arch=$4 provider upstream release='' branch family affected='' fixed=''
     provider=$(p2s_package_provider "$name" "$vendor" "$version")
     case "$P2S_BACKEND:$P2S_DISTRO:$provider" in
         deb:debian:Debian)
@@ -354,7 +392,8 @@ p2s_version_november_package_reference() {
             esac ;;
         deb:*:Sury/*)
             # October's reviewed legacy backports lack the separate CVE-2026-126714 session-file fix.
-            affected=$(p2s_version_sury_fixed_build_output "$name" "$arch" "$version") || affected= ;;
+            affected=$(p2s_version_sury_fixed_build_output "$name" "$arch" "$version") || affected=
+            fixed=$(p2s_version_sury_november_build_output "$name" "$arch" "$version") || fixed= ;;
         rpm:almalinux:AlmaLinux|rpm:rocky:Rocky\ Linux)
             case "$provider:$vendor" in
                 AlmaLinux:AlmaLinux|'Rocky Linux:Rocky Enterprise Software Foundation') ;;
@@ -404,7 +443,38 @@ p2s_version_november_package_reference() {
             esac ;;
         rpm:*:'cPanel internal')
             case "$name:$arch:${version#0:}" in
-                cpanel-php81:x86_64:*~el[789]) affected=8.1.34-2.cp110~${version##*~} ;;
+                cpanel-php81:x86_64:*~el[789])
+                    # The official November EL7/8/9 RPM changelogs list the applicable fixes.
+                    affected=8.1.34-2.cp110~${version##*~}
+                    fixed=8.1.34-3.cp110~${version##*~} ;;
+            esac ;;
+        rpm:*:'cPanel EasyApache')
+            # EA4 25.98 and the official EL7/8 RPM indexes identify the exact stock backport.
+            case "$vendor:$arch:$P2S_MAJOR" in 'cPanel, Inc.:x86_64:'[78])
+                case "$name" in
+                    ea-php74-php|ea-php74-php-cli|ea-php74-php-common|ea-php74-php-fpm|ea-php74-php-litespeed)
+                        fixed=7.4.34-3.3.1.cpanel
+                        case "$P2S_MAJOR" in
+                            7) affected=7.4.34-2.2.5.cpanel ;;
+                            8) affected=7.4.34-2.2.3.cpanel ;;
+                        esac ;;
+                esac ;;
+            esac
+            case "$P2S_DISTRO:$vendor:$arch:$P2S_MAJOR:$name" in
+                cloudlinux:CloudLinux:x86_64:[789]:ea-php74-php*) release=1:7.4.34-2 ;;
+                cloudlinux:CloudLinux:x86_64:[789]:ea-php80-php*) release=1:8.0.31-2 ;;
+                cloudlinux:CloudLinux:x86_64:[789]:ea-php81-php*) release=1:8.1.35-2 ;;
+            esac
+            if [ -n "$release" ]; then
+                affected=$release.el$P2S_MAJOR.cloudlinux.1
+                fixed=$release.el$P2S_MAJOR.cloudlinux.2
+            fi ;;
+        rpm:cloudlinux:'CloudLinux/TuxCare alt-PHP (namespace hint)')
+            # CloudLinux's EL8/9 source RPMs and November bulletin identify these legacy builds.
+            case "$vendor:$arch:$P2S_MAJOR:$name" in
+                CloudLinux:x86_64:[89]:alt-php74-*) fixed=7.4.33-84.el$P2S_MAJOR ;;
+                CloudLinux:x86_64:[89]:alt-php80-*) fixed=8.0.30-72.el$P2S_MAJOR ;;
+                CloudLinux:x86_64:[89]:alt-php81-*) fixed=8.1.34-43.el$P2S_MAJOR ;;
             esac ;;
     esac
     printf '%s|%s\n' "$affected" "$fixed"
@@ -416,6 +486,10 @@ p2s_version_november_package_state() {
     affected=${reference%%|*}; fixed=${reference#*|}
     # Debian has published fixed floors. Ubuntu upload changelogs establish only the reviewed builds.
     case "$P2S_BACKEND:$P2S_DISTRO:$(p2s_package_provider "$name" "$vendor" "$version")" in
+        deb:*:Sury/*)
+            if [ -n "$fixed" ] && ! p2s_version_sury_backport_fixed "$name" "$version" "$arch" "${6:-}" "${7:-}" "$fixed"; then
+                fixed=''
+            fi ;;
         deb:debian:Debian|deb:ubuntu:Ubuntu)
             if p2s_command_exists dpkg; then
                 if [ "$P2S_DISTRO" = debian ]; then comparison=ge; fi
@@ -443,7 +517,7 @@ p2s_version_package_state() {
     local name="$1" version="$2" vendor="$3" arch="${4:-unknown}" state floor release
     state=$(p2s_version_upstream_state "$version")
     if ${P2S_NOVEMBER:-false}; then
-        p2s_version_november_package_state "$name" "$version" "$vendor" "$arch" "$state"
+        p2s_version_november_package_state "$name" "$version" "$vendor" "$arch" "$state" "${5:-}" "${6:-}"
         return
     fi
     if [ "$P2S_BACKEND" = deb ]; then
@@ -830,11 +904,15 @@ p2s_package_inventory_assess() {
             printf '%s|%s\n' "$name" "$state" >> "$P2S_WORK/package-states"
             upstream=$(printf '%s\n' "${version#*:}" | sed 's/[^0-9.].*//')
             [ -n "$upstream" ] || upstream="unrecognised version ($name)"
-            if [ "$P2S_PHASE" = afterfix ] && ${P2S_PANEL_UPDATE_COMPLETED:-false} && [ "$state" != N ] && ! ${P2S_NOVEMBER:-false}; then
+            if [ "$P2S_PHASE" = afterfix ] && ${P2S_PANEL_UPDATE_COMPLETED:-false} && [ "$state" != N ]; then
                 case "$P2S_PANEL:$name" in
                     cpanel:cpanel-php84|cpanel:cpanel-php81)
                         required='8.4.27 or later in the PHP 8.4 branch'
                         if [ "$name" = cpanel-php81 ]; then required='cPanel PHP 8.1.34-2.cp110'; fi
+                        if ${P2S_NOVEMBER:-false}; then
+                            required='8.4.28 or later in the PHP 8.4 branch'
+                            if [ "$name" = cpanel-php81 ]; then required='the reviewed cPanel PHP 8.1.34-3.cp110 x86_64 RPM'; fi
+                        fi
                         p2s_manifest_record panel_update_verification "$name|$version|$state|required=$required"
                         p2s_message_print warn "cPanel's security updater returned success, but $name still lacks a verified fix (installed package: $version; required: $required). Review WHM's Update Preferences (/etc/cpupdate.conf) and /var/cpanel/updatelogs. The security updater can skip updates without an error or log; see the reported update settings."
                         p2s_cpanel_last_update_report ;;
@@ -1396,11 +1474,12 @@ p2s_package_refresh_failure_report() {
 p2s_package_deb_is_sury() {
     # Revision families, not generic +0~/PPA hints or Debian maintainer names.
     # Sury mirror revisions include +0~20261021.82+ubuntu22.04~1.gbp4e430a,
-    # +debsuryorg12.1+php+1, and +0~deb.sury.org.1+debian12. PPA ends in +deb.sury.org+1.
+    # +debsuryorg12.1+php+1, +debsuryorg12.1+1 and +0~deb.sury.org.1+debian12.
+    # PPA ends in +deb.sury.org+1.
     printf '%s\n' "$1" | LC_ALL=C awk '
         /\+deb[.]sury[.]org\+[0-9]+$/ {ok=1}
         /\+0~[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][.][0-9]+\+(debian[0-9]+|ubuntu[0-9][0-9][.][0-9][0-9])~[0-9]+[.]gbp[0-9a-f]+$/ {ok=1}
-        /\+debsuryorg[0-9]+([.][0-9]+)+\+php\+[0-9]+$/ {ok=1}
+        /\+debsuryorg[0-9]+([.][0-9]+)+(\+php)?\+[0-9]+$/ {ok=1}
         /\+0~deb[.]sury[.]org[.][0-9]+\+(debian[0-9]+|ubuntu[0-9][0-9][.][0-9][0-9])$/ {ok=1}
         END {exit !ok}'
 }
@@ -4816,7 +4895,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-21.1 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-21.2 check_options=--check
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;

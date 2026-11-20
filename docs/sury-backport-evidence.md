@@ -1,4 +1,4 @@
-# Sury backport evidence for the original PHP2Shell CVEs
+# Sury backport evidence for the PHP security updates
 
 Reviewed 25 October 2026, with Debian 11 added 27 October 2026, New Zealand time. This review covers
 CVE-2026-109618 and CVE-2026-109619. Other PHP vulnerabilities, including
@@ -255,3 +255,35 @@ reproducible-build verification, application compatibility testing and service
 restarts remain outside its scope.
 Other architectures, suites, version revisions and repository mirrors remain
 outside this bounded review. New revisions need renewed evidence.
+
+## November 2026 backports
+
+On 21 November 2026 (New Zealand time), the review authenticated the 20 November
+signed source and binary indexes and checked 48 matching packaging archives.
+Each reviewed source patch series retains the unconditional upload-progress
+guard for CVE-2026-115560 and includes the applicable fixes for CVE-2026-126714,
+CVE-2026-129289, CVE-2026-129291 and CVE-2026-129496.
+[DEB.SURY.ORG indexes](https://packages.sury.org/php/dists/) ·
+[Launchpad PPA indexes](https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/)
+
+| PHP branch | Launchpad PPA base revision | DEB.SURY.ORG base revision |
+| --- | --- | --- |
+| 5.6 | `5.6.40-109` | `5.6.40-110` |
+| 7.0 | `7.0.33-97` | `7.0.33-98` |
+| 7.1 | `7.1.33-85` | `7.1.33-86` |
+| 7.2 | `7.2.34-70` | Source review pending |
+| 7.3 | `7.3.33-41` | `7.3.33-41` (Debian only) |
+| 7.4 | `1:7.4.33-37` | `1:7.4.33-37` |
+| 8.0 | `1:8.0.30-31` | `1:8.0.30-31` |
+| 8.1 | `8.1.34-14` | `8.1.34-14` |
+
+- The PPA suffix is `+ubuntu<release>.1+deb.sury.org+1`. The reviewed Ubuntu
+  22.04 and 24.04 binary indexes cover amd64, arm64, armhf and ppc64el.
+- The DEB.SURY.ORG suffix is `+debsuryorg<release>.1+php+1`, or
+  `+debsuryorg<release>.1+1` for PHP 5.6, 7.0 and 7.1. The reviewed Debian
+  12/13 and Ubuntu 26.04 indexes cover amd64, arm64 and armhf. The Ubuntu
+  22.04/24.04 indexes cover amd64 and arm64. Debian 11 lacked a November build
+  in the index checked.
+- Recognition requires the exact binary revision and matching source-package
+  name and revision. Candidate approval also checks the configured repository
+  through the existing APT origin and transaction guards.

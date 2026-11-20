@@ -51,7 +51,7 @@ and need testing afterwards. Existing Sury/ondrej PHP can use a recognised fixed
 
 A separate, explicitly enabled `--enable-extra-fixes --migrate-php-to-sury` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
 
-A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. Website testing, compromise assessment and a general security audit remain separate work. Older operating systems can still need migration even after PHP is fixed.
+A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. Website testing, compromise assessment and a general security audit remain separate work. Older operating systems can still need migration even after PHP is fixed. See [upgrade and migration options](docs/resolution-options.md#when-these-methods-do-not-fit).
 
 For the [November PHP security release](https://www.php.net/archive/2026.php), add
 `--november-2026` to either `--check` or `--fix`. An affected build stays
@@ -81,5 +81,7 @@ or grant trademark rights.
 DePHP2Shell was developed by the team at [RimuHosting](https://rimuhosting.com/). We have been hosting Linux virtual machines since 2003. That history brings a wide variety of distributions, hosting panels, PHP versions and local customisations. Our [server patching tools](https://blog.rimuhosting.com/2022/02/06/server-patch-tool/) grew from the practical work of maintaining those different environments.
 
 Keeping a public server secure protects its users and everyone else who could be harmed if that server is taken over. We see that care as part of running a hosting service, and as a responsibility shared by everyone operating public services.
+
+For an upgrade or migration you plan to do yourself, see the [distrorejuve guide](https://github.com/pbkwee/distrorejuve/blob/master/docs/ai-assisted-migration.md). If you'd like RimuHosting to assess your server and handle a move to its hosting, [request a free assessment at DistroRejuve](https://distrorejuve.com/).
 
 RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or migration to a server with a supported OS and PHP, including for servers hosted elsewhere. A server migration can stay with your current hosting provider. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.

@@ -368,13 +368,12 @@ shared `php-defaults` dependencies. No persistent pins or holds are added.
 rejects changes outside the approved upgrade set. An empty upgrade set does not
 run an installation; an already-needed service restart can still proceed.
 
-The script recognises 40 exact `amd64` EOL backport tuples: PHP 5.6, 7.0–7.4,
-8.0 and 8.1 across Debian 11/12/13 and Ubuntu 22.04/24.04. Recognition requires
-matching source-package identity and source revision. These are exact rules,
-not minimum-version floors. See [Sury backport evidence](sury-backport-evidence.md)
-for signed-index/source review, complete versions and limits. The EOL backport
-can terminate a worker immediately on allocation failure and disables session
-upload-progress handling.
+The original PHP2Shell check recognises 40 exact `amd64` EOL backport tuples
+across Debian 11/12/13 and Ubuntu 22.04/24.04. The November check uses its own
+reviewed DEB.SURY.ORG and Launchpad PPA revisions, including additional suites
+and architectures. Both checks require matching source-package identity and exact
+source revision. See [Sury backport evidence](sury-backport-evidence.md) for the
+signed-index review, complete versions and limits.
 
 Ordinary non-Sury APT/DNF/YUM paths still have their separate transaction guards.
 Ordinary APT mode also refuses a proposed switch from non-Sury packages to Sury. Package publisher continuity checks for other vendors remain specific to their package/update paths. Panel updaters retain
@@ -1112,6 +1111,15 @@ and updater without running the updater. A panel directory can be a leftover. Ch
 | cPanel 110 and later | Run the installed `upcp --security` without `--force`, then update the explicit installed website PHP package set, including EasyApache. Exclude `cpanel-php*` and `sw-engine*` from that ordinary package pass: the panel updater owns those internal components. Respect update preferences. Check the installed cPanel release's security-support status before planning the update. |
 | Plesk 18 | Run the installed `plesk installer --select-release-current --upgrade-installed-components`. Do not follow it with an ordinary APT/DNF/YUM PHP transaction. The installer can update databases, web servers and other installed components. This is broader than PHP-only maintenance. |
 | Virtualmin | Permit the ordinary explicit PHP package update and supported service restarts. Virtualmin's presence alone is not a blocker or a verification gap. Check each virtual server's PHP selection before removing or migrating old PHP branches. |
+
+The November check verifies the exact x86_64 cPanel 110 internal PHP 8.1
+RPMs on EL7/8/9 and the stock EasyApache PHP 7.4 backport on EL7/8. It reports
+the internal PHP result after the updater returns. CloudLinux EasyApache and
+Alt-PHP use separate package revisions and still require a manual update and
+CageFS runtime review where applicable.
+[cPanel release notes](https://docs.cpanel.net/release-notes/release-notes/#cpanel--whm-security-update---november-19) ·
+[EasyApache changelog](https://docs.cpanel.net/changelogs/easyapache-4-change-log-25/#2598) ·
+[CloudLinux release matrix](https://cloudlinux.com/security/php-november-2026-security-releases)
 
 `--select-release-current` retains the selected Plesk release instead of requesting
 the latest release. It does not make the component update security-only or promise

@@ -707,4 +707,6 @@ separate environments still need their own procedures.
 
 These categories describe the current automation coverage. Check the exact package publisher, package revision and installation for a maintained fix route.
 
+For an upgrade or migration you plan to do yourself, see the [distrorejuve guide](https://github.com/pbkwee/distrorejuve/blob/master/docs/ai-assisted-migration.md). If you'd like RimuHosting to assess your server and handle a move to its hosting, [request a free assessment at DistroRejuve](https://distrorejuve.com/).
+
 RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or migration to a server with a supported OS and PHP, including for servers hosted elsewhere. A server migration can stay with your current hosting provider. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.
