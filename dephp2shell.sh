@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-# DePHP2Shell: both PHP2Shell CVEs share the aggregate result key CVE_2026_109618.
+# DePHP2Shell: the default checks October PHP2Shell. --november-2026 selects the November release.
 # Standalone Bash 2-era syntax; check mode never updates packages or restarts services.
 # Integrations must run extra inventory scripts separately and preserve this script's exit status.
 # Usage and maintenance: docs/usage.md and docs/maintainer-reference.md.
@@ -37,6 +37,12 @@ p2s_manifest_record() {
     # Prefix every line, including output supplied by packages, to prevent marker injection.
     printf '%s\n' "$value" | LC_ALL=C tr -d '\000-\010\013-\037\177' |
         while IFS= read -r line; do printf 'dss:manifest:%s:%s|%s\n' "$key" "$P2S_PHASE" "$line"; done
+}
+
+p2s_vulnerability_result() {
+    local issue=CVE_2026_109618
+    if ${P2S_NOVEMBER:-false}; then issue=CVE_2026_126714; fi
+    printf 'dss:isvulnerable:%s: %s%s\n' "$1" "$issue" "$2"
 }
 
 # Inspect file metadata only; never execute panel tools or read their configuration here.
@@ -247,7 +253,12 @@ p2s_version_upstream_state() {
     minor=${rest%%.*}; rest=${rest#*.}; patch=${rest%%[!0-9]*}
     case "$major:$minor:$patch" in *[!0-9:]*|::*|*::|:*|*:) printf '?\n'; return ;; esac
     if [ "$major" -eq 8 ]; then
-        case "$minor" in 0|1) printf 'Y\n'; return ;; 2) floor=35 ;; 3) floor=36 ;; 4) floor=27 ;; 5) floor=12 ;; *) printf '?\n'; return ;; esac
+        if ${P2S_NOVEMBER:-false}; then
+            # https://www.php.net/archive/2026.php (19 November security releases and 8.6.0 GA)
+            case "$minor" in 0|1) printf 'Y\n'; return ;; 2) floor=36 ;; 3) floor=37 ;; 4) floor=28 ;; 5) floor=13 ;; 6) floor=0 ;; *) printf '?\n'; return ;; esac
+        else
+            case "$minor" in 0|1) printf 'Y\n'; return ;; 2) floor=35 ;; 3) floor=36 ;; 4) floor=27 ;; 5) floor=12 ;; *) printf '?\n'; return ;; esac
+        fi
         if [ "$patch" -ge "$floor" ]; then printf 'N\n'; else printf 'Y\n'; fi
     elif [ "$major" -eq 7 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 4 ]; }; then
         printf 'Y\n'
@@ -318,9 +329,123 @@ p2s_version_sury_backport_fixed() {
     [ "$4" = "$source" ] && [ "$5" = "$2" ] && [ "$2" = "$fixed" ]
 }
 
+p2s_version_november_package_reference() {
+    local name=$1 version=$2 vendor=$3 arch=$4 provider upstream release branch family affected='' fixed=''
+    provider=$(p2s_package_provider "$name" "$vendor" "$version")
+    case "$P2S_BACKEND:$P2S_DISTRO:$provider" in
+        deb:debian:Debian)
+            # DLA-4916-1 and DSA-6641-1 cover the November update in the native security archives.
+            case "${P2S_RELEASE%%.*}:$name:$version" in
+                12:php8.2-*:*~deb12u*|12:libapache2-mod-php8.2:*~deb12u*)
+                    affected=8.2.35-1~deb12u1; fixed=8.2.36-1~deb12u1 ;;
+                13:php8.4-*:*~deb13u*|13:libapache2-mod-php8.4:*~deb13u*)
+                    affected=8.4.27-1~deb13u1; fixed=8.4.28-1~deb13u1 ;;
+            esac ;;
+        deb:ubuntu:Ubuntu)
+            case "$version" in *ubuntu*)
+                affected=$(p2s_version_deb_fixed_floor "$name")
+                # Canonical's accepted security uploads document all applicable November fixes.
+                # Jammy and ESM builds still lack verified CVE-2026-115560 coverage.
+                case "$P2S_RELEASE:$name" in
+                    26.10:php8.5-*|26.10:libapache2-mod-php8.5) fixed=8.5.9-0ubuntu2.2 ;;
+                    26.04:php8.5-*|26.04:libapache2-mod-php8.5) fixed=8.5.4-0ubuntu1.6 ;;
+                    24.04:php8.3-*|24.04:libapache2-mod-php8.3) fixed=8.3.6-0ubuntu0.24.04.14 ;;
+                esac ;;
+            esac ;;
+        deb:*:Sury/*)
+            # October's reviewed legacy backports lack the separate CVE-2026-126714 session-file fix.
+            affected=$(p2s_version_sury_fixed_build_output "$name" "$arch" "$version") || affected= ;;
+        rpm:almalinux:AlmaLinux|rpm:rocky:Rocky\ Linux)
+            case "$provider:$vendor" in
+                AlmaLinux:AlmaLinux|'Rocky Linux:Rocky Enterprise Software Foundation') ;;
+                *) printf '|\n'; return ;;
+            esac
+            # The EL10 php8.4 family is distinct from the default php package family.
+            case "$name" in
+                php|php-cli|php-common|php-cgi|php-fpm|php-embedded|php-phpdbg) family=php ;;
+                php8.4|php8.4-cli|php8.4-common|php8.4-cgi|php8.4-fpm|php8.4-embedded|php8.4-phpdbg) family=php8.4 ;;
+                *) printf '|\n'; return ;;
+            esac
+            release=${version#0:}; upstream=${release%%-*}; branch=${upstream%.*}
+            # https://almalinux.org/blog/2026-11-19-php-security-release/
+            # Alma's November 7.4 and 8.0 builds lack confirmed CVE-2026-115560 coverage.
+            case "$provider:$P2S_MAJOR:$family:$branch" in
+                AlmaLinux:8:php:7.2) affected=7.2.24-1.module_el8.10.0+4315+7b734bf3.alma.1 ;;
+                AlmaLinux:8:php:7.3) affected=7.3.20-1.module_el8.10.0+4316+90ea5fe5.alma.1 ;;
+                AlmaLinux:8:php:7.4) affected=7.4.33-8.module_el8.10.0+4321+cf5fd4bb ;;
+                AlmaLinux:8:php:8.0) affected=8.0.30-1.module_el8.10.0+4319+26f10322.alma.1 ;;
+                AlmaLinux:8:php:8.2)
+                    affected=8.2.33-1.module_el8.10.0+4320+c30d6dbb.alma.1
+                    fixed=8.2.35-1.module_el8.10.0+4381+cf144917.alma.1 ;;
+                AlmaLinux:9:php:8.0) affected=8.0.30-8.el9_8.alma.1 ;;
+                AlmaLinux:9:php:8.1) affected=8.1.32-1.module_el9.8.0+326+528679fc.alma.1 ;;
+                AlmaLinux:9:php:8.2)
+                    affected=8.2.33-1.module_el9.8.0+327+37dfd4b4.alma.1
+                    fixed=8.2.35-1.module_el9.9.0+360+bfa5da00.alma.1 ;;
+                AlmaLinux:9:php:8.3)
+                    affected=8.3.33-1.module_el9.8.0+328+1fdeb728.alma.1
+                    fixed=8.3.36-1.module_el9.9.0+361+ab310fe6.alma.1 ;;
+                AlmaLinux:9:php:8.4)
+                    affected=8.4.27-1.module_el9.9.0+340+d5af24ac
+                    fixed=8.4.27-1.module_el9.9.0+362+e3c29387.alma.1 ;;
+                AlmaLinux:10:php:8.3) affected=8.3.33-1.el10_2.alma.1; fixed=8.3.36-1.el10_2.alma.1 ;;
+                AlmaLinux:10:php8.4:8.4) affected=8.4.27-2.el10_3.1; fixed=8.4.27-2.el10_3.1.alma.1 ;;
+            esac
+            # Rocky AppStream x86_64 builds published before the November release. Match only the sampled architecture.
+            case "$provider:$arch:$P2S_MAJOR:$family:$branch" in
+                'Rocky Linux:x86_64:8:php:7.4') affected=7.4.33-8.module+el8.10.0+40393+c071e357 ;;
+                'Rocky Linux:x86_64:8:php:8.2') affected=8.2.35-1.module+el8.10.0+40394+d21b33fb ;;
+                'Rocky Linux:x86_64:9:php:8.0') affected=8.0.30-8.el9_8.1 ;;
+                'Rocky Linux:x86_64:9:php:8.2') affected=8.2.35-1.module+el9.8.0+40395+2f706e64 ;;
+                'Rocky Linux:x86_64:9:php:8.3') affected=8.3.36-1.module+el9.8.0+40396+4e680bb7 ;;
+                'Rocky Linux:x86_64:9:php:8.4') affected=8.4.27-1.module+el9.9.0+40418+929a11b6 ;;
+                'Rocky Linux:x86_64:10:php:8.3') affected=8.3.36-1.el10_2 ;;
+                'Rocky Linux:x86_64:10:php8.4:8.4') affected=8.4.27-2.el10_3.1 ;;
+            esac ;;
+        rpm:*:'cPanel internal')
+            case "$name:$arch:${version#0:}" in
+                cpanel-php81:x86_64:*~el[789]) affected=8.1.34-2.cp110~${version##*~} ;;
+            esac ;;
+    esac
+    printf '%s|%s\n' "$affected" "$fixed"
+}
+
+p2s_version_november_package_state() {
+    local name=$1 version=$2 vendor=$3 arch=$4 upstream=$5 reference affected fixed comparison=eq
+    reference=$(p2s_version_november_package_reference "$name" "$version" "$vendor" "$arch")
+    affected=${reference%%|*}; fixed=${reference#*|}
+    # Debian has published fixed floors. Ubuntu upload changelogs establish only the reviewed builds.
+    case "$P2S_BACKEND:$P2S_DISTRO:$(p2s_package_provider "$name" "$vendor" "$version")" in
+        deb:debian:Debian|deb:ubuntu:Ubuntu)
+            if p2s_command_exists dpkg; then
+                if [ "$P2S_DISTRO" = debian ]; then comparison=ge; fi
+                if [ -n "$fixed" ] && dpkg --compare-versions "$version" "$comparison" "$fixed"; then
+                    printf 'N\n'; return
+                fi
+                if [ -n "$affected" ] && dpkg --compare-versions "$version" le "$affected"; then
+                    printf 'Y\n'; return
+                fi
+            fi ;;
+    esac
+    [ "$P2S_BACKEND" != rpm ] || version=${version#0:}
+    if [ -n "$fixed" ] && [ "$version" = "$fixed" ]; then
+        printf 'N\n'
+    elif [ -n "$affected" ] && [ "$version" = "$affected" ]; then
+        printf 'Y\n'
+    elif [ "$upstream" = N ]; then
+        printf 'N\n'
+    else
+        printf '?\n'
+    fi
+}
+
 p2s_version_package_state() {
     local name="$1" version="$2" vendor="$3" arch="${4:-unknown}" state floor release
     state=$(p2s_version_upstream_state "$version")
+    if ${P2S_NOVEMBER:-false}; then
+        p2s_version_november_package_state "$name" "$version" "$vendor" "$arch" "$state"
+        return
+    fi
     if [ "$P2S_BACKEND" = deb ]; then
         if p2s_version_sury_backport_fixed "$name" "$version" "$arch" "$5" "$6"; then printf 'N\n'; return; fi
         # This exact native Jessie build includes the reviewed Sury mitigation for both CVEs.
@@ -591,7 +716,8 @@ p2s_package_inventory_collect() {
 }
 
 p2s_package_backport_evidence_collect() {
-    local name="$1" file evidence="$P2S_WORK/backport-evidence"
+    local name="$1" file evidence="$P2S_WORK/backport-evidence" cves='109618|109619'
+    if ${P2S_NOVEMBER:-false}; then cves='115560|126714|129182|129289|129291|129474|129481|129496'; fi
     : > "$evidence"
     if [ "$P2S_BACKEND" = rpm ]; then
         p2s_command_run 30 rpm -q --changelog "$name" > "$evidence" 2>/dev/null || return 0
@@ -609,8 +735,24 @@ p2s_package_backport_evidence_collect() {
         done
     fi
     # A mention can describe an unfixed or reverted patch. It is supporting evidence only.
-    LC_ALL=C awk '/CVE-2026-109618|CVE-2026-109619/ { print; count++; if (count==20) exit }' "$evidence" |
+    LC_ALL=C awk -v cves="CVE-2026-($cves)" '$0 ~ cves { print; count++; if (count==20) exit }' "$evidence" |
         while IFS= read -r file; do p2s_manifest_record backport_mention "$name|$file"; done
+}
+
+p2s_november_package_build_report() {
+    local name=$1 version=$2 arch=$3 vendor=$4 state=$5 reference previous='' comparison=initial
+    reference=$(p2s_version_november_package_reference "$name" "$version" "$vendor" "$arch")
+    if [ "$P2S_PHASE" = afterfix ] && [ -r "$P2S_WORK/packages.before" ]; then
+        previous=$(awk -F'|' -v n="$name" -v a="$arch" '$1==n && $3==a { print $2; exit }' "$P2S_WORK/packages.before")
+        if [ -z "$previous" ]; then comparison=previously_unobserved
+        elif [ "$version" = "$previous" ]; then comparison=unchanged
+        else comparison=changed; fi
+    fi
+    p2s_manifest_record package_build_status "$name|architecture=$arch|installed=$version|previous=${previous:-unavailable}|known_affected=${reference%%|*}|verified_fixed=${reference#*|}|comparison=$comparison|state=$state"
+    case "$comparison:$state" in
+        unchanged:Y) p2s_message_print warn "$name ($arch) is still on affected build $version." ;;
+        changed:'?') p2s_message_print warn "$name ($arch) changed from $previous to $version. Its November fixes still need verification from the package publisher." ;;
+    esac
 }
 
 p2s_package_inventory_assess() {
@@ -667,7 +809,11 @@ p2s_package_inventory_assess() {
             if [ "$state" = '?' ]; then reason=no_verified_vendor_rule_or_unrecognised_version; fi
             p2s_manifest_record package_assessment "$name|$version|$arch|$vendor|$provider|$state|$reason|upstream=$upstream_state"
             summary_reason=$reason; fixed_build=
-            case "$P2S_BACKEND:$provider" in deb:Sury/*)
+            if ${P2S_NOVEMBER:-false}; then
+                case "$name" in sw-engine|frankenphp*) ;; *)
+                    p2s_november_package_build_report "$name" "$version" "$arch" "$vendor" "$state" ;;
+                esac
+            else case "$P2S_BACKEND:$provider" in deb:Sury/*)
                 fixed_build=$(p2s_version_sury_fixed_build_output "$name" "$arch" "$version")
                 comparison=not_compared
                 if [ -n "$fixed_build" ]; then comparison=tool_unavailable; fi
@@ -680,11 +826,11 @@ p2s_package_inventory_assess() {
                 fi
                 p2s_manifest_record package_fix_reference "$name|installed=$version|reviewed_fixed=${fixed_build:-unavailable}|comparison=$comparison"
                 if [ "$state" = '?' ]; then summary_reason=sury_build_$comparison; fi ;;
-            esac
+            esac; fi
             printf '%s|%s\n' "$name" "$state" >> "$P2S_WORK/package-states"
             upstream=$(printf '%s\n' "${version#*:}" | sed 's/[^0-9.].*//')
             [ -n "$upstream" ] || upstream="unrecognised version ($name)"
-            if [ "$P2S_PHASE" = afterfix ] && ${P2S_PANEL_UPDATE_COMPLETED:-false} && [ "$state" != N ]; then
+            if [ "$P2S_PHASE" = afterfix ] && ${P2S_PANEL_UPDATE_COMPLETED:-false} && [ "$state" != N ] && ! ${P2S_NOVEMBER:-false}; then
                 case "$P2S_PANEL:$name" in
                     cpanel:cpanel-php84|cpanel:cpanel-php81)
                         required='8.4.27 or later in the PHP 8.4 branch'
@@ -1249,10 +1395,13 @@ p2s_package_refresh_failure_report() {
 
 p2s_package_deb_is_sury() {
     # Revision families, not generic +0~/PPA hints or Debian maintainer names.
-    # Sury mirror: +0~20261021.82+ubuntu22.04~1.gbp4e430a; PPA: +ubuntu22.04.1+deb.sury.org+1.
+    # Sury mirror revisions include +0~20261021.82+ubuntu22.04~1.gbp4e430a,
+    # +debsuryorg12.1+php+1, and +0~deb.sury.org.1+debian12. PPA ends in +deb.sury.org+1.
     printf '%s\n' "$1" | LC_ALL=C awk '
         /\+deb[.]sury[.]org\+[0-9]+$/ {ok=1}
         /\+0~[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][.][0-9]+\+(debian[0-9]+|ubuntu[0-9][0-9][.][0-9][0-9])~[0-9]+[.]gbp[0-9a-f]+$/ {ok=1}
+        /\+debsuryorg[0-9]+([.][0-9]+)+\+php\+[0-9]+$/ {ok=1}
+        /\+0~deb[.]sury[.]org[.][0-9]+\+(debian[0-9]+|ubuntu[0-9][0-9][.][0-9][0-9])$/ {ok=1}
         END {exit !ok}'
 }
 
@@ -1451,6 +1600,11 @@ $record"
         END {emit(); if (bad || package=="") exit 1}' "$P2S_WORK/candidate-metadata") || {
         p2s_fix_block candidate_provider "Candidate package name, version or architecture could not be verified for $name."; return 1;
     }
+    if ${P2S_NOVEMBER:-false} && p2s_package_is_engine "$name"; then
+        record=unchanged
+        if dpkg --compare-versions "$candidate" gt "$installed"; then record=newer; fi
+        p2s_manifest_record candidate_build_status "$name|architecture=$arch|installed=$installed|candidate=$candidate|comparison=$record"
+    fi
     if [ "$sury" = true ]; then
         installed_source=
         if [ -r "$P2S_WORK/deb-source-records" ]; then
@@ -1466,7 +1620,11 @@ $record"
         expected=${name#libapache2-mod-}; expected=${expected%%-*}
         source=${metadata%%|*}; source_version=${metadata#*|}
         if [ "$source" != "$expected" ] || [ "$(p2s_version_package_state "$name" "$candidate" '' "$arch" "$source" "$source_version")" != N ]; then
-            p2s_fix_block candidate_fix "The Sury candidate for $name has no reviewed fix for both CVEs on this branch, suite and architecture."
+            if ${P2S_NOVEMBER:-false}; then
+                p2s_fix_block candidate_fix "The Sury candidate for $name ($candidate) lacks verified November fixes for this branch, suite and architecture."
+            else
+                p2s_fix_block candidate_fix "The Sury candidate for $name has no reviewed fix for both CVEs on this branch, suite and architecture."
+            fi
             return 1
         fi
         [ "$(p2s_version_upstream_state "$candidate")" != '?' ] || { p2s_fix_block candidate_fix "The Sury candidate's PHP branch could not be identified for $name."; return 1; }
@@ -2887,7 +3045,7 @@ EOF
     esac
     p2s_message_print warn "$label Ordinary dnf/yum upgrades stay in the enabled PHP stream; they do not select a newer PHP branch."
     state=$(awk -F'|' '$1=="php-common" {print $2; exit}' "$P2S_WORK/package-states" 2>/dev/null)
-    if [ "$state" = N ]; then
+    if [ "$state" = N ] && ! ${P2S_NOVEMBER:-false}; then
         p2s_message_print info "This installed PHP build already has verified PHP2Shell fixes. The stream migration below concerns ongoing support, not an outstanding fix for these two CVEs."
     else
         p2s_message_print info "First try --fix for security updates from the existing PHP source and branch. A same-branch security update is usually the smallest application change."
@@ -2938,7 +3096,11 @@ EOF
         7.*) p2s_message_print warn "PHP 7 to 8 removes legacy functions such as each() and create_function(), tightens error handling and can require Apache PHP module configuration changes. Even PHP 7.2 to 7.4 changes regular-expression behaviour and needs matching extension builds." ;;
         *) p2s_message_print info "Moving between PHP 8 branches can also introduce incompatible changes. Use the application's supported PHP versions and extension requirements to choose the destination." ;;
     esac
-    p2s_message_print info "Published PHP2Shell fixes exist for these destination streams, but listing a stream does not verify its current package candidate. After applying one chosen migration, check the full installed build with 'rpm -q php-common' and rerun this script with --check. PHP 7.4 vendor backports can keep the 7.4.33 engine version."
+    if ${P2S_NOVEMBER:-false}; then
+        p2s_message_print info "Verify the full candidate package revision against the publisher's November PHP advisory before choosing a stream. After migration, check the installed build and rerun --check --november-2026."
+    else
+        p2s_message_print info "Published PHP2Shell fixes exist for these destination streams, but listing a stream does not verify its current package candidate. After applying one chosen migration, check the full installed build with 'rpm -q php-common' and rerun this script with --check. PHP 7.4 vendor backports can keep the 7.4.33 engine version."
+    fi
     if [ -r "$P2S_WORK/services" ]; then
         while IFS= read -r unit; do
             case "$unit" in
@@ -3996,7 +4158,7 @@ p2s_summary_print_versions() {
     # Keep package publishers separate: fixed EasyApache and unverified panel PHP can report the same version.
     # Unknown builds show package revisions and the missing evidence; full paths/output remain in the manifest.
     [ -s "$P2S_WORK/summary-versions" ] || return 0
-    sort -u "$P2S_WORK/summary-versions" | awk -F'|' -v prefix="$prefix" -v distro="${P2S_DISTRO:-unknown}" -v release="${P2S_RELEASE:-unknown}" '
+    sort -u "$P2S_WORK/summary-versions" | awk -F'|' -v prefix="$prefix" -v distro="${P2S_DISTRO:-unknown}" -v release="${P2S_RELEASE:-unknown}" -v november="${P2S_NOVEMBER:-false}" '
         {
             key=$1 SUBSEP $2 SUBSEP $5
             # A backport changes the package build while php -v can stay unchanged.
@@ -4016,12 +4178,13 @@ p2s_summary_print_versions() {
         END {
             for (i=1; i<=count; i++) {
                 key=order[i]; level="info"; conclusion="fixes verified for both PHP2Shell vulnerabilities."
+                if (november=="true") conclusion="November PHP fixes verified."
                 if (state[key]=="Y") { level="warn"; conclusion="vulnerable; update these components and restart the services using them." }
-                if (state[key]=="Y" && presumed_affected[key])
+                if (state[key]=="Y" && presumed_affected[key] && november!="true")
                     conclusion="presumed vulnerable because this stock CentOS 5 PHP package predates the PHP2Shell fixes and has no verified backport. Migrate applications to maintained, patched PHP. Exploitability has not been tested."
                 if (state[key]=="?") { level="warn"; conclusion="patch status not verified." }
                 split(version[key], parts, "[.]")
-                if (state[key]=="?" && version[key] ~ /^[0-9]+[.][0-9]+[.][0-9]+$/ &&
+                if (state[key]=="?" && november!="true" && version[key] ~ /^[0-9]+[.][0-9]+[.][0-9]+$/ &&
                     (parts[1]<5 || (parts[1]==5 && parts[2]<4)))
                     conclusion="outside this detector\047s verified PHP2Shell coverage; review its security support and migrate applications to maintained, patched PHP."
                 text=prefix "PHP " version[key] " (" roles[key] "): " conclusion
@@ -4029,16 +4192,18 @@ p2s_summary_print_versions() {
                 if (source) text=text " Package publisher: " source "."
                 if (packages[key]) text=text " Installed packages: " packages[key] "."
                 if (builds[key]) text=text " Reported build dates: " builds[key] "."
-                if (provider[key] ~ /^Sury\// && revisions[key]) text=text " Installed package build: " revisions[key] "."
+                if ((provider[key] ~ /^Sury\// || november=="true") && revisions[key]) text=text " Installed package build: " revisions[key] "."
                 if (state[key]=="N" && affected_upstream[key]) text=text " The PHP package publisher added the security fixes without changing the PHP version."
                 if (state[key]=="?") {
-                    if (provider[key] !~ /^Sury\// && revisions[key]) text=text " Installed package build: " revisions[key] "."
+                    if (provider[key] !~ /^Sury\// && revisions[key] && november!="true") text=text " Installed package build: " revisions[key] "."
                     if (reasons[key SUBSEP "engine_package_version_mismatch"])
                         text=text " The executable reports a different PHP version from its owning package; check the runtime mismatch warning."
                     else if (reasons[key SUBSEP "package_inventory_unavailable"])
                         text=text " Package inventory is unavailable, so the installed build and any vendor security fixes could not be checked."
                     else if (reasons[key SUBSEP "owner_is_not_an_assessed_engine"] || reasons[key SUBSEP "owner_outside_PHP_inventory"])
                         text=text " No assessed PHP engine package owns this executable; confirm its installation source and security fixes."
+                    else if (november=="true")
+                        text=text " Check the full package revision against the publisher\047s November advisory."
                     else if (reasons[key SUBSEP "sury_build_older"])
                         text=text " The installed Sury package build is older than this check\047s verified fixed build: " fixed_builds[key] ". The installed build is not on this check\047s list of verified patched packages."
                     else if (reasons[key SUBSEP "sury_build_newer"])
@@ -4055,7 +4220,7 @@ p2s_summary_print_versions() {
                         text=text " This PHP release needs security fixes from its package publisher. This script has no verified fix record for the installed build. Check both CVEs with the publisher or install a confirmed fixed build."
                     else text=text " No verified version or package fix rule matches this build; check both CVEs with its publisher."
                 }
-                if (state[key]=="Y" && provider[key]=="AlmaLinux") text=text " AlmaLinux has published security updates for this PHP stream; check your configured package sources for an available fix."
+                if (state[key]=="Y" && provider[key]=="AlmaLinux" && november!="true") text=text " AlmaLinux has published security updates for this PHP stream; check your configured package sources for an available fix."
                 if (evidence[key SUBSEP "running_path"]) text=text " Running processes use this installation."
                 else if (evidence[key SUBSEP "executable"]) { text=text " Installed; no matching running process was found."; idle_observation=1 }
                 else if (evidence[key SUBSEP "module"]) { text=text " Apache module installed; no matching running process was found."; idle_observation=1 }
@@ -4140,31 +4305,36 @@ p2s_fix_print_exposure_advice() {
 }
 
 p2s_summary_print_result() {
-    local unresolved_versions='' update_blockers=''
+    local unresolved_versions='' update_blockers='' issue_name=PHP2Shell fixes='both PHP2Shell fixes' check_options=--check
+    if ${P2S_NOVEMBER:-false}; then
+        issue_name='the November PHP vulnerabilities'
+        fixes='the November PHP fixes'
+        check_options='--check --november-2026'
+    fi
     # This describes the final phase only; before/after protocol markers remain unchanged.
     case "$P2S_STATE" in
-        Y) p2s_message_print warn "Result: This VM has at least one PHP installation identified as vulnerable to PHP2Shell. Update every affected installation and restart the services using it. If a prompt fix is not possible, temporarily disable the affected PHP applications." ;;
+        Y) p2s_message_print warn "Result: This VM has at least one PHP installation identified as vulnerable to $issue_name. Update every affected installation and restart the services using it. If a prompt fix is not possible, temporarily disable the affected PHP applications." ;;
         '?')
             # Package and executable checks can disagree within one installation; describe component evidence.
             if p2s_state_has_only_fixed_versions; then
                 if ${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false}; then
-                    p2s_message_print warn "Result: Verified host PHP builds include both PHP2Shell fixes. PHP in a separate application environment still needs checking; see the warnings below."
+                    p2s_message_print warn "Result: Verified host PHP builds include $fixes. PHP in a separate application environment still needs checking; see the warnings below."
                 else
-                    p2s_message_print warn "Result: Verified PHP builds include both PHP2Shell fixes. We could not complete all checks; see the warnings below."
+                    p2s_message_print warn "Result: Verified PHP builds include $fixes. We could not complete all checks; see the warnings below."
                 fi
                 p2s_manifest_record verification_scope "assessed_host_versions=fixed|separate_environment_review=${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false}|overall=unknown"
             elif [ -s "$P2S_WORK/summary-versions" ] && awk -F'|' '
                 $2 == "N" { fixed=1 } $2 == "?" { unverified=1 }
                 END { exit !(fixed && unverified) }' "$P2S_WORK/summary-versions"; then
-                p2s_message_print warn "Result: Some PHP installations include both PHP2Shell fixes; others still need verification or an update. See the PHP versions needing attention below."
+                p2s_message_print warn "Result: Some PHP installations include $fixes; others still need verification or an update. See the PHP versions needing attention below."
             else
-                p2s_message_print warn "Result: We could not verify whether all PHP installations include both PHP2Shell fixes. See the checks needing attention below."
+                p2s_message_print warn "Result: We could not verify whether all PHP installations include $fixes. See the checks needing attention below."
             fi ;;
         N)
             if [ "$P2S_COUNT" -eq 0 ]; then
                 p2s_message_print info "Result: No PHP installation was found in the checked packages and runtime locations. No PHP update was identified by this check."
             else
-                p2s_message_print info "Result: All detected PHP installations include both PHP2Shell fixes. No PHP restart is pending."
+                p2s_message_print info "Result: All detected PHP installations include $fixes. No PHP restart is pending."
             fi ;;
     esac
     if [ "$P2S_STATE" != N ] && [ -s "$P2S_WORK/summary-versions" ]; then
@@ -4175,13 +4345,17 @@ p2s_summary_print_result() {
             }
             END { if (versions != "") print versions }')
         if [ -n "$unresolved_versions" ]; then
-            p2s_message_print warn "PHP versions needing attention: $unresolved_versions. Check the full package builds with their publishers for verified fixes. End-of-life status and PHP2Shell fix status are separate. Test migrated workloads and review package dependencies and proposed removals. Changing the default PHP version alone does not move individual websites."
+            if ${P2S_NOVEMBER:-false}; then
+                p2s_message_print warn "PHP versions needing attention: $unresolved_versions. Check the full package builds with their publishers for verified November fixes."
+            else
+                p2s_message_print warn "PHP versions needing attention: $unresolved_versions. Check the full package builds with their publishers for verified fixes. End-of-life status and PHP2Shell fix status are separate. Test migrated workloads and review package dependencies and proposed removals. Changing the default PHP version alone does not move individual websites."
+            fi
         fi
     fi
     if [ "$P2S_STATE" != N ]; then
         if ${P2S_BLOCKED:-false}; then update_blockers='Resolve the reported update blockers before retrying. '; fi
         if [ "$P2S_STATE" = '?' ] && p2s_state_has_only_fixed_versions; then
-            p2s_message_print warn "Next action: ${update_blockers}Verify the remaining inventory, separate application environments and pending PHP restarts identified in this report, then rerun --check. The assessed PHP builds already have verified fixes."
+            p2s_message_print warn "Next action: ${update_blockers}Verify the remaining inventory, separate application environments and pending PHP restarts identified in this report, then rerun $check_options. The assessed PHP builds already have verified fixes."
         else
             p2s_message_print warn "Next action: ${update_blockers}Confirm which websites, applications, scheduled jobs and dependencies require ${unresolved_versions:-PHP}. Obtain verified fixed packages or migrate required workloads to supported, patched PHP. Remove unneeded PHP packages only after reviewing dependencies and the proposed removals."
         fi
@@ -4441,11 +4615,12 @@ p2s_fix_prepare_selected_methods() {
 }
 
 p2s_fix_recommendation_print() {
-    local method=$1 options=$2 evidence=$3
+    local method=$1 options=$2 evidence=$3 scope=
     # An unresolved fix already tried the ordinary update path; retain only specific repair options.
     if [ "$P2S_PHASE" = afterfix ] && [ "$options" = --fix ]; then return 0; fi
     P2S_FIX_RECOMMENDATION_EMITTED=true
-    p2s_message_print info "Suggested options: $options. $evidence Fix mode rechecks prerequisites and PHP afterwards; updates can interrupt applications."
+    if ${P2S_NOVEMBER:-false}; then scope=' --november-2026'; fi
+    p2s_message_print info "Suggested options: $options$scope. $evidence Fix mode rechecks prerequisites and PHP afterwards; updates can interrupt applications."
     p2s_manifest_record fix_recommendation "$method|options=$options|$evidence|check_only_no_changes|fresh_fix_preflight_required"
 }
 
@@ -4641,7 +4816,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-05.2
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-21.1 check_options=--check
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -4652,6 +4827,11 @@ p2s_main() {
     esac
     P2S_MODE=$mode
     P2S_INVENTORY_MESSAGES=false
+    if ${P2S_NOVEMBER:-false}; then
+        fix_options="$fix_options --november-2026"
+        check_options="$check_options --november-2026"
+        p2s_message_print info "Assessing the November 2026 PHP security release."
+    fi
     case "$mode" in
         check) p2s_message_print info "Check only: no packages or services will be changed." ;;
         fix)
@@ -4676,13 +4856,15 @@ p2s_main() {
     for command in awk sed grep sort tr head cat date uname id mkdir rm; do
         if ! p2s_command_exists "$command"; then
             p2s_message_print error "Required basic tool $command is unavailable; cannot perform a reliable check."
-            printf '%s\n' 'dss:isvulnerable:beforefix: CVE_2026_109618?' 'dss:isvulnerable:afterfix: CVE_2026_109618?'
+            p2s_vulnerability_result beforefix '?'
+            p2s_vulnerability_result afterfix '?'
             return 1
         fi
     done
     if ! p2s_command_has_timeout && ! p2s_command_has_shell_watchdog && ! p2s_command_exists perl; then
         p2s_message_print error "No supported timeout, sleep or Perl is available to bound commands; a manual check is required."
-        printf '%s\n' 'dss:isvulnerable:beforefix: CVE_2026_109618?' 'dss:isvulnerable:afterfix: CVE_2026_109618?'
+        p2s_vulnerability_result beforefix '?'
+        p2s_vulnerability_result afterfix '?'
         return 1
     fi
     umask 077
@@ -4694,7 +4876,11 @@ p2s_main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
     export LC_ALL=C
-    p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-29'
+    if ${P2S_NOVEMBER:-false}; then
+        p2s_manifest_record schema 'php2shell-v1|CVE_2026_126714|covers=CVE-2026-115560,CVE-2026-126714,CVE-2026-129182,CVE-2026-129289,CVE-2026-129291,CVE-2026-129474,CVE-2026-129481,CVE-2026-129496|rules=2026-11-21'
+    else
+        p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-29'
+    fi
     p2s_manifest_record script_revision "$script_revision"
     p2s_manifest_record source_preservation 'policy=explicit_provider_migrations_only|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|other_providers_and_panel_transactions_require_separate_review'
     p2s_manifest_record dependency_policy 'required_installed_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources_or_explicit_bullseye_Sury_PCRE2_migration|no_additions_removals_or_downgrades'
@@ -4725,7 +4911,7 @@ p2s_main() {
     if [ "$P2S_BACKEND" = deb ]; then p2s_package_lock_warn; fi
     p2s_fix_check_distro_recipe
     if [ "$mode" = check ]; then p2s_fix_report_patchability; p2s_fix_recommend_options; fi
-    printf 'dss:isvulnerable:beforefix: CVE_2026_109618%s\n' "$P2S_STATE"
+    p2s_vulnerability_result beforefix "$P2S_STATE"
     if [ "$mode" = fix ] && [ "$P2S_STATE" != N ]; then
         # Share the legacy lock so scripts deployed under either name cannot patch concurrently.
         if ! mkdir /var/run/rh-php2shell.lock 2>/dev/null; then
@@ -4733,6 +4919,9 @@ p2s_main() {
             result=1
         else
             trap 'p2s_disruptive_sury_cleanup_added_repository; rmdir /var/run/rh-php2shell.lock; rm -rf "$P2S_WORK"' EXIT
+            if ${P2S_NOVEMBER:-false} && [ -r "$P2S_WORK/packages" ]; then
+                cp "$P2S_WORK/packages" "$P2S_WORK/packages.before"
+            fi
             # P2S-MUTATION: Fix-only entry into package updates and service restarts.
             if ! p2s_fix_run; then result=1; fi
             P2S_PHASE=afterfix
@@ -4744,7 +4933,7 @@ p2s_main() {
             if [ "$result" -ne 0 ] && [ "$P2S_STATE" = N ]; then P2S_STATE='?'; fi
         fi
     fi
-    printf 'dss:isvulnerable:afterfix: CVE_2026_109618%s\n' "$P2S_STATE"
+    p2s_vulnerability_result afterfix "$P2S_STATE"
     if [ "$mode" = fix ] && [ "$P2S_STATE" != N ]; then
         # Reassess current blockers without carrying consent or stale failures into retry advice.
         (
@@ -4762,7 +4951,7 @@ p2s_main() {
             P2S_FIX_RECOMMENDATION_EMITTED=false
             p2s_fix_recommend_options
             if ! $P2S_FIX_RECOMMENDATION_EMITTED; then
-                p2s_message_print warn "This script could not finish the PHP fix. Check the earlier messages for the remaining problems. After resolving them, run --check again."
+                p2s_message_print warn "This script could not finish the PHP fix. Check the earlier messages for the remaining problems. After resolving them, run $check_options again."
             fi
         )
         if ! $P2S_TRANSACTION_ATTEMPTED && ! $P2S_RESTART_ATTEMPTED; then
@@ -4800,6 +4989,7 @@ Usage: dephp2shell.sh [--check|--fix] [--enable-extra-fixes] [options]
                     Include verified necessary upgrades of reviewed installed native libraries from matching OS sources.
                     Other applications may share these libraries; no new packages or broad OS upgrade.
                     Use existing PHP package repositories and publishers by default; panel updaters can have broader effects.
+  --november-2026   Assess the November security release. The default assesses October PHP2Shell.
   --enable-extra-fixes
                     Permit only the extra methods selected below; it does not bypass safety checks.
                     Implies --fix unless --check is explicit. Extra methods are disabled by default.
@@ -4933,6 +5123,7 @@ p2s_cli() {
     local refresh_sury_signing_key="${DP2S_REFRESH_SURY_SIGNING_KEY:-false}"
     local add_os_security_repository="${DP2S_ADD_OS_SECURITY_REPOSITORY:-false}"
     local P2S_REPOSITORY_REPAIR=none
+    local P2S_NOVEMBER=false
     local -a pipeline_status
     if [ -n "${NO_COLOR:-}" ]; then color=never; fi
     while [ "$#" -gt 0 ]; do
@@ -4944,6 +5135,7 @@ p2s_cli() {
                     printf '%s\n' 'Choose either --check or --fix.' >&2; return 64
                 fi
                 action=$value; mode=$value ;;
+            --november-2026) P2S_NOVEMBER=true ;;
             --enable-extra-fixes) disruptive=true ;;
             --migrate-php-to-sury) P2S_ALLOW_SURY_MIGRATION=true ;;
             --add-sury-repository) P2S_ALLOW_SURY_REPOSITORY=true ;;
@@ -5017,9 +5209,9 @@ p2s_cli() {
         Linux) ;;
         *)
             if [ "$output" = machine ]; then
-                printf '%s\n' 'dss:error: DePHP2Shell requires Linux. No check or update was started.' \
-                    'dss:isvulnerable:beforefix: CVE_2026_109618?' \
-                    'dss:isvulnerable:afterfix: CVE_2026_109618?'
+                printf '%s\n' 'dss:error: DePHP2Shell requires Linux. No check or update was started.'
+                p2s_vulnerability_result beforefix '?'
+                p2s_vulnerability_result afterfix '?'
             else
                 printf '%s\n' 'DePHP2Shell requires Linux. No check or update was started.' >&2
             fi

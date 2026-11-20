@@ -1432,7 +1432,21 @@ Additional diagnostic records preserve the reasons behind readable summaries:
 
 `script_revision` identifies the script behaviour revision; maintain it when
 changing checks or update actions. The function checksum separately fingerprints
-the loaded functions. The schema record identifies the rule snapshot and both CVEs. Repository filenames
+the loaded functions. The schema record identifies the rule snapshot and its CVEs.
+The default assessment emits `CVE_2026_109618`. The November assessment emits
+`CVE_2026_126714` and records the installed and previous package builds,
+known affected and verified fixed references, and the assessment as
+`package_build_status`. APT also records the candidate in `candidate_build_status`.
+Check the package publisher's advisory before adding a fixed backport rule.
+The November rules recognise Canonical's exact security uploads for Ubuntu
+[26.04](https://lists.ubuntu.com/archives/resolute-changes/2026-November/031945.html),
+[24.04](https://lists.ubuntu.com/archives/noble-changes/2026-November/061111.html),
+and [26.10](https://lists.ubuntu.com/archives/stonking-changes/2026-November/011394.html).
+Those upload records include fixes whose CVE tracker entries still needed
+evaluation when the uploads were reviewed. The
+[22.04 upload](https://lists.ubuntu.com/archives/jammy-changes/2026-November/050900.html)
+and the reviewed Ubuntu Pro builds leave CVE-2026-115560 coverage open.
+Repository filenames
 are recorded without dumping configuration credentials. PHP package-command URLs
 are redacted.
 

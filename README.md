@@ -53,6 +53,11 @@ A separate, explicitly enabled `--enable-extra-fixes --migrate-php-to-sury` proc
 
 A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. Website testing, compromise assessment and a general security audit remain separate work. Older operating systems can still need migration even after PHP is fixed.
 
+For the [November PHP security release](https://www.php.net/archive/2026.php), add
+`--november-2026` to either `--check` or `--fix`. An affected build stays
+affected if the update leaves that build installed. A newer unreviewed vendor
+revision needs verification against its publisher's advisory.
+
 ## Development
 
 Run `python3 tests/run.py` for offline fixture tests. See the

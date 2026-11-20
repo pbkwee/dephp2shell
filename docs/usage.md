@@ -25,6 +25,7 @@ fix attempt; a successful repair can be followed by ordinary PHP updates.
 | --- | --- |
 | `--check` | Inspect PHP and report the result. Does not update packages or restart services. |
 | `--fix` | Check prerequisites, attempt supported updates and service restarts, then check again. |
+| `--november-2026` | Assess the November PHP security release. By default the script assesses October PHP2Shell. |
 | `--enable-extra-fixes` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
 | [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | With `--enable-extra-fixes`, allow a closely matched native-to-Sury PHP package change. |
 | [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | With both options above, allow the matching official Sury/ondrej source to be added. |

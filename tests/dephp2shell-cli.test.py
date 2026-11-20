@@ -113,6 +113,12 @@ p2s_main() {
         self.assertEqual(run.stderr, ERROR)
         self.assertEqual(self.logs(), [])
 
+    def test_november_scope_survives_the_cli_and_emits_its_own_marker(self):
+        run = self.run_cli('--fix', '--output', 'machine', '--november-2026',
+                           setup='\np2s_main() { p2s_vulnerability_result afterfix Y; }\n')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.stdout, 'dss:isvulnerable:afterfix: CVE_2026_126714Y\n')
+
     def test_explicit_log_directory_accepts_spaces_and_leading_dash(self):
         run = self.run_cli('--output=machine', '--log-dir', '-private logs',
                            env={'DP2S_LOG_DIR': str(self.root / 'unused')})
