@@ -40,7 +40,7 @@ P2S_DISTRO=rocky
 p2s_version_package_state php8.4-fpm 0:8.4.27-2.el10_3.1 'Rocky Enterprise Software Foundation' x86_64
 p2s_version_package_state php8.4-fpm 0:8.4.27-2.el10_3.1.alma.1 'Rocky Enterprise Software Foundation' x86_64
 ''')
-        self.assertEqual(result.splitlines(), list('YNYN?YN?Y?'))
+        self.assertEqual(result.splitlines(), list('YNYNNYN?Y?'))
 
     def test_ubuntu_native_apache_cli_and_common_builds(self):
         result = self.shell(r'''
@@ -65,9 +65,23 @@ p2s_version_package_state php8.1-fpm 8.1.2-1ubuntu2.29+ppa1 "$vendor" amd64
 P2S_RELEASE=20.04
 p2s_version_package_state php7.4-fpm 7.4.3-4ubuntu2.29+esm6 "$vendor" amd64
 ''')
-        expected_resolute_stonking = list('YNYNYN??NY')
-        expected_jammy = list('YNYNYNYN??')
-        self.assertEqual(result.splitlines(), expected_resolute_stonking + expected_jammy + ['?'])
+        expected_resolute_stonking = list('YNYNYNN?NY')
+        expected_jammy = list('YNYNYNYNN?')
+        self.assertEqual(result.splitlines(), expected_resolute_stonking + expected_jammy + ['N'])
+
+    def test_extended_support_versions_keep_source_and_release_boundaries(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
+p2s_version_package_state php7.2-cli 7.2.24-0ubuntu0.18.04.17+esm14 Ubuntu amd64
+p2s_version_package_state php7.2-cli 7.2.24-0ubuntu0.18.04.17+esm16 Ubuntu amd64
+p2s_version_package_state php7.2-cli 7.2.24-0ubuntu0.18.04.17+esm16.local Ubuntu amd64
+P2S_DISTRO=debian; P2S_RELEASE=10.13
+for version in 7.3.31-1~deb10u16 7.3.31-1~deb10u17 7.3.31-1~deb10u18 7.3.31-1~deb10u18.local; do
+    p2s_version_package_state php7.3-fpm "$version" Debian amd64 php7.3 "$version"
+done
+p2s_version_package_state php7.3-fpm 7.3.31-1~deb10u17 Debian amd64 php7.3 7.3.31-1~deb10u16
+''')
+        self.assertEqual(result.splitlines(), list('YN?YNN??'))
 
     def test_enterprise_linux_backports_match_only_reviewed_builds(self):
         result = self.shell(r'''
@@ -95,7 +109,26 @@ p2s_version_package_state php-common 0:8.0.30-8.el9_8.1 AlmaLinux x86_64
 p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.1 AlmaLinux x86_64
 p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.2 AlmaLinux x86_64
 ''')
-        self.assertEqual(result.splitlines(), list('N???N???N???YN?N?N?NYYN?'))
+        self.assertEqual(result.splitlines(), list('NN??NN??NN??YNNNNNNNYYN?'))
+
+    def test_native_rpm_comparison_preserves_release_and_publisher(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=rocky; P2S_MAJOR=8
+vendor='Rocky Enterprise Software Foundation'
+p2s_command_run() {
+    case "$2:$3:$4" in
+        rpm:--eval:*"'7.4.33', '7.4.33'"*"'10.module+el8.10.0+40500+deadbeef', '8.module+el8.10.0+40472+363a2c29.0.1'"*) printf '1\n' ;;
+        rpm:--eval:*"'8.module+el8.10.0+40450+deadbeef', '8.module+el8.10.0+40472+363a2c29.0.1'"*) printf '%s\n' -1 ;;
+        *) printf 'UNEXPECTED version comparison: %s\n' "$*" >> "$P2S_WORK/unexpected"; return 97 ;;
+    esac
+}
+for release in 9.module+el8.10.0+40479+a65e1b9e 10.module+el8.10.0+40500+deadbeef 8.module+el8.10.0+40450+deadbeef 10.module+el9.10.0+40500+deadbeef 10.module+el8.10.0+40500+deadbeef.local; do
+    p2s_version_package_state php-fpm "0:7.4.33-$release" "$vendor" aarch64
+done
+p2s_version_package_state php-fpm 0:7.4.33-10.module+el8.10.0+40500+deadbeef 'Other RPM publisher' aarch64
+test ! -f "$P2S_WORK/unexpected"
+''')
+        self.assertEqual(result.splitlines(), list('NN????'))
 
     def test_report_retains_affected_build_after_candidate_changes(self):
         result = self.shell(r'''
@@ -119,7 +152,7 @@ done
 ''')
         self.assertEqual(result.splitlines(), ['accepted'] * 4 + ['rejected'])
 
-    def test_legacy_sury_rule_requires_exact_release_architecture_and_source(self):
+    def test_legacy_sury_rule_requires_matching_release_architecture_and_source(self):
         result = self.shell(r'''
 P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12.3
 build=5.6.40-110+debsuryorg12.1+1
@@ -139,6 +172,33 @@ build=7.2.34-70+debsuryorg24.04.1+php+1
 p2s_version_package_state php7.2-cli "$build" Ubuntu amd64 php7.2 "$build"
 ''')
         self.assertEqual(result.splitlines(), list('NN????NN?'))
+
+    def test_current_and_later_sury_builds_in_both_repositories(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb
+for platform in debian:12 debian:13.2 ubuntu:22.04 ubuntu:24.04 ubuntu:26.04; do
+    P2S_DISTRO=${platform%:*}; P2S_RELEASE=${platform#*:}
+    release=$P2S_RELEASE; [ "$P2S_DISTRO" != debian ] || release=${release%%.*}
+    for spec in php5.6:5.6.40-110 php7.0:7.0.33-98 php7.1:7.1.33-86 php7.2:7.2.34-71 php7.3:7.3.33-42 php7.4:1:7.4.33-38 php8.0:1:8.0.30-32 php8.1:8.1.34-15; do
+        name=${spec%%:*}; build=${spec#*:}+debsuryorg$release.1+1
+        for arch in amd64 arm64 armhf; do
+            p2s_version_package_state "$name-fpm" "$build" '' "$arch" "$name" "$build"
+        done
+    done
+done
+P2S_DISTRO=debian; P2S_RELEASE=13
+for build in 7.3.33-43+debsuryorg13.1+2 7.3.33-41+debsuryorg13.1+php+1 7.3.33-41+debsuryorg13.1+1 7.3.33-43+debsuryorg12.1+1 7.3.33-43+custom+debsuryorg13.1+1 7.3.33-43+debsuryorg13.1+1.local 1:7.3.33-43+debsuryorg13.1+1; do
+    p2s_version_package_state php7.3-cli "$build" '' amd64 php7.3 "$build"
+done
+build=7.3.33-43+debsuryorg13.1+2
+p2s_version_package_state php7.3-cli "$build" '' amd64 php7.2 "$build"
+p2s_version_package_state php7.3-cli "$build" '' amd64 php7.3 7.3.33-42+debsuryorg13.1+1
+p2s_version_package_state php7.3-cli "$build" '' ppc64el php7.3 "$build"
+P2S_DISTRO=ubuntu; P2S_RELEASE=24.04
+build=7.3.33-42+ubuntu24.04.1+deb.sury.org+2
+p2s_version_package_state php7.3-cli "$build" '' ppc64el php7.3 "$build"
+''')
+        self.assertEqual(result.splitlines(), ['N'] * (5 * 8 * 3) + list('NN????????N'))
 
     def test_legacy_panel_rpms_match_the_exact_build_and_publisher(self):
         result = self.shell(r'''

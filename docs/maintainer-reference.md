@@ -1457,7 +1457,7 @@ The default assessment emits `CVE_2026_109618`. The November assessment emits
 known affected and verified fixed references, and the assessment as
 `package_build_status`. APT also records the candidate in `candidate_build_status`.
 Check the package publisher's advisory before adding a fixed backport rule.
-The November rules recognise Canonical's exact security uploads for Ubuntu
+The November rules recognise Canonical's published security revisions for Ubuntu
 [26.04](https://lists.ubuntu.com/archives/resolute-changes/2026-November/031945.html),
 [24.04](https://lists.ubuntu.com/archives/noble-changes/2026-November/061111.html),
 and [26.10](https://lists.ubuntu.com/archives/stonking-changes/2026-November/011394.html).
@@ -1465,7 +1465,18 @@ Those upload records include fixes whose CVE tracker entries still needed
 evaluation when the uploads were reviewed. The [22.04 PHP 8.1 changelog](https://changelogs.ubuntu.com/changelogs/pool/main/p/php8.1/php8.1_8.1.2-1ubuntu2.29/changelog)
 documents its November fixes. Canonical's [CVE-2026-115560 assessment](https://ubuntu.com/security/CVE-2026-115560)
 confirms Jammy's PHP 8.1 was already protected by the earlier change that
-disabled session upload progress on that release.
+disabled session upload progress on that release. Canonical's CVE tracker and
+signed indexes also establish the November Ubuntu Pro and Legacy revisions.
+Freexian's signed Debian ELTS revisions require matching source-package metadata.
+Installed-package recognition leaves the configured APT origin checks in force.
+
+The November checker accepts later revisions within reviewed Sury, Ubuntu,
+Freexian and native AlmaLinux/Rocky Linux package series. Debian and Ubuntu
+packages use dpkg version ordering. AlmaLinux and Rocky Linux use RPM's
+comparison of version and release separately for matching native release formats.
+The [Sury evidence](sury-backport-evidence.md#24-november-mirror-refresh) records
+the current mirror revisions and source checks.
+
 Repository filenames
 are recorded without dumping configuration credentials. PHP package-command URLs
 are redacted.

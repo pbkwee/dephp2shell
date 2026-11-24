@@ -323,12 +323,25 @@ p2s_version_sury_fixed_build_output() {
 }
 
 p2s_version_sury_backport_fixed() {
-    local fixed=${6:-} source=${1#libapache2-mod-}
+    local fixed=${6:-} source=${1#libapache2-mod-} branch suffix serial build
     source=${source%%-*}
+    [ "$4" = "$source" ] && [ "$5" = "$2" ] || return 1
     if [ -z "$fixed" ]; then
         fixed=$(p2s_version_sury_fixed_build_output "$1" "$3" "$2") || return 1
+        [ "$2" = "$fixed" ]
+        return
     fi
-    [ "$4" = "$source" ] && [ "$5" = "$2" ] && [ "$2" = "$fixed" ]
+    # November: compare revisions within the same branch, epoch and repository's build format.
+    # Example: 7.3.33-43+debsuryorg13.1+2 can follow 7.3.33-42+debsuryorg13.1+1.
+    [ "$2" != "$fixed" ] || return 0
+    branch=${fixed%%-*}; branch=${branch%.*}
+    suffix=${fixed#*+}; suffix=${suffix%+*}
+    serial=${2##*+}
+    case "$serial" in ''|*[!0-9]*) return 1 ;; esac
+    case "$2" in "$branch".*"+$suffix+$serial") ;; *) return 1 ;; esac
+    build=${2%"+$suffix+$serial"}
+    printf '%s\n' "${build#"$branch".}" | LC_ALL=C grep -Eq '^[0-9]+-[0-9]+(\.[0-9]+)*$' || return 1
+    p2s_command_exists dpkg && dpkg --compare-versions "$2" ge "$fixed"
 }
 
 p2s_version_sury_november_build_output() {
@@ -336,17 +349,34 @@ p2s_version_sury_november_build_output() {
     p2s_package_is_engine "$name" || return 1
     branch=${name#libapache2-mod-}; branch=${branch%%-*}
     case "$P2S_DISTRO:$P2S_RELEASE:$version" in
-        ubuntu:22.04:*+deb.sury.org+1|ubuntu:24.04:*+deb.sury.org+1) layout=ppa; release=$P2S_RELEASE ;;
+        ubuntu:22.04:*+deb.sury.org+[0-9]*|ubuntu:24.04:*+deb.sury.org+[0-9]*) layout=ppa; release=$P2S_RELEASE ;;
         debian:12:*|debian:12.*:*) release=12 ;;
         debian:13:*|debian:13.*:*) release=13 ;;
         ubuntu:22.04:*|ubuntu:24.04:*|ubuntu:26.04:*) release=$P2S_RELEASE ;;
         *) return 1 ;;
     esac
+    # The current mirror rebuilds have no +php suffix. Keep the earlier reviewed revisions below.
+    case "$layout:$arch:$version" in
+        mirror:amd64:*"+debsuryorg$release.1+"[0-9]*|mirror:arm64:*"+debsuryorg$release.1+"[0-9]*|mirror:armhf:*"+debsuryorg$release.1+"[0-9]*)
+            case "$branch" in
+                php5.6) revision=5.6.40-110 ;;
+                php7.0) revision=7.0.33-98 ;;
+                php7.1) revision=7.1.33-86 ;;
+                php7.2) revision=7.2.34-71 ;;
+                php7.3) revision=7.3.33-42 ;;
+                php7.4) revision=1:7.4.33-38 ;;
+                php8.0) revision=1:8.0.30-32 ;;
+                php8.1) revision=8.1.34-15 ;;
+                *) return 1 ;;
+            esac
+            printf '%s\n' "$revision+debsuryorg$release.1+1"
+            return ;;
+    esac
     case "$layout:$release:$arch" in
         *:amd64|*:arm64|ppa:*:armhf|ppa:*:ppc64el|mirror:12:armhf|mirror:13:armhf|mirror:26.04:armhf) ;;
         *) return 1 ;;
     esac
-    # Exact signed builds checked against their source patch series. See docs/sury-backport-evidence.md.
+    # Earlier signed builds checked against their source patch series. See docs/sury-backport-evidence.md.
     case "$layout:$branch" in
         ppa:php5.6) revision=5.6.40-109 ;;
         ppa:php7.0) revision=7.0.33-97 ;;
@@ -378,6 +408,13 @@ p2s_version_november_package_reference() {
                     affected=8.2.35-1~deb12u1; fixed=8.2.36-1~deb12u1 ;;
                 13:php8.4-*:*~deb13u*|13:libapache2-mod-php8.4:*~deb13u*)
                     affected=8.4.27-1~deb13u1; fixed=8.4.28-1~deb13u1 ;;
+                # Freexian Extended LTS fixes. Keep its APT origin outside automatic updates.
+                11:php7.4-*:*+deb11u*|11:libapache2-mod-php7.4:*+deb11u*)
+                    affected=7.4.33-1+deb11u14; fixed=7.4.33-1+deb11u15 ;;
+                10:php7.3-*:*~deb10u*|10:libapache2-mod-php7.3:*~deb10u*)
+                    affected=7.3.31-1~deb10u16; fixed=7.3.31-1~deb10u17 ;;
+                9:php7.0-*:*+deb9u*|9:libapache2-mod-php7.0:*+deb9u*)
+                    affected=7.0.33-0+deb9u26; fixed=7.0.33-0+deb9u27 ;;
             esac ;;
         deb:ubuntu:Ubuntu)
             case "$version" in *ubuntu*)
@@ -389,6 +426,11 @@ p2s_version_november_package_reference() {
                     26.04:php8.5-*|26.04:libapache2-mod-php8.5) fixed=8.5.4-0ubuntu1.6 ;;
                     24.04:php8.3-*|24.04:libapache2-mod-php8.3) fixed=8.3.6-0ubuntu0.24.04.14 ;;
                     22.04:php8.1-*|22.04:libapache2-mod-php8.1) fixed=8.1.2-1ubuntu2.29 ;;
+                    # Canonical's November ESM builds. APT origin permission is assessed separately.
+                    20.04:php7.4-*|20.04:libapache2-mod-php7.4) fixed=7.4.3-4ubuntu2.29+esm6 ;;
+                    18.04:php7.2-*|18.04:libapache2-mod-php7.2) fixed=7.2.24-0ubuntu0.18.04.17+esm15 ;;
+                    16.04:php7.0-*|16.04:libapache2-mod-php7.0) fixed=7.0.33-0ubuntu0.16.04.16+esm23 ;;
+                    14.04:php5-*|14.04:libapache2-mod-php5|14.04:libapache2-mod-php5filter) fixed=5.5.9+dfsg-1ubuntu4.29+esm19 ;;
                 esac ;;
             esac ;;
         deb:*:Sury/*)
@@ -417,9 +459,10 @@ p2s_version_november_package_reference() {
                     # ALSA-2026:100991 and the preceding Alma build apply the November fixes for this stream.
                     # https://errata.almalinux.org/8/ALSA-2026-100991.html
                     # https://git.almalinux.org/rpms/php/src/commit/22a520b3518479c6c26e02677afc2a4c73dd6cb8/SPECS/php.spec
-                    case "$arch:$release" in
-                        x86_64:7.4.33-8.module_el8.10.0+4379+4cffe92b.alma.1) fixed=$release ;;
-                        x86_64:*) fixed=7.4.33-9.module_el8.10.0+4385+9e3d9df0 ;;
+                    case "$arch" in
+                        x86_64|aarch64|ppc64le|s390x)
+                            fixed=7.4.33-8.module_el8.10.0+4379+4cffe92b.alma.1
+                            if [ "$release" = 7.4.33-9.module_el8.10.0+4385+9e3d9df0 ]; then fixed=$release; fi ;;
                     esac ;;
                 AlmaLinux:8:php:8.0) affected=8.0.30-1.module_el8.10.0+4319+26f10322.alma.1 ;;
                 AlmaLinux:8:php:8.2)
@@ -428,10 +471,11 @@ p2s_version_november_package_reference() {
                 AlmaLinux:9:php:8.0)
                     affected=8.0.30-8.el9_8.alma.1
                     # https://git.almalinux.org/rpms/php/src/commit/7d508466d7b36e1fa43c0bfedefe2e1cc27b7c0a/SPECS/php.spec
-                    if [ "$arch" = x86_64 ]; then
-                        if [ "$release" = 8.0.30-8.el9_8.1 ]; then affected=$release; fi
-                        fixed=8.0.30-8.el9_8.1.alma.1
-                    fi ;;
+                    case "$arch" in
+                        x86_64|aarch64|ppc64le|s390x)
+                            if [ "$release" = 8.0.30-8.el9_8.1 ]; then affected=$release; fi
+                            fixed=8.0.30-8.el9_8.1.alma.1 ;;
+                    esac ;;
                 AlmaLinux:9:php:8.1) affected=8.1.32-1.module_el9.8.0+326+528679fc.alma.1 ;;
                 AlmaLinux:9:php:8.2)
                     affected=8.2.33-1.module_el9.8.0+327+37dfd4b4.alma.1
@@ -445,24 +489,28 @@ p2s_version_november_package_reference() {
                 AlmaLinux:10:php:8.3) affected=8.3.33-1.el10_2.alma.1; fixed=8.3.36-1.el10_2.alma.1 ;;
                 AlmaLinux:10:php8.4:8.4) affected=8.4.27-2.el10_3.1; fixed=8.4.27-2.el10_3.1.alma.1 ;;
             esac
-            # Rocky's AppStream x86_64 RPM changelogs identify the November backports for these exact builds.
+            # Rocky's AppStream RPM changelogs identify the November backport floors.
             # https://download.rockylinux.org/pub/rocky/8/AppStream/x86_64/os/Packages/p/
             # https://download.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/Packages/p/
+            case "$arch" in x86_64|aarch64|ppc64le|s390x) ;; *) printf '|\n'; return ;; esac
             case "$provider:$arch:$P2S_MAJOR:$family:$branch" in
-                'Rocky Linux:x86_64:8:php:7.4')
+                'Rocky Linux:x86_64:8:php:7.4'|'Rocky Linux:aarch64:8:php:7.4')
                     affected=7.4.33-8.module+el8.10.0+40393+c071e357
-                    fixed=7.4.33-8.module+el8.10.0+40472+363a2c29.0.1 ;;
-                'Rocky Linux:x86_64:8:php:8.2')
+                    case "$release" in
+                        7.4.33-9.module+el8.10.0+40479+a65e1b9e) fixed=$release ;;
+                        *) fixed=7.4.33-8.module+el8.10.0+40472+363a2c29.0.1 ;;
+                    esac ;;
+                'Rocky Linux:x86_64:8:php:8.2'|'Rocky Linux:aarch64:8:php:8.2')
                     affected=8.2.35-1.module+el8.10.0+40394+d21b33fb
                     fixed=8.2.35-1.module+el8.10.0+40473+6f592aac.0.1 ;;
                 'Rocky Linux:x86_64:9:php:8.0') affected=8.0.30-8.el9_8.1 ;;
-                'Rocky Linux:x86_64:9:php:8.2')
+                'Rocky Linux:'*:9:php:8.2)
                     affected=8.2.35-1.module+el9.8.0+40395+2f706e64
                     fixed=8.2.35-1.module+el9.9.0+40474+554e1069.0.1 ;;
-                'Rocky Linux:x86_64:9:php:8.3')
+                'Rocky Linux:'*:9:php:8.3)
                     affected=8.3.36-1.module+el9.8.0+40396+4e680bb7
                     fixed=8.3.36-1.module+el9.9.0+40475+972eba12.0.1 ;;
-                'Rocky Linux:x86_64:9:php:8.4')
+                'Rocky Linux:'*:9:php:8.4)
                     affected=8.4.27-1.module+el9.9.0+40418+929a11b6
                     fixed=8.4.27-1.module+el9.9.0+40476+dc5d3092.0.1 ;;
                 'Rocky Linux:x86_64:10:php:8.3') affected=8.3.36-1.el10_2 ;;
@@ -507,25 +555,69 @@ p2s_version_november_package_reference() {
     printf '%s|%s\n' "$affected" "$fixed"
 }
 
+p2s_version_november_rpm_at_least() {
+    local version=$1 fixed=$2 branch layout result
+    branch=${fixed%%-*}; branch=${branch%.*}; branch=${branch/./[.]}
+    case "$fixed" in
+        *.module+el*) layout="module\\+el$P2S_MAJOR\\.[0-9]+\\.0\\+[0-9]+\\+[0-9a-f]{8}(\\.[0-9]+)*" ;;
+        *.module_el*) layout="module_el$P2S_MAJOR\\.[0-9]+\\.0\\+[0-9]+\\+[0-9a-f]{8}(\\.alma\\.[0-9]+)?" ;;
+        *.el*) layout="el${P2S_MAJOR}(_[0-9]+)?(\\.[0-9]+)*(\\.alma\\.[0-9]+)?" ;;
+        *) return 1 ;;
+    esac
+    # Match the native RPM release format before passing package metadata to Lua.
+    printf '%s\n' "$version" | LC_ALL=C grep -Eq "^$branch\\.[0-9]+-[0-9]+(\\.[0-9]+)*\\.$layout$" || return 1
+    case "$version" in *[!0-9A-Za-z.+_-]*) return 1 ;; esac
+    # RPM 4.14 compares version or release segments individually, rather than a full EVR.
+    result=$(p2s_command_run 10 rpm --eval "%{lua: local cmp = rpm.vercmp('${version%%-*}', '${fixed%%-*}'); if cmp == 0 then cmp = rpm.vercmp('${version#*-}', '${fixed#*-}') end; print(cmp)}" 2>/dev/null) || return 1
+    [ "$result" = 0 ] || [ "$result" = 1 ]
+}
+
 p2s_version_november_package_state() {
-    local name=$1 version=$2 vendor=$3 arch=$4 upstream=$5 reference affected fixed comparison=eq
+    local name=$1 version=$2 vendor=$3 arch=$4 upstream=$5 reference affected fixed comparison=eq series serial source
     reference=$(p2s_version_november_package_reference "$name" "$version" "$vendor" "$arch")
     affected=${reference%%|*}; fixed=${reference#*|}
-    # Debian has published fixed floors. Ubuntu upload changelogs establish only the reviewed builds.
+    # Compare later native Ubuntu revisions in the same packaging series.
     case "$P2S_BACKEND:$P2S_DISTRO:$(p2s_package_provider "$name" "$vendor" "$version")" in
         deb:*:Sury/*)
-            if [ -n "$fixed" ] && ! p2s_version_sury_backport_fixed "$name" "$version" "$arch" "${6:-}" "${7:-}" "$fixed"; then
-                fixed=''
-            fi ;;
+            if [ -n "$fixed" ] && p2s_version_sury_backport_fixed "$name" "$version" "$arch" "${6:-}" "${7:-}" "$fixed"; then
+                printf 'N\n'; return
+            fi
+            fixed='' ;;
         deb:debian:Debian|deb:ubuntu:Ubuntu)
-            if p2s_command_exists dpkg; then
-                if [ "$P2S_DISTRO" = debian ]; then comparison=ge; fi
+            case "$P2S_DISTRO:${P2S_RELEASE%%.*}" in
+                debian:9|debian:10|debian:11)
+                    source=${name#libapache2-mod-}; source=${source%%-*}
+                    if [ "${6:-}" != "$source" ] || [ "${7:-}" != "$version" ]; then
+                        fixed=''; affected=''
+                    fi ;;
+            esac
+            if [ -n "$fixed$affected" ] && p2s_command_exists dpkg; then
+                if [ "$P2S_DISTRO" = debian ] && [ "${P2S_RELEASE%%.*}" -ge 12 ]; then
+                    comparison=ge
+                elif [ -n "$fixed" ]; then
+                    case "$P2S_DISTRO:$fixed" in
+                        debian:*) series="${fixed%u*}u" ;;
+                        ubuntu:*+esm*) series="${fixed%+esm*}+esm" ;;
+                        *) series="${fixed%.*}." ;;
+                    esac
+                    case "$version" in
+                        "$series"*)
+                            serial=${version#"$series"}
+                            case "$serial" in ''|*[!0-9]*) ;; *) comparison=ge ;; esac ;;
+                    esac
+                fi
                 if [ -n "$fixed" ] && dpkg --compare-versions "$version" "$comparison" "$fixed"; then
                     printf 'N\n'; return
                 fi
                 if [ -n "$affected" ] && dpkg --compare-versions "$version" le "$affected"; then
                     printf 'Y\n'; return
                 fi
+            fi ;;
+        rpm:almalinux:AlmaLinux|rpm:rocky:Rocky\ Linux)
+            if [ "$upstream" != N ] && [ -n "$fixed" ] &&
+                [ "${version#0:}" != "$fixed" ] && [ "${version#0:}" != "$affected" ] &&
+                p2s_version_november_rpm_at_least "${version#0:}" "$fixed"; then
+                printf 'N\n'; return
             fi ;;
     esac
     [ "$P2S_BACKEND" != rpm ] || version=${version#0:}
@@ -1783,7 +1875,7 @@ $record"
         source=${metadata%%|*}; source_version=${metadata#*|}
         if [ "$source" != "$expected" ] || [ "$(p2s_version_package_state "$name" "$candidate" '' "$arch" "$source" "$source_version")" != N ]; then
             if ${P2S_NOVEMBER:-false}; then
-                p2s_fix_block candidate_fix "The Sury candidate for $name ($candidate) lacks verified November fixes for this branch, suite and architecture."
+                p2s_fix_block candidate_fix "We could not verify the November fixes in the Sury candidate for $name ($candidate) on this release and architecture. Check the complete package build against Sury's advisory."
             else
                 p2s_fix_block candidate_fix "The Sury candidate for $name has no reviewed fix for both CVEs on this branch, suite and architecture."
             fi
@@ -5222,7 +5314,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-24.2 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-24.3 check_options=--check
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;

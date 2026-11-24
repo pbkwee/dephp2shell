@@ -284,6 +284,37 @@ CVE-2026-129289, CVE-2026-129291 and CVE-2026-129496.
   12/13 and Ubuntu 26.04 indexes cover amd64, arm64 and armhf. The Ubuntu
   22.04/24.04 indexes cover amd64 and arm64. Debian 11 lacked a November build
   in the index checked.
-- Recognition requires the exact binary revision and matching source-package
-  name and revision. Candidate approval also checks the configured repository
-  through the existing APT origin and transaction guards.
+- The November checker requires matching binary and source-package revisions.
+  Candidate approval also checks the configured repository through the existing
+  APT origin and transaction guards.
+
+### 24 November mirror refresh
+
+Verified the current signed indexes for Debian 12, Debian 13, Ubuntu 22.04,
+24.04 and 26.04. Their amd64, arm64 and armhf indexes match the source revisions
+below. The 40 packaging archives matched the signed source checksums. Their
+changelogs and enabled patch series retain the five applicable November fixes.
+The full revision appends `+debsuryorg<release>.1+1`.
+
+| PHP branch | Current mirror base revision |
+| --- | --- |
+| 5.6 | `5.6.40-110` |
+| 7.0 | `7.0.33-98` |
+| 7.1 | `7.1.33-86` |
+| 7.2 | `7.2.34-71` |
+| 7.3 | `7.3.33-42` |
+| 7.4 | `1:7.4.33-38` |
+| 8.0 | `1:8.0.30-32` |
+| 8.1 | `8.1.34-15` |
+
+The [Trixie PHP 7.3 packaging archive](https://packages.sury.org/php/pool/main/p/php7.3/php7.3_7.3.33-42%2Bdebsuryorg13.1%2B1.debian.tar.xz)
+has SHA256 `bdf1e46dff0ced32e5f3f684ccdc9b369259855155fb15e49e823ec68e9e7412`.
+Its changelog introduces the November fixes in `7.3.33-40`, and `-42`
+retains them. The mirror's Bullseye snapshot still contained October builds.
+Jammy and Noble's Launchpad PPA still use the earlier PPA revisions above.
+
+For November, compare later revisions in the same reviewed package series
+using Debian version ordering. Keep the epoch, branch, suite, architecture,
+repository-specific suffix and matching source version checks together.
+Local suffixes and different packaging series require separate evidence.
+The October rules above retain their exact version checks.
