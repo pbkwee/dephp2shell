@@ -196,7 +196,10 @@ Unresolved final results emit one `dss:warn: Next action:` line for reporting.
 Advice covers a single unresolved PHP version as well as mixed installations:
 confirm website, application, scheduled-job and dependency requirements, then
 choose verified fixed packages, workload migration or reviewed removal of
-unneeded PHP. Existing blockers require resolution before retrying. If assessed
+unneeded PHP. If the inventory includes a newer package-owned runtime, the advice
+can name the branch, ask for verification of a maintained fixed build, and explain
+how to move each website or scheduled job before reviewing removal of the older
+packages. Existing blockers require resolution before retrying. If assessed
 builds are fixed but scope/restart verification remains incomplete, the next
 action requests that verification instead. Fixed/no-PHP results emit no action.
 Upstream end-of-life status remains separate from the PHP2Shell assessment.
@@ -333,11 +336,13 @@ selectors. Verified necessary upgrades of reviewed installed native libraries ar
 other dependency changes still block the plan. Mixed panel-vendor and Sury Debian updates are refused before
 either updater runs.
 
-Every selected Sury package must use its normal APT candidate. Explicit Sury
-migration also requires Sury candidates for native packages being replaced. A
-missing source or a native normal candidate blocks the migration before package
-installation; it does not fall back to an ordinary native update. Source addition
-still needs the separate `--add-sury-repository` consent. The candidate
+Eligible PHP branches get verified fixes from their current publishers first.
+Only branches without a verified current-source fix can enter the separately
+authorized Sury migration phase. When APT prefers a competing publisher, a
+verified native candidate at the same positive priority can still be selected
+by exact version. A verified native fix at a conflicting priority requires
+manual policy review. A source addition needs separate `--add-sury-repository`
+consent. Every selected Sury package must use its normal APT candidate, which
 must match a canonical Sury/PPA URI, expected release Origin and measured OS
 suite. Its package architecture and source-package name must match the installed
 package. Engine candidates must retain the PHP branch and have a reviewed fix
@@ -385,7 +390,9 @@ record distinguishes the guarded Sury path from those remaining boundaries.
 `--enable-extra-fixes --migrate-php-to-sury` permits versioned native Debian/Ubuntu PHP
 packages to use the normal candidate from an already configured official Sury
 source. `DP2S_MIGRATE_PHP_TO_SURY=true` is the environment equivalent of the
-method flag, but still requires `--enable-extra-fixes`. Use ordinary `--fix` first.
+method flag, but still requires `--enable-extra-fixes`. The script classifies
+each branch against freshly refreshed current sources, updates eligible branches
+first and retains their installed versions during the fallback transaction.
 The disruptive flag implies fix mode unless the operator explicitly selects
 `--check`; check mode remains observational. Missing method consent, malformed
 booleans and inconsistent option combinations exit 64 before inventory or logs.
@@ -426,18 +433,20 @@ architecture and transaction scope. Unknown or unsafe lines fail closed;
 `--add-sury-repository` / `DP2S_ADD_SURY_REPOSITORY=true` additionally permits
 one matching official repository, only with both migration consents. It uses an
 existing `curl` or `wget` and `gpg`; it does not install prerequisite tooling.
-A dedicated source and `Signed-By` keyring are created without overwriting existing
-files. New directories and key/source files are readable by APT's sandbox user.
+A dedicated source, `Signed-By` keyring and APT preference are created without
+overwriting existing files. The preference allows the selected PHP source
+packages and the reviewed Debian 11 PCRE2 dependency if applicable. The script
+verifies that APT excludes other packages from the new source by default.
 The downloaded key's sole primary fingerprint must match the reviewed Debian
 `15058500A0235D97F5D10063B188E2B695BD4743` or Ubuntu
 `B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6` key. HTTPS bootstraps the key; APT
 must then verify repository signatures. Global trusted keys, trust overrides,
 other source definitions and PHP selectors are not changed.
 
-The exit trap removes only the newly created source/key pair if no PHP package
-installation was attempted. After any installation attempt it retains that source,
-including after failure, so recovery and subsequent updates can use it. There is
-no automatic package rollback. An issue-specific fix does not restore OS support.
+The exit trap removes only the new source, key and preference when no migration
+installation was attempted. An earlier current-source update leaves this cleanup
+in effect. After a migration install attempt, the files remain for recovery and
+future updates. There is no automatic package rollback.
 See [resolution options](resolution-options.md) for the customer-facing choices.
 
 The check collects source evidence without refreshing indexes, installing query
@@ -687,7 +696,7 @@ manifest method identifiers retain their existing internal names.
 | Method option | Environment setting | Status and limit |
 | --- | --- | --- |
 | [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | `DP2S_MIGRATE_PHP_TO_SURY=true` | Implemented. Keep reviewed package names, PHP branches, architecture and extension APIs; use authenticated normal candidates. |
-| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | `DP2S_ADD_SURY_REPOSITORY=true` | Implemented. Also requires migration consent; add only the matching official source and verified dedicated key. |
+| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | `DP2S_ADD_SURY_REPOSITORY=true` | Implemented. Adds a matching official source, verified dedicated key and scoped APT preference when a branch needs the fallback. |
 | [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | `DP2S_REFRESH_SURY_SIGNING_KEY=true` | Refresh only the standard package-owned Debian Sury signing keyring, with a verified fingerprint and persistent backup. No source rewrite; custom and extrepo layouts stay blocked. |
 | [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | `DP2S_ADD_OS_SECURITY_REPOSITORY=true` | Add only matching main security metadata using the existing packaged archive keyring. No Virtualmin or general source rewrite method exists. |
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching repository and package publisher identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
@@ -1436,6 +1445,8 @@ Additional diagnostic records preserve the reasons behind readable summaries:
   separate environments requires its own update and restart review; verify the PHP packages and workers inside each affected environment after its update.
 - `service_mapping`: PID, process name, executable, observed service and missing-restart reason.
 - `process_summary`: matching process count and pending deleted-file restart flag.
+- `php_restart_warning`: `details_emitted` signals that this inventory printed
+  warnings that name the processes and old files still in use.
 - `inventory_gap`: missing package-manager support or unavailable package inventory.
 
 `script_revision` identifies the script behaviour revision; maintain it when
@@ -1451,9 +1462,10 @@ The November rules recognise Canonical's exact security uploads for Ubuntu
 [24.04](https://lists.ubuntu.com/archives/noble-changes/2026-November/061111.html),
 and [26.10](https://lists.ubuntu.com/archives/stonking-changes/2026-November/011394.html).
 Those upload records include fixes whose CVE tracker entries still needed
-evaluation when the uploads were reviewed. The
-[22.04 upload](https://lists.ubuntu.com/archives/jammy-changes/2026-November/050900.html)
-and the reviewed Ubuntu Pro builds leave CVE-2026-115560 coverage open.
+evaluation when the uploads were reviewed. The [22.04 PHP 8.1 changelog](https://changelogs.ubuntu.com/changelogs/pool/main/p/php8.1/php8.1_8.1.2-1ubuntu2.29/changelog)
+documents its November fixes. Canonical's [CVE-2026-115560 assessment](https://ubuntu.com/security/CVE-2026-115560)
+confirms Jammy's PHP 8.1 was already protected by the earlier change that
+disabled session upload progress on that release.
 Repository filenames
 are recorded without dumping configuration credentials. PHP package-command URLs
 are redacted.

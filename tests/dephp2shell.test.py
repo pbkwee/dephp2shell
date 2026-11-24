@@ -59,6 +59,21 @@ if [ -s "$P2S_WORK/apt-policy-records" ]; then printf 'STALE_POLICY\n'; fi
         self.assertNotIn('private-path', out)
         self.assertNotIn('STALE_POLICY', out)
 
+    def test_apt_dependency_warning_names_the_conflicting_packages(self):
+        out = self.shell(r'''
+cat > "$P2S_WORK/apt.log" <<'EOF'
+The following packages have unmet dependencies:
+ php8.2-common : Breaks: php8.2-apcu (< 5.1.23-1~) but 5.1.22+4.0.11-2 is to be installed
+ php8.2-common : Breaks: php8.2-apcu (< 5.1.23-1~) but 5.1.22+4.0.11-2 is to be installed
+ php8.2-common : Depends: https://user:private-token@repo.invalid/package but it is not installable
+E: Unable to correct problems, you have held broken packages.
+EOF
+p2s_package_log_report "$P2S_WORK/apt.log"
+''')
+        self.assertEqual(out.count('dss:warn: APT reported a dependency problem.'), 1)
+        self.assertIn('APT reported a dependency problem. php8.2-common : Breaks: php8.2-apcu (< 5.1.23-1~)', out)
+        self.assertNotIn('private-token', out)
+
     def test_failed_candidate_query_keeps_operation_exit_and_redacted_error(self):
         out = self.shell(r'''
 p2s_command_run() { printf 'E: failed https://login:private-token@repo.invalid/private-path\n' >&2; return 124; }
@@ -381,7 +396,7 @@ p2s_package_deb_policy_collect php8.2-cli
         self.assertIn('no allowed installation candidate', out)
         self.assertNotIn('Negative APT priorities were reported', out)
 
-    def test_dependency_failure_has_a_customer_explanation_without_overriding_restrictions(self):
+    def test_dependency_failure_reports_package_constraints_and_next_step(self):
         for diagnostic in ('E: Packages need to be removed but remove is disabled.',
                            'libapache2-mod-php : Depends: libapache2-mod-php8.2 but it is not installable',
                            'All matches were filtered out by modular filtering',
@@ -390,8 +405,9 @@ p2s_package_deb_policy_collect php8.2-cli
                 out = self.shell("printf '%s\\n' " + shlex.quote(diagnostic) + r""" > "$P2S_WORK/failure"
 p2s_package_log_report "$P2S_WORK/failure"
 """)
-                self.assertIn('could not find an allowed, compatible update', out)
-                self.assertIn('Restrictions and package-removal protection were not bypassed', out)
+                self.assertIn('could not resolve the update with its current settings', out)
+                self.assertIn('Review the package rules and available versions in the run manifest.', out)
+                self.assertIn('dss:manifest:package_resolution_failure:beforefix|dependency_or_policy|', out)
 
 
     def test_loading_versionlock_plugin_is_not_reported_as_an_update_failure(self):
@@ -694,6 +710,7 @@ printf 'php-cli|8.0.30-8.el9_8.1|x86_64|Rocky\n' > "$P2S_WORK/packages"
 p2s_command_exists() { [ "$1" = dnf ]; }
 p2s_command_run() {
     case " $* " in
+        *' --version '*) printf '4.7.0\n'; return 0;;
         *' makecache '*) return 0;;
         *' --setopt=tsflags=test '*) printf 'Dependencies resolved.\nNothing to do.\nComplete!\n'; return 0;;
         *) printf 'UNEXPECTED_INSTALL\n'; return 97;;
@@ -707,7 +724,7 @@ printf 'RC=%s|INSTALL_ATTEMPTED=%s\n' "$?" "${P2S_TRANSACTION_ATTEMPTED:-false}"
                 self.assertNotIn('UNEXPECTED_INSTALL', out)
                 self.assertNotIn('transaction_scope', out)
                 if pending == 'false':
-                    self.assertIn('no newer installed PHP packages', out)
+                    self.assertIn('no newer versions for the installed PHP packages', out)
                     self.assertIn('no_candidate', out)
 
     def test_mixed_php_packages_preserve_worst_state_in_either_order(self):
@@ -971,22 +988,23 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
         self.assertNotIn('Custom PHP', out)
 
     def test_final_results_distinguish_unknown_vulnerable_and_scoped_clearance(self):
-        for state, count, phrase in [('Y', 2, 'identified as vulnerable'),
+        for state, count, phrase in [('Y', 2, 'The check found PHP affected by PHP2Shell'),
                                       ('?', 2, 'could not verify whether all PHP installations include both PHP2Shell fixes'),
                                       ('N', 2, 'All detected PHP installations include both PHP2Shell fixes'),
-                                      ('N', 0, 'No PHP installation was found')]:
+                                      ('N', 0, 'The check found no PHP')]:
             with self.subTest(state=state, count=count):
                 out = self.shell('P2S_STATE=' + shlex.quote(state) + '; P2S_COUNT=' + str(count)
                                  + '\np2s_summary_print_result')
                 self.assertIn('Result:', out)
                 self.assertIn(phrase, out)
-                self.assertEqual(out.count('RimuHosting offers a no-cost, no-obligation investigation'),
+                self.assertEqual(out.count('RimuHosting offers a free, no-obligation assessment'),
                                  0 if state == 'N' else 1)
                 self.assertEqual(len(out.splitlines()), 1 if state == 'N' else 3)
                 self.assertEqual(out.count('dss:warn: Next action:'), 0 if state == 'N' else 1)
                 if state != 'N':
-                    self.assertIn('including for servers hosted elsewhere', out)
-                    self.assertIn('Any changes or further work are agreed separately.', out)
+                    self.assertIn('servers hosted here or elsewhere', out)
+                    self.assertIn("We'll agree any further work with you first.", out)
+                    self.assertIn('https://distrorejuve.com/', out)
 
     def test_unresolved_php_versions_get_conditional_migration_or_removal_guidance(self):
         cases = [
@@ -1041,13 +1059,52 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 action = next(row for row in out.splitlines() if row.startswith('dss:warn: Next action:'))
                 self.assertEqual(out.count('dss:warn: Next action:'), 1)
                 self.assertIn(expected, action)
-                self.assertEqual('Resolve the reported update blockers before retrying.' in action, blocked)
+                self.assertEqual('Resolve the problems in the warnings before running the update.' in action, blocked)
                 self.assertIn('STATE=' + state + '|BLOCKED=' + str(blocked).lower() + '|RESTART=true', out)
                 if state == '?' and '|N|' in record:
                     self.assertNotIn('Obtain verified fixed packages', action)
                     self.assertIn('pending PHP restarts', action)
                 else:
                     self.assertNotIn('For unknown', action)
+
+    def test_next_action_guides_moving_workloads_to_newer_installed_php(self):
+        def runtime(version, state, role, publisher='Debian', evidence='engine_package_assessment'):
+            return f'{version}|{state}|{role}||{publisher}|{version}-1|{state}|executable|{evidence}'
+
+        old = runtime('7.4.33', '?', 'PHP-FPM')
+        web = runtime('8.4.28', 'N', 'PHP-FPM')
+        cli = runtime('8.4.28', 'N', 'command line')
+        cases = [
+            ([old, web, cli], ['verified the November PHP fixes', 'changing each site’s PHP handler', 'compatible scheduled jobs']),
+            ([old, web], ['verified the November PHP fixes', 'changing each site’s PHP handler', 'command-line runtime separately']),
+            ([old, cli], ['verified the November PHP fixes', 'command-line applications', 'web handler separately']),
+            ([old, runtime('8.4.27', 'Y', 'PHP-FPM')], ['maintained package build includes', 'rerun the check before moving']),
+            ([old, web, runtime('8.4.27', '?', 'PHP-FPM')], ['maintained package build includes']),
+            ([runtime('8.9.5', 'Y', 'PHP-FPM'), runtime('8.10.1', 'N', 'PHP-FPM')], ['installed PHP 8.10 components']),
+            ([old, runtime('8.4.28', 'N', 'runtime libraries', evidence='verified_version_rule')], []),
+            ([old, runtime('8.4.28', 'N', 'command line', publisher='cPanel internal')], []),
+            ([old, runtime('8.4.28', 'N', 'command line', publisher='unverified source')], []),
+            ([runtime('8.4.27', '?', 'PHP-FPM'), web], []),
+            ([runtime('8.5.1', '?', 'PHP-FPM'), web], []),
+        ]
+        for records, expected in cases:
+            with self.subTest(records=records):
+                out = self.shell('P2S_MODE=check; P2S_STATE=?; P2S_NOVEMBER=true; P2S_COUNT=2\n'
+                                 "printf '%s\\n' " + ' '.join(map(shlex.quote, records))
+                                 + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_result')
+                action = next(line for line in out.splitlines() if line.startswith('dss:warn: Next action:'))
+                for phrase in expected:
+                    self.assertIn(phrase, action)
+                if expected:
+                    self.assertIn('Test the migrated workloads.', action)
+                    self.assertIn('proposed removals before manually uninstalling', action)
+                else:
+                    self.assertIn('Obtain verified fixed packages or migrate required workloads', action)
+                    self.assertNotIn('Confirm ongoing publisher support', action)
+                if 'web handler separately' in expected:
+                    self.assertNotIn('changing each site’s PHP handler', action)
+                if 'maintained package build includes' in expected:
+                    self.assertNotIn('The check verified the November PHP fixes', action)
 
     def test_idle_process_observation_gets_one_shared_requirement_review(self):
         for observations, expected in [('executable module', 1), ('running_path running_path', 0)]:
@@ -1077,9 +1134,9 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                                  "printf '%s\\n' " + ' '.join(map(shlex.quote, records))
                                  + ' > "$P2S_WORK/summary-versions"\np2s_summary_print_result')
                 result = next(row for row in out.splitlines() if 'Result:' in row)
-                self.assertEqual('Some PHP installations include both PHP2Shell fixes; others still need verification or an update.' in result, mixed)
+                self.assertEqual('The check verified both PHP2Shell fixes for some PHP installations.' in result, mixed)
                 if mixed:
-                    self.assertIn('PHP versions needing attention', result)
+                    self.assertIn('Review the versions below', result)
                     self.assertNotIn('does not prove', result)
 
     def test_fixed_host_versions_do_not_clear_unverified_other_environments(self):
@@ -1263,14 +1320,15 @@ printf 'STATE=%s\n' "$P2S_STATE"
                 self.assertIn('STATE=' + state, out)
                 self.assertNotIn('UNEXPECTED_PREFLIGHT', out)
                 if assessment == 'eligible_to_attempt':
-                    self.assertIn('appears suitable for an update attempt', out)
-                    self.assertIn('whether patched packages are available', out)
-                    self.assertIn('explicitly enabled Sury migration method' if scenario == 'sury_migration'
+                    self.assertIn('The local checks passed.', out)
+                    self.assertIn('attempts to install eligible fixes', out)
+                    self.assertIn('with Sury allowed as a fallback' if scenario == 'sury_migration'
                                   else 'existing PHP package sources', out)
                 elif assessment == 'blocked':
-                    self.assertIn('cannot proceed under the reported conditions', out)
+                    self.assertIn('could not confirm it was safe to run the PHP update', out)
                 elif assessment == 'unknown':
-                    self.assertIn('fix feasibility remains unresolved until the package sources and candidates are checked', out)
+                    self.assertIn('The local checks found no blocker.', out)
+                    self.assertIn('attempts to install any fixes that pass the package checks', out)
 
     def test_check_mode_runs_only_local_preflight_commands(self):
         for backend, manager in [('deb', 'apt-get'), ('rpm', 'dnf'), ('rpm', 'yum')]:
@@ -1462,6 +1520,7 @@ p2s_command_exists() { case "$1" in apt-get|apt-cache|dpkg|dnf) return 0 ;; *) r
 p2s_package_deb_candidate() { P2S_DEB_CANDIDATE=8.4.27-1; }
 p2s_command_run() {
     case " $* " in
+        *' --version '*) printf '4.7.0\n'; return 0 ;;
         *' apt-cache '*) return 0 ;;
         *' update '|*' makecache '*) return 0 ;;
         *' -s '*|*' --setopt=tsflags=test '*)
@@ -1815,10 +1874,17 @@ p2s_command_exists() { case "$1" in dnf|yum) return 0;; *) return 1;; esac; }
 p2s_command_run() {
     [ "$2" = dnf ] || return 96
     case " $* " in
+        *' --version '*) printf '4.7.0\\n'; return 0 ;;
         *' makecache '*) stage=refresh ;;
         *' --setopt=tsflags=test '*) stage=test ;;
         *) stage=install ;;
     esac
+    if [ "$stage" != refresh ]; then
+        case " $* " in
+            *' --setopt=allow_vendor_change=false '*) ;;
+            *) printf 'VENDOR_GUARD_MISSING\\n' >> "$P2S_WORK/calls"; return 97 ;;
+        esac
+    fi
     printf 'STAGE=%s\\n' "$stage" >> "$P2S_WORK/calls"
     if [ "$stage" = test ]; then
         printf '%s\\n' 'Upgrading:' ' php-cli x86_64 8.4.27-1 appstream 4 M' 'Transaction Summary'
@@ -1830,10 +1896,56 @@ printf 'RC=%s|BLOCKED=%s\\n' "$?" "$P2S_BLOCKED"
 cat "$P2S_WORK/calls"
 ''')
                 self.assertIn('RC=0|BLOCKED=false' if fail_stage == 'none' else 'RC=1|BLOCKED=true', out)
+                self.assertNotIn('VENDOR_GUARD_MISSING', out)
                 expected = ['refresh', 'test', 'install']
                 if fail_stage != 'none':
                     expected = expected[:expected.index(fail_stage) + 1]
                 self.assertEqual(re.findall(r'^STAGE=(.*)$', out, re.M), expected)
+
+    def test_rpm_publisher_guard_accepts_dnf_backed_yum_and_blocks_unverified_resolvers(self):
+        cases = [
+            ('yum', '4.4.2', 'AlmaLinux', 'DNF4'),
+            ('dnf', 'dnf5 version 5.2.17.0', 'AlmaLinux', 'DNF5'),
+            ('yum', '3.4.3', 'AlmaLinux', None),
+            ('dnf', '4.4.1', 'AlmaLinux', None),
+            ('dnf', '4.7.0', '(none)', None),
+        ]
+        for manager, version, vendor, guard in cases:
+            with self.subTest(manager=manager, version=version, vendor=vendor):
+                settings = 'fixture_manager=' + shlex.quote(manager) + '; fixture_version=' + shlex.quote(version) + '; fixture_vendor=' + shlex.quote(vendor)
+                out = self.shell(settings + r'''
+printf 'php-cli|8.4.26-1|x86_64|%s\n' "$fixture_vendor" > "$P2S_WORK/packages"
+p2s_command_exists() { [ "$1" = "$fixture_manager" ]; }
+p2s_command_run() {
+    [ "$2" = "$fixture_manager" ] || return 96
+    case " $* " in
+        *' --version '*) printf '%s\n' "$fixture_version"; return 0 ;;
+        *' makecache '*) printf 'CACHE\n' >> "$P2S_WORK/calls"; return 0 ;;
+    esac
+    printf 'UPDATE: %s\n' "$*" >> "$P2S_WORK/calls"
+    case " $* " in
+        *' --setopt=tsflags=test '*) printf 'Upgrading:\n php-cli x86_64 8.4.27-1 appstream 4 M\nTransaction Summary\n' ;;
+    esac
+}
+p2s_package_rpm_update
+printf 'RC=%s|ATTEMPTED=%s\n' "$?" "${P2S_TRANSACTION_ATTEMPTED:-false}"
+if [ -f "$P2S_WORK/calls" ]; then cat "$P2S_WORK/calls"; fi
+''')
+                if guard is None:
+                    self.assertIn('rpm_vendor|', out)
+                    self.assertIn('RC=1|ATTEMPTED=false', out)
+                    self.assertNotIn('CACHE', out)
+                    self.assertNotIn('UPDATE:', out)
+                else:
+                    self.assertIn('RC=0|ATTEMPTED=true', out)
+                    self.assertIn(f'{manager}|{guard}|vendor_change_disabled', out)
+                    update_commands = re.findall(r'^UPDATE: (.*)$', out, re.M)
+                    self.assertEqual(len(update_commands), 2)
+                    for command in update_commands:
+                        self.assertIn('--setopt=allow_vendor_change=false', command)
+                        self.assertEqual('--clear-vendor-policies' in command, guard == 'DNF5')
+                    self.assertIn('--setopt=tsflags=test', update_commands[0])
+                    self.assertNotIn('--setopt=tsflags=test', update_commands[1])
 
     def test_main_incomplete_fix_cannot_report_safe(self):
         for fix_status, after, expected in [(1, 'N', '?'), (0, 'Y', 'Y'), (0, '?', '?'), (0, 'N', 'N')]:
@@ -1865,6 +1977,33 @@ p2s_fix_run() { exit 91; }; p2s_command_run() { return 0; }
 (p2s_main --fix)
 ''')
         self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618N', out)
+
+    def test_el6_november_without_php_requires_a_complete_inventory(self):
+        for rpm_status, expected in [(0, 'N'), (1, '?')]:
+            with self.subTest(rpm_status=rpm_status):
+                out = self.shell(f'rpm_status={rpm_status}\n' + r'''
+mkdir -p "$P2S_WORK/etc" "$P2S_WORK/proc/1"
+printf 'CentOS release 6.10 (Final)\n' > "$P2S_WORK/etc/redhat-release"
+printf '1 (init) S 0\n' > "$P2S_WORK/proc/1/stat"
+id() { printf '0\n'; }
+p2s_work_directory_init() { :; }
+p2s_command_exists() {
+    case "$1" in dpkg|dpkg-query|yum|dnf|systemctl|service) return 1 ;; esac
+    command -v "$1" >/dev/null 2>&1
+}
+p2s_command_run() {
+    case "$2:$3" in
+        rpm:-qa) printf 'bash|0:4.1.2-48.el6|x86_64|install ok installed|CentOS\n'; return "$rpm_status" ;;
+        df:-Pk) printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 999999 0 999999 0%% /\n' ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+(P2S_NOVEMBER=true; p2s_main --check)
+''', isolated_paths=True, isolated_sources=True)
+                self.assertIn('Operating system: centos 6.10.', out)
+                self.assertIn('dss:isvulnerable:beforefix: CVE_2026_126714' + expected, out)
+                self.assertIn('dss:isvulnerable:afterfix: CVE_2026_126714' + expected, out)
+                self.assertEqual('No PHP update is needed for this issue.' in out, expected == 'N')
 
     def test_no_php_suppresses_only_unneeded_os_update_warning(self):
         for mode, state, count in [('check', 'N', 0), ('fix', 'N', 0),
@@ -2263,7 +2402,7 @@ mkdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
 rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
 (p2s_main --fix)
 """, status=1)
-                self.assertEqual(out.count('RimuHosting offers a no-cost, no-obligation investigation'), 1)
+                self.assertEqual(out.count('RimuHosting offers a free, no-obligation assessment'), 1)
                 if transaction == restart == 'false':
                     self.assertIn('No PHP package installation or service restart was attempted.', out)
                     self.assertIn('fix_outcome:afterfix|blocked|', out)

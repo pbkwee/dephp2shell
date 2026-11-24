@@ -85,6 +85,14 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
         self.assertIn('libpcre2-8-0:amd64=10.42-2', out)
         self.assertNotIn('UNEXPECTED_', out)
 
+    def test_extra_php_package_explains_why_the_transaction_stopped(self):
+        out = self.run_plan('lib=php8.2')
+        self.assertIn('RC=1', out)
+        self.assertIn('blocker:beforefix|dependency_scope|APT also proposed changing php8.2', out)
+        self.assertIn('stopped this APT transaction before installing anything', out)
+        self.assertIn('apt-cache policy php8.2', out)
+        self.assertNotIn('dependency_approval:', out)
+
     def test_already_current_unversioned_selectors_are_not_plan_actions(self):
         for name in ('php', 'php-cli', 'php-common', 'libapache2-mod-php'):
             with self.subTest(name=name):

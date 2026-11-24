@@ -3,6 +3,9 @@
 Read README.md and docs/maintainer-reference.md before changing the script.
 Keep the delivered tool self-contained and compatible with Bash 3.1 and old AWK.
 Preserve the documented machine records, exit statuses and source-preservation guards.
+Review the customer output for each affected check and update outcome. State
+what the run found, what it changed, and what the operator should do next.
+Verify parsed prefixes and machine records separately from the prose.
 Keep command-line and environment options aligned; public options use DP2S_.
 
 Run `python3 tests/run.py`, `bash -n dephp2shell.sh` and

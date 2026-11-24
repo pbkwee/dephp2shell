@@ -285,7 +285,7 @@ scripts and hosting-panel updaters have their own effects, explained below.
 | --- | --- | --- | --- |
 | `--fix` | No direct source/key edits by this script. Panel tools have their own scope. | Refresh indexes, install allowed PHP updates and replace supported workers. | Obtain fixes through existing sources; package scripts and restarts can interrupt sites. |
 | `--migrate-php-to-sury` | Unchanged unless repository addition is separately permitted. | Replace eligible distribution PHP packages with Sury/PPA builds of the same PHP branch. | Obtain a verified fix from Sury/ondrej; future PHP updates use that repository and applications still need testing. |
-| `--add-sury-repository` | Can add one source file and a dedicated key. | Make the matching Sury/PPA repository available for the approved migration. | Supply missing candidates; the new source can affect future package-manager choices. |
+| `--add-sury-repository` | Can add one source file, a dedicated key and a scoped preference. | Make the matching Sury/PPA repository available for the approved migration. | Supply missing candidates; the new source can affect future package-manager choices. |
 | `--refresh-sury-signing-key` | Replace the standard Sury keyring; retain a backup. Source definitions stay unchanged. | Repair trust for an existing, verified standard Sury definition. | Restore authenticated repository access; a bad URL, wrong suite or unavailable package remains a separate problem. |
 | `--add-os-security-repository` | Add a source file using the installed Debian/Ubuntu archive keyring. | Enable the matching native `main` security repository. | Make native security updates available; the persistent source also affects future updates outside PHP. |
 | `--configure-pending-php-packages` | No direct source/key edits. | Finish setup for explicitly identified pending PHP packages. | Complete an interrupted installation; package setup scripts can change configuration and services. |
@@ -312,9 +312,9 @@ services. Its information comes from cached indexes; refresh the repaired or new
 
 Switch from distribution PHP packages to third-party Sury (Debian) or ondrej PHP PPA (Ubuntu) packages while keeping the PHP version branch your applications use. This also changes where future PHP updates come from.
 
-Use this when an eligible distribution PHP package needs a fix that an appropriate
-Sury/PPA build can supply. Try the configured PHP package repositories first. Selecting migration can
-choose Sury even when a distribution update would also have worked.
+The script checks the current package publishers first and applies any verified
+updates it finds there. Sury or the PPA is a fallback for eligible PHP branches
+that still lack a verified fix from their current source.
 
 **Option:** `--migrate-php-to-sury`
 
@@ -325,10 +325,9 @@ On Debian, the alternative package repository is Sury's PHP repository at
 `https://ppa.launchpadcontent.net/ondrej/php/ubuntu`. These are third-party PHP
 sources, separate from Debian's and Ubuntu's own security repositories.
 
-With this option alone, the repository must already be configured. An explicit
-migration requires Sury candidates; a native candidate stops it before package
-installation. If the source is missing, separately select
-`--add-sury-repository`; existing pins are never overridden to force a switch. The script
+With this option alone, the fallback repository must already be configured.
+If a branch needs the fallback and its source is missing, separately select
+`--add-sury-repository`. The script honours existing APT priorities. It
 refreshes APT indexes and asks APT for eligible packages through that source. It
 checks the normal selected candidate, package publisher, OS suite, architecture and exact
 package version. It does not fetch a guessed `.deb` URL or search an old archive
@@ -356,7 +355,9 @@ sudo bash dephp2shell.sh --fix --enable-extra-fixes --migrate-php-to-sury
 
 ## Add the Sury or PPA repository
 
-Add the missing update source so the server can look for a fixed PHP build. The new source can affect future software updates. After refreshing its indexes, the script checks for a suitable fixed build.
+Allow the script to add the update source if an eligible PHP branch still lacks
+a verified current-source fix. The new source is limited to the selected PHP
+branches and the reviewed Debian 11 PCRE2 dependency where applicable.
 
 This additionally permits a missing repository to be added. It requires
 `--migrate-php-to-sury`, `--enable-extra-fixes` and a supported migration combination.
@@ -371,6 +372,7 @@ The script can create exactly these dedicated files:
 
 - `/etc/apt/sources.list.d/dephp2shell-sury-php.list`
 - `/etc/apt/keyrings/dephp2shell-sury-php.gpg`
+- `/etc/apt/preferences.d/dephp2shell-sury-php.pref`
 
 The source uses the matching installed OS suite, `main`, amd64 and a `Signed-By`
 reference to that dedicated key. The file names are the same for the Ubuntu PPA.
@@ -389,10 +391,10 @@ trust. Existing `curl` or `wget`, plus `gpg`, are required; the script does not
 install those tools.
 
 PHP packages are then obtained by APT from authenticated repository metadata,
-not downloaded from a hard-coded PHP package URL. Before any package transaction
-is attempted, newly created source/key files are removed on exit. After a
-transaction attempt they remain, including after failure, to support recovery and
-later updates. Pre-existing files are not removed by that cleanup.
+using verified repository candidates. The new files are removed on exit if the
+script stops before attempting a migration installation. Once it attempts that
+installation, the files are kept for recovery and future updates, even if the
+installation fails.
 
 A retained source can affect later APT operations. This is an ongoing package-source
 choice, not a temporary one-package download. Review the migration risks above.
@@ -707,6 +709,6 @@ separate environments still need their own procedures.
 
 These categories describe the current automation coverage. Check the exact package publisher, package revision and installation for a maintained fix route.
 
-For an upgrade or migration you plan to do yourself, see the [distrorejuve guide](https://github.com/pbkwee/distrorejuve/blob/master/docs/ai-assisted-migration.md). If you'd like RimuHosting to assess your server and handle a move to its hosting, [request a free assessment at DistroRejuve](https://distrorejuve.com/).
+For an upgrade or migration you plan to do yourself, see the [DistroRejuve guide](https://github.com/pbkwee/distrorejuve/blob/master/docs/ai-assisted-migration.md).
 
-RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or migration to a server with a supported OS and PHP, including for servers hosted elsewhere. A server migration can stay with your current hosting provider. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately.
+RimuHosting offers a free, no-obligation assessment for servers hosted here or elsewhere. The report covers ways to reduce exposure or move to supported OS and PHP versions. You can keep your current hosting provider and approve any further work separately. [Request an assessment at DistroRejuve](https://distrorejuve.com/).

@@ -383,11 +383,12 @@ p2s_version_november_package_reference() {
             case "$version" in *ubuntu*)
                 affected=$(p2s_version_deb_fixed_floor "$name")
                 # Canonical's accepted security uploads document all applicable November fixes.
-                # Jammy and ESM builds still lack verified CVE-2026-115560 coverage.
+                # Jammy's earlier session upload progress disable covers CVE-2026-115560.
                 case "$P2S_RELEASE:$name" in
                     26.10:php8.5-*|26.10:libapache2-mod-php8.5) fixed=8.5.9-0ubuntu2.2 ;;
                     26.04:php8.5-*|26.04:libapache2-mod-php8.5) fixed=8.5.4-0ubuntu1.6 ;;
                     24.04:php8.3-*|24.04:libapache2-mod-php8.3) fixed=8.3.6-0ubuntu0.24.04.14 ;;
+                    22.04:php8.1-*|22.04:libapache2-mod-php8.1) fixed=8.1.2-1ubuntu2.29 ;;
                 esac ;;
             esac ;;
         deb:*:Sury/*)
@@ -407,16 +408,30 @@ p2s_version_november_package_reference() {
             esac
             release=${version#0:}; upstream=${release%%-*}; branch=${upstream%.*}
             # https://almalinux.org/blog/2026-11-19-php-security-release/
-            # Alma's November 7.4 and 8.0 builds lack confirmed CVE-2026-115560 coverage.
+            # The reviewed Alma 7.4 and 8.0 builds retain the unconditional session upload progress disable.
             case "$provider:$P2S_MAJOR:$family:$branch" in
                 AlmaLinux:8:php:7.2) affected=7.2.24-1.module_el8.10.0+4315+7b734bf3.alma.1 ;;
                 AlmaLinux:8:php:7.3) affected=7.3.20-1.module_el8.10.0+4316+90ea5fe5.alma.1 ;;
-                AlmaLinux:8:php:7.4) affected=7.4.33-8.module_el8.10.0+4321+cf5fd4bb ;;
+                AlmaLinux:8:php:7.4)
+                    affected=7.4.33-8.module_el8.10.0+4321+cf5fd4bb
+                    # ALSA-2026:100991 and the preceding Alma build apply the November fixes for this stream.
+                    # https://errata.almalinux.org/8/ALSA-2026-100991.html
+                    # https://git.almalinux.org/rpms/php/src/commit/22a520b3518479c6c26e02677afc2a4c73dd6cb8/SPECS/php.spec
+                    case "$arch:$release" in
+                        x86_64:7.4.33-8.module_el8.10.0+4379+4cffe92b.alma.1) fixed=$release ;;
+                        x86_64:*) fixed=7.4.33-9.module_el8.10.0+4385+9e3d9df0 ;;
+                    esac ;;
                 AlmaLinux:8:php:8.0) affected=8.0.30-1.module_el8.10.0+4319+26f10322.alma.1 ;;
                 AlmaLinux:8:php:8.2)
                     affected=8.2.33-1.module_el8.10.0+4320+c30d6dbb.alma.1
                     fixed=8.2.35-1.module_el8.10.0+4381+cf144917.alma.1 ;;
-                AlmaLinux:9:php:8.0) affected=8.0.30-8.el9_8.alma.1 ;;
+                AlmaLinux:9:php:8.0)
+                    affected=8.0.30-8.el9_8.alma.1
+                    # https://git.almalinux.org/rpms/php/src/commit/7d508466d7b36e1fa43c0bfedefe2e1cc27b7c0a/SPECS/php.spec
+                    if [ "$arch" = x86_64 ]; then
+                        if [ "$release" = 8.0.30-8.el9_8.1 ]; then affected=$release; fi
+                        fixed=8.0.30-8.el9_8.1.alma.1
+                    fi ;;
                 AlmaLinux:9:php:8.1) affected=8.1.32-1.module_el9.8.0+326+528679fc.alma.1 ;;
                 AlmaLinux:9:php:8.2)
                     affected=8.2.33-1.module_el9.8.0+327+37dfd4b4.alma.1
@@ -430,14 +445,26 @@ p2s_version_november_package_reference() {
                 AlmaLinux:10:php:8.3) affected=8.3.33-1.el10_2.alma.1; fixed=8.3.36-1.el10_2.alma.1 ;;
                 AlmaLinux:10:php8.4:8.4) affected=8.4.27-2.el10_3.1; fixed=8.4.27-2.el10_3.1.alma.1 ;;
             esac
-            # Rocky AppStream x86_64 builds published before the November release. Match only the sampled architecture.
+            # Rocky's AppStream x86_64 RPM changelogs identify the November backports for these exact builds.
+            # https://download.rockylinux.org/pub/rocky/8/AppStream/x86_64/os/Packages/p/
+            # https://download.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/Packages/p/
             case "$provider:$arch:$P2S_MAJOR:$family:$branch" in
-                'Rocky Linux:x86_64:8:php:7.4') affected=7.4.33-8.module+el8.10.0+40393+c071e357 ;;
-                'Rocky Linux:x86_64:8:php:8.2') affected=8.2.35-1.module+el8.10.0+40394+d21b33fb ;;
+                'Rocky Linux:x86_64:8:php:7.4')
+                    affected=7.4.33-8.module+el8.10.0+40393+c071e357
+                    fixed=7.4.33-8.module+el8.10.0+40472+363a2c29.0.1 ;;
+                'Rocky Linux:x86_64:8:php:8.2')
+                    affected=8.2.35-1.module+el8.10.0+40394+d21b33fb
+                    fixed=8.2.35-1.module+el8.10.0+40473+6f592aac.0.1 ;;
                 'Rocky Linux:x86_64:9:php:8.0') affected=8.0.30-8.el9_8.1 ;;
-                'Rocky Linux:x86_64:9:php:8.2') affected=8.2.35-1.module+el9.8.0+40395+2f706e64 ;;
-                'Rocky Linux:x86_64:9:php:8.3') affected=8.3.36-1.module+el9.8.0+40396+4e680bb7 ;;
-                'Rocky Linux:x86_64:9:php:8.4') affected=8.4.27-1.module+el9.9.0+40418+929a11b6 ;;
+                'Rocky Linux:x86_64:9:php:8.2')
+                    affected=8.2.35-1.module+el9.8.0+40395+2f706e64
+                    fixed=8.2.35-1.module+el9.9.0+40474+554e1069.0.1 ;;
+                'Rocky Linux:x86_64:9:php:8.3')
+                    affected=8.3.36-1.module+el9.8.0+40396+4e680bb7
+                    fixed=8.3.36-1.module+el9.9.0+40475+972eba12.0.1 ;;
+                'Rocky Linux:x86_64:9:php:8.4')
+                    affected=8.4.27-1.module+el9.9.0+40418+929a11b6
+                    fixed=8.4.27-1.module+el9.9.0+40476+dc5d3092.0.1 ;;
                 'Rocky Linux:x86_64:10:php:8.3') affected=8.3.36-1.el10_2 ;;
                 'Rocky Linux:x86_64:10:php8.4:8.4') affected=8.4.27-2.el10_3.1 ;;
             esac ;;
@@ -1417,7 +1444,16 @@ p2s_package_failure_report() {
     fi
     if LC_ALL=C grep -Ei 'unmet dependencies|not installable|conflicting requests|nothing provides|cannot install.*(candidate|update)|filtered out by|excluded by|Packages need to be removed but remove is disabled' "$1" >/dev/null; then
         p2s_manifest_record package_resolution_failure 'dependency_or_policy|see_package_policy_and_candidate_manifest'
-        p2s_message_print warn "The package manager could not find an allowed, compatible update. Package pins, version locks, exclusions, missing dependencies or repository/module settings may be involved. Review the policy and candidate details in the run manifest. Restrictions and package-removal protection were not bypassed."
+        p2s_message_print warn "The package manager could not resolve the update with its current settings. Review the package rules and available versions in the run manifest."
+        # APT: php8.2-common : Breaks: php8.2-apcu (< 5.1.23-1~) but 5.1.22+4.0.11-2 is to be installed.
+        # Accept package relationships only. Other diagnostics may contain private repository data.
+        LC_ALL=C awk '
+            /^[ \t]+[a-z0-9][a-z0-9+.:_-]* : (Breaks|Conflicts|Depends|PreDepends): [a-z0-9][a-z0-9+.:_-]*( \([<>=]+ [a-zA-Z0-9.+:~_-]+\))? but ([a-zA-Z0-9.+:~_-]+ is to be installed|it is not (going to be installed|installable))$/ {
+                sub(/^[ \t]+/, "")
+                if (!seen[$0]++) { print; if (++count == 3) exit }
+            }' "$1" | while IFS= read -r details; do
+            p2s_message_print warn "APT reported a dependency problem. $details."
+        done
     fi
     # Panel maintenance also logs successful certificate/TLS housekeeping; require a failure indication.
     if LC_ALL=C grep -Ei '(certificate|SSL|TLS|handshake).*(fail(ed|ure)?|error|problem|not trusted|not recognized|has expired)|(fail(ed|ure)?|error|unable to|could not).*(certificate|SSL|TLS|handshake)' "$1" >/dev/null; then
@@ -1562,7 +1598,8 @@ p2s_package_deb_sury_trust_preflight() {
 
 p2s_package_deb_candidate() {
     local name="$1" installed="$2" arch="$3" sury="$4" target candidate observed matches other seen record metadata source source_version expected suite branch old_branch rest installed_source provider query_status=0
-    local origin_details origin_reason
+    local origin_details origin_reason native_origin native_matches native_versions alternate expected_source vendor="${5:-}"
+    local version_priority candidate_priority probe_version current_source_candidate=''
     # Explicit migration must reach Sury; a native candidate can still lack the requested security fixes.
     if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then sury=true; fi
     target=${name%:*}; [ "$arch" = all ] || target="$target:$arch"
@@ -1580,12 +1617,13 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
         ubuntu:22.04) suite=jammy ;; ubuntu:24.04) suite=noble ;;
         ubuntu:26.04) suite=resolute ;; *) suite=unsupported ;;
     esac
+    case "$P2S_DISTRO" in debian) native_origin=Debian ;; ubuntu) native_origin=Ubuntu ;; *) native_origin='' ;; esac
     # Global policy binds repository rows to their release identity. Check EVERY source of the
     # candidate version: inspect every origin of the exact selected version for duplicate sources.
     # apt-cache policy: 500 https://packages.sury.org/php bookworm/main amd64 Packages
     #                  release o=deb.sury.org,a=bookworm,n=bookworm,l=deb.sury.org,c=main,b=amd64
     # A per-package duplicate can be: 500 file:/local/repo bookworm/main amd64 Packages
-    awk -v suite="$suite" '
+    awk -v suite="$suite" -v native_origin="$native_origin" '
         function uri_kind(uri) {
             if (uri ~ /^https?:\/\/packages[.]sury[.]org\/php\/?$/) return 1
             if (uri ~ /^https?:\/\/ppa[.]launchpad(content)?[.]net\/ondrej\/php\/ubuntu\/?$/) return 2
@@ -1596,6 +1634,9 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
             if ($1=="release" && key!="") {
                 line="," $2 ","
                 release_identity[key]=$2
+                if (native_origin!="" && index(line,",o=" native_origin ",") &&
+                    (index(line,",n=" suite ",") || index(line,",n=" suite "-security,") ||
+                     index(line,",n=" suite "-updates,"))) native[key]=1
                 if (kind && index(line,",n=" suite ",") &&
                     ((kind==1 && index(line,",o=deb.sury.org,")) || (kind==2 && index(line,",o=LP-PPA-ondrej-php,")))) approved[key]=1
                 key=""
@@ -1604,28 +1645,56 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
         }
         $1=="Installed:" {installed=$2; next}
         $1=="Candidate:" {candidate=$2; next}
-        $1=="***" {version=$2; next}
-        NF==2 && $2 ~ /^-?[0-9]+$/ {version=$1; next}
-        version==candidate && $1 ~ /^-?[0-9]+$/ && NF>=2 {
+        $1=="***" {version=$2; priority[version]=$3; next}
+        NF==2 && $2 ~ /^-?[0-9]+$/ {version=$1; priority[version]=$2; next}
+        $1 ~ /^-?[0-9]+$/ && NF>=2 && version!="" {
             if ($2=="/var/lib/dpkg/status") next
-            if (uri_kind($2)) seen++
             key=$2 "|" $3 "|" $4
+            origins[version]++
+            if ($5=="Packages" && native[key]) native_count[version]++
+            if (version!=candidate) next
+            if (uri_kind($2)) seen++
+            if ($5=="Packages" && native[key]) native_matches++
             if ($5=="Packages" && approved[key]) {matches++; verdict="matching"} else {other++; verdict="unverified"}
             details=details (details ? "; " : "") verdict ": " $0 " (release " (release_identity[key] ? release_identity[key] : "identity unavailable") ")"
         }
-        END {print candidate "|" installed "|" matches+0 "|" other+0 "|" seen+0; print (details ? details : "No repository rows; the candidate may exist only in installed dpkg status.")}
+        END {
+            for (v in native_count) if (native_count[v]==origins[v]) versions=versions " " v "@" priority[v]
+            print candidate "|" installed "|" matches+0 "|" other+0 "|" seen+0 "|" native_matches+0 "|" priority[candidate] "|" versions
+            print (details ? details : "No repository rows; the candidate may exist only in installed dpkg status.")
+        }
     ' "$P2S_WORK/candidate-origins" "$P2S_WORK/candidate-policy" > "$P2S_WORK/candidate-source-check" || return 1
     record=$(head -n 1 "$P2S_WORK/candidate-source-check")
     origin_details=$(tail -n +2 "$P2S_WORK/candidate-source-check" | p2s_manifest_redact_repository_urls)
     candidate=${record%%|*}; record=${record#*|}; observed=${record%%|*}; record=${record#*|}
-    matches=${record%%|*}; record=${record#*|}; other=${record%%|*}; seen=${record#*|}
+    matches=${record%%|*}; record=${record#*|}; other=${record%%|*}; record=${record#*|}
+    seen=${record%%|*}; record=${record#*|}; native_matches=${record%%|*}; record=${record#*|}
+    candidate_priority=${record%%|*}; native_versions=${record#*|}
     case "$candidate" in ''|'(none)'|*[!a-zA-Z0-9.+:~_-]*) p2s_fix_block no_candidate "No usable APT candidate was found for $name."; return 1 ;; esac
     [ "$observed" = "$installed" ] || { p2s_fix_block candidate_provider "Installed package state changed or could not be matched for $name."; return 1; }
     origin_reason="Expected only the official Sury/ondrej PHP source for $P2S_DISTRO $P2S_RELEASE (suite $suite); matching repository rows: $matches; other or unverified rows: $other."
     if [ "$suite" = unsupported ]; then origin_reason="This script has no reviewed automatic Sury/ondrej update path for $P2S_DISTRO $P2S_RELEASE; its source identity could not be approved."; fi
     if ! p2s_package_deb_is_sury "$candidate"; then origin_reason="$origin_reason The candidate version does not identify a Sury/ondrej build."; fi
     if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then
-        origin_reason="$origin_reason Sury migration requires a normal candidate from its matching repository. If that source is absent, explicitly select --add-sury-repository with the migration options; otherwise review the source and APT policy. No native-package fallback is permitted."
+        origin_reason="$origin_reason Sury migration requires a normal candidate from its matching repository. If that source is absent, explicitly select --add-sury-repository with the migration options; otherwise review the source and APT policy."
+    fi
+    if ${P2S_APT_CURRENT_PROVIDER_ONLY:-false} && ! p2s_package_deb_is_sury "$installed"; then
+        expected_source=${name#libapache2-mod-}; expected_source=${expected_source%%-*}
+        for alternate in $native_versions; do
+            probe_version=${alternate%@*}; version_priority=${alternate##*@}
+            case "$probe_version" in ''|*[!a-zA-Z0-9.+:~_-]*) continue ;; esac
+            dpkg --compare-versions "$probe_version" ge "$installed" || continue
+            if p2s_package_is_engine "$name" &&
+                [ "$(p2s_version_package_state "$name" "$probe_version" "$vendor" "$arch" "$expected_source" "$probe_version")" = N ] &&
+                { ${P2S_SURY_MIGRATION_ACTIVE:-false} ||
+                    { [ "$native_matches" -ne "$((matches + other))" ] && [ "$version_priority" != "$candidate_priority" ]; }; }; then
+                p2s_fix_block candidate_provider "A native PHP security build for $name ($probe_version) is available. Review APT package priorities before changing providers."; return 1
+            fi
+            if [ "$version_priority" = "$candidate_priority" ] && [ "${version_priority:-0}" -gt 0 ] &&
+                { [ -z "$current_source_candidate" ] || dpkg --compare-versions "$probe_version" gt "$current_source_candidate"; }; then
+                current_source_candidate=$probe_version
+            fi
+        done
     fi
     if [ "$sury" = true ]; then
         if ! p2s_package_deb_is_sury "$candidate" || [ "$matches" -eq 0 ] || [ "$other" -ne 0 ]; then
@@ -1635,6 +1704,20 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
     else
         provider=$(p2s_package_provider "$name" '' "$candidate")
         case "$provider" in Sury*) seen=1 ;; esac
+        if ${P2S_APT_CURRENT_PROVIDER_ONLY:-false}; then
+            if [ "$candidate" != "$installed" ] &&
+                { [ "$native_matches" -eq 0 ] || [ "$native_matches" -ne "$((matches + other))" ] || [ "$seen" -gt 0 ]; }; then
+                if [ -n "$current_source_candidate" ]; then
+                    p2s_manifest_record candidate_provider_preference "$name|APT_candidate=$candidate|current_publisher_candidate=$current_source_candidate|same_priority=$candidate_priority"
+                    candidate=$current_source_candidate
+                    seen=0
+                elif [ "$seen" -gt 0 ] && [ "$matches" -gt 0 ] && [ "$other" -eq 0 ]; then
+                    return 2
+                else
+                    p2s_fix_block candidate_provider "The normal candidate for $name ($candidate) cannot be attributed exclusively to the installed distribution publisher. Candidate sources: $origin_details."; return 1
+                fi
+            fi
+        fi
         if [ "$seen" -gt 0 ] && ! ${P2S_SURY_MIGRATION_ACTIVE:-false}; then
             p2s_fix_block candidate_provider "The normal candidate would replace non-Sury package $name with a Sury package; an explicit migration is required."
             return 1
@@ -1648,7 +1731,7 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-policy")"
             sury=true
         fi
     fi
-    # Never override an APT pin by choosing an older or alternative version explicitly.
+    # Honour APT priorities and never downgrade an installed package.
     dpkg --compare-versions "$candidate" ge "$installed" || { p2s_fix_block package_downgrade "The normal candidate for $name is older than the installed version; refusing a downgrade."; return 1; }
     p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= show "$target=$candidate" > "$P2S_WORK/candidate-metadata" 2> "$P2S_WORK/candidate-query.err" || query_status=$?
     if [ "$query_status" -ne 0 ]; then
@@ -1713,6 +1796,14 @@ $record"
             p2s_fix_block candidate_branch "The candidate for $name changes PHP branches; migration review is required."; return 1;
         }
     fi
+    if ${P2S_APT_CURRENT_PROVIDER_ONLY:-false} && [ "$sury" = false ] && p2s_package_is_engine "$name"; then
+        if [ "${metadata%%|*}" != "$expected_source" ]; then
+            p2s_fix_block candidate_provider "The source-package identity for the current-publisher candidate for $name could not be verified."; return 1
+        fi
+        if [ "$(p2s_version_package_state "$name" "$candidate" "$vendor" "$arch" "${metadata%%|*}" "${metadata#*|}")" != N ]; then
+            return 2
+        fi
+    fi
     if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then
         case "${name%:*}" in php[0-9].[0-9]-cli|php[0-9].[0-9]-fpm|php[0-9].[0-9]-cgi|php[0-9].[0-9]-phpdbg|libapache2-mod-php[0-9].[0-9])
             # SAPI packages Provide phpapi-20220829 (8.2); -common does not. Retained PECL modules need the same API.
@@ -1734,13 +1825,14 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-query.err")"
         esac
     fi
     P2S_DEB_CANDIDATE=$candidate
-    p2s_manifest_record candidate_selection "$name|$installed|$candidate|$arch|sury_only=$sury|normal_APT_candidate|exact_version_required"
+    record=normal_APT_candidate
+    if [ "$candidate" = "$current_source_candidate" ]; then record=equal_priority_current_publisher; fi
+    p2s_manifest_record candidate_selection "$name|$installed|$candidate|$arch|sury_only=$sury|$record|exact_version_required"
 }
 
 # Explicit Sury migration methods keep exact binary names, versioned branches and architectures.
 # Unversioned selectors and third-party native extensions remain at their installed versions.
-p2s_disruptive_sury_validate_equivalents() {
-    local name version arch vendor source branch engines=0
+p2s_disruptive_sury_platform_preflight() {
     case "$P2S_DISTRO:$P2S_RELEASE" in
         debian:11|debian:11.*|debian:12|debian:12.*|debian:13|debian:13.*|ubuntu:22.04|ubuntu:24.04) ;;
         *) p2s_fix_block provider_migration "No equivalent-package Sury migration is implemented for $P2S_DISTRO $P2S_RELEASE. Upgrade or migrate the OS rather than using another release's repository."; return 1 ;;
@@ -1750,14 +1842,20 @@ p2s_disruptive_sury_validate_equivalents() {
         plesk) p2s_fix_block provider_migration "Custom Sury/ondrej PHP on Plesk requires separate PHP handler registration and website settings. This script does not migrate Plesk PHP to Sury/ondrej. Update Plesk-provided PHP through Plesk."; return 1 ;;
         *) p2s_fix_block provider_migration "Switching PHP package sources to Sury is not implemented for this control panel; its package and PHP handler settings need a separate procedure."; return 1 ;;
     esac
-    p2s_package_deb_sury_trust_preflight || return 1
+    p2s_package_deb_sury_trust_preflight
+}
+
+p2s_disruptive_sury_validate_equivalents() {
+    local name version arch vendor source branch engines=0
+    p2s_disruptive_sury_platform_preflight || return 1
     while IFS='|' read -r name version arch vendor; do
+        branch=${name#libapache2-mod-}; branch=${branch%%-*}
+        if [ -n "${P2S_APT_PHASE_BRANCHES:-}" ] && ! grep -Fxq -- "$branch" "$P2S_APT_PHASE_BRANCHES"; then continue; fi
         case "${name%:*}" in
             php|php[0-9]|php[0-9].[0-9]|php-common|php-pear|php-cli|php-cgi|php-fpm|php-phpdbg|libapache2-mod-php) continue ;;
             php[0-9].[0-9]-*|libapache2-mod-php[0-9].[0-9])
                 [ "$arch" = amd64 ] || { p2s_fix_block provider_migration "Sury package equivalence is reviewed only for amd64; $name uses $arch."; return 1; }
                 source=$(awk -F'|' -v n="$name" -v v="$version" -v a="$arch" '$1==n && $2==v && $3==a && !seen[$4]++ {print $4}' "$P2S_WORK/deb-source-records")
-                branch=${name#libapache2-mod-}; branch=${branch%%-*}
                 if p2s_package_is_engine "$name"; then engines=$((engines + 1)); fi
                 if p2s_package_deb_is_sury "$version"; then continue; fi
                 if [ "$source" != "$branch" ]; then
@@ -1784,12 +1882,13 @@ p2s_disruptive_sury_validate_equivalents() {
 # P2S-MUTATION: Removes only this run's opted-in source/key before any PHP installation attempt.
 p2s_disruptive_sury_cleanup_added_repository() {
     # Retain an opted-in source after an installation attempt, including a partial failure, for recovery.
-    if ${P2S_TRANSACTION_ATTEMPTED:-false}; then return 0; fi
+    if ${P2S_SURY_TRANSACTION_ATTEMPTED:-false}; then return 0; fi
     if ${P2S_SURY_REPOSITORY_CREATED:-false}; then
         rm -f /etc/apt/sources.list.d/dephp2shell-sury-php.list
-        p2s_manifest_record repository_change 'Sury|new_source_removed|no_PHP_installation_attempt'
+        p2s_manifest_record repository_change 'Sury|new_source_removed|no_Sury_installation_attempt'
     fi
     if ${P2S_SURY_KEY_CREATED:-false}; then rm -f /etc/apt/keyrings/dephp2shell-sury-php.gpg; fi
+    if ${P2S_SURY_PREFERENCES_CREATED:-false}; then rm -f /etc/apt/preferences.d/dephp2shell-sury-php.pref; fi
 }
 
 # Treat disabled Deb822 definitions as present too; creating a duplicate does not repair them.
@@ -1806,10 +1905,11 @@ p2s_repository_sury_source_present() {
     return 1
 }
 
-# P2S-MUTATION: Only the separately enabled migration may add this dedicated source/key pair.
+# P2S-MUTATION: Only the separately enabled migration may add this scoped source and key.
 p2s_disruptive_sury_add_repository() {
-    local suite uri key_url fingerprint file observed keyring=/etc/apt/keyrings/dephp2shell-sury-php.gpg
+    local suite uri key_url fingerprint file observed origin branch keyring=/etc/apt/keyrings/dephp2shell-sury-php.gpg
     local source_file=/etc/apt/sources.list.d/dephp2shell-sury-php.list
+    local preferences=/etc/apt/preferences.d/dephp2shell-sury-php.pref
     if [ "${P2S_MODE:-check}" != fix ] || ! ${P2S_DISRUPTIVE:-false} ||
         ! ${P2S_ALLOW_SURY_MIGRATION:-false} || ! ${P2S_ALLOW_SURY_REPOSITORY:-false}; then
         p2s_fix_block provider_migration "Adding a PHP source requires fix mode and both explicitly enabled Sury migration options."
@@ -1825,10 +1925,12 @@ p2s_disruptive_sury_add_repository() {
     esac
     if [ "$P2S_DISTRO" = debian ]; then
         uri=https://packages.sury.org/php
+        origin=deb.sury.org
         key_url=https://packages.sury.org/php/apt.gpg
         fingerprint=15058500A0235D97F5D10063B188E2B695BD4743
     else
         uri=https://ppa.launchpadcontent.net/ondrej/php/ubuntu
+        origin=LP-PPA-ondrej-php
         fingerprint=B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6
         key_url="https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$fingerprint"
     fi
@@ -1846,11 +1948,25 @@ p2s_disruptive_sury_add_repository() {
     elif [ "$?" -ne 1 ]; then
         p2s_fix_block source_authentication 'Existing source definitions could not be inspected; no duplicate PHP source was added.'; return 1
     fi
-    for file in "$keyring" "$source_file"; do
+    for file in "$keyring" "$source_file" "$preferences"; do
         if [ -e "$file" ] || [ -L "$file" ]; then
             p2s_fix_block source_authentication "The dedicated DePHP2Shell source or key file already exists but its repository is unavailable. Review it before retrying; no file was overwritten."; return 1
         fi
     done
+    if [ -n "${P2S_APT_PHASE_BRANCHES:-}" ]; then
+        # Leave all other branches and shared packages on their existing sources in future APT runs too.
+        if ! {
+            while IFS= read -r branch; do
+                case "$branch" in php[0-9].[0-9]) ;; *) return 1 ;; esac
+                printf 'Package: src:%s:any\nPin: release o=%s,n=%s\nPin-Priority: 500\n\n' "$branch" "$origin" "$suite" || return 1
+            done < "$P2S_APT_PHASE_BRANCHES"
+            # Bullseye PHP can require the reviewed PCRE2 shared-library update.
+            if [ "$suite" = bullseye ]; then
+                printf 'Package: libpcre2-8-0:amd64\nPin: release o=%s,n=%s\nPin-Priority: 500\n\n' "$origin" "$suite" || return 1
+            fi
+            printf 'Package: *\nPin: release o=%s,n=%s\nPin-Priority: -1\n' "$origin" "$suite"
+        } > "$P2S_WORK/sury-preferences"; then return 1; fi
+    fi
     if ! p2s_command_exists gpg; then
         p2s_fix_block source_authentication "Adding the Sury source requires an existing gpg command to verify its public key; no verification tool was installed."; return 1
     fi
@@ -1886,6 +2002,16 @@ p2s_disruptive_sury_add_repository() {
     P2S_SURY_KEY_CREATED=true
     if ! cat "$P2S_WORK/sury.gpg" > "$keyring"; then
         p2s_fix_block source_authentication "The dedicated PHP key file could not be written; the new file will be removed."; return 1
+    fi
+    if [ -n "${P2S_APT_PHASE_BRANCHES:-}" ]; then
+        if ! (umask 022; mkdir -p /etc/apt/preferences.d && set -C && : > "$preferences"); then
+            p2s_fix_block source_authentication "The dedicated PHP repository preference could not be created without replacing another file."; return 1
+        fi
+        P2S_SURY_PREFERENCES_CREATED=true
+        if ! cat "$P2S_WORK/sury-preferences" > "$preferences"; then
+            p2s_fix_block source_authentication "The dedicated PHP repository preference could not be written; it will be removed."; return 1
+        fi
+        p2s_manifest_record repository_scope "Sury|approved_source_packages=$(paste -sd, "$P2S_APT_PHASE_BRANCHES")|preference_file=$preferences"
     fi
     if ! (umask 022; set -C; : > "$source_file"); then
         p2s_fix_block source_authentication "The dedicated PHP source file could not be created without replacing another file."; return 1
@@ -2669,7 +2795,9 @@ p2s_package_deb_dependency_approve_plan() {
     while IFS='|' read -r name old candidate plan_arch; do
         if awk -F'|' -v n="$name" '$1==n || $1 ":" $3==n {found=1} END {exit !found}' "$P2S_WORK/apt-approved"; then continue; fi
         case "${name%:*}" in libpcre2-8-0|libonig5|libargon2-1|libxml2|libzip4|libzip5|libsodium23) ;;
-            *) p2s_fix_block dependency_scope "The proposed extra package $name is outside the reviewed native shared-library list."; return 1 ;;
+            *)
+                p2s_fix_block dependency_scope "APT also proposed changing $name, beyond the selected PHP packages and supported dependency upgrades. We stopped this APT transaction before installing anything. Review the simulated changes and run apt-cache policy $name to check the candidate version and its source before planning a manual update."
+                return 1 ;;
         esac
         if [ -s "$P2S_WORK/holds" ] && awk -v n="${name%:*}" -v a="$plan_arch" '
             $1==n || $1==n ":" a {found=1} END {exit !found}' "$P2S_WORK/holds"; then
@@ -2832,56 +2960,8 @@ p2s_package_deb_preflight() {
     p2s_package_deb_holds_preflight
 }
 
-# P2S-MUTATION: APT update path; refreshes metadata and upgrades PHP and verified required native libraries.
-p2s_package_deb_update() {
-    local log="$P2S_WORK/apt.log" name version arch vendor changed sury=false has_sury=false target source branch
-    local P2S_SURY_MIGRATION_ACTIVE=false
-    local packages cache_options
-    packages=(); cache_options=()
-    : > "$P2S_WORK/dependency-approved"
-    if [ "${P2S_MODE:-fix}" = check ]; then cache_options=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=); fi
-    if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
-        p2s_disruptive_sury_validate_equivalents || return 1
-        P2S_SURY_MIGRATION_ACTIVE=true
-        p2s_message_print warn "Switching from distribution PHP packages to third-party Sury (Debian) or ondrej PHP PPA (Ubuntu) packages was explicitly requested. Only equivalent versioned packages with matching PHP branches, architecture and extension APIs are eligible."
-        p2s_manifest_record provider_migration 'Sury|explicit_opt_in|same_names_branches_architectures_and_extension_API|required_fixed_candidates|selectors_frozen'
-    fi
-    while IFS='|' read -r name version arch vendor; do
-        if p2s_package_deb_is_sury "$version"; then has_sury=true; fi
-    done < "$P2S_WORK/packages"
-    : > "$P2S_WORK/apt-selected"
-    while IFS='|' read -r name version arch vendor; do
-        case "${P2S_PANEL:-}:$name" in cpanel:cpanel-php*|cpanel:sw-engine*) continue ;; esac
-        if $has_sury || $P2S_SURY_MIGRATION_ACTIVE; then
-            # Freeze selectors: updating php-cli/php-xml can select a different already-installed branch.
-            case "${name%:*}" in php[0-9].[0-9]-*|libapache2-mod-php[0-9].[0-9]|php-common|php-pear) ;;
-                *) p2s_manifest_record source_preservation "$name|selector_or_unreviewed_package_not_selected"; continue ;;
-            esac
-            case "${name%:*}" in php-common|php-pear)
-                # New php-common revisions can Break older extension selectors; do not request a helper upgrade.
-                continue ;;
-            esac
-            if $P2S_SURY_MIGRATION_ACTIVE && ! p2s_package_deb_is_sury "$version"; then
-                source=$(awk -F'|' -v n="$name" '$1==n && !seen[$4]++ {print $4}' "$P2S_WORK/deb-source-records")
-                branch=${name#libapache2-mod-}; branch=${branch%%-*}
-                [ "$source" = "$branch" ] || continue
-            fi
-        fi
-        # Generic selectors do not contain a PHP engine and can have no candidate on otherwise patchable hosts.
-        case "${name%:*}" in php|php[0-9]|php[0-9].[0-9]|php-cli|php-cgi|php-fpm|php-phpdbg|libapache2-mod-php) continue ;; esac
-        packages[${#packages[@]}]="$name"
-        printf '%s|%s|%s|%s\n' "$name" "$version" "$arch" "$vendor" >> "$P2S_WORK/apt-selected"
-    done < "$P2S_WORK/packages"
-    [ "${#packages[@]}" -gt 0 ] || return 0
-    p2s_package_deb_preflight || return 1
-    if $has_sury || $P2S_SURY_MIGRATION_ACTIVE; then
-        p2s_package_deb_sury_trust_preflight || return 1
-        p2s_manifest_record source_preservation "APT|per_package_provider_checks|selectors_frozen|Sury_migration=$P2S_SURY_MIGRATION_ACTIVE"
-    fi
-    if [ "${P2S_MODE:-fix}" = fix ] && $P2S_SURY_MIGRATION_ACTIVE && ${P2S_ALLOW_SURY_REPOSITORY:-false}; then
-        p2s_disruptive_sury_add_repository || return 1
-    fi
-    if [ "${P2S_MODE:-fix}" = fix ]; then
+p2s_package_deb_refresh_indexes() {
+    local log="$P2S_WORK/apt.log"
     p2s_message_print info "Refreshing package lists and checking PHP and required native-library updates."
     # Contents maps filenames to packages for apt-file searches; PHP updates need package indexes, not those large maps.
     # These command-only defaults preserve source files and trust checks. Explicit per-source Targets can override them.
@@ -2901,14 +2981,83 @@ p2s_package_deb_update() {
         p2s_package_refresh_failure_report "$log" "Package lists are incomplete or untrusted; refusing to install from stale metadata."; return 1
     fi
     p2s_package_log_report "$log"
-    else
-        p2s_manifest_record apt_refresh_scope 'cached_plan_only|repositories_not_refreshed|no_packages_or_services_changed'
-    fi
+}
+
+p2s_package_deb_load_candidate_origins() {
     if ! p2s_command_exists apt-cache || ! p2s_command_exists dpkg ||
         ! p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= policy > "$P2S_WORK/candidate-origins" 2> "$P2S_WORK/candidate-origins.err"; then
         if [ -s "$P2S_WORK/candidate-origins.err" ]; then p2s_manifest_record apt_policy_error "$(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-origins.err")"; fi
         p2s_fix_block candidate_provider "APT candidate origins could not be inspected; refusing an unchecked PHP package source change."
         return 1
+    fi
+}
+
+# P2S-MUTATION: APT update path; refreshes metadata and upgrades PHP and verified required native libraries.
+p2s_package_deb_update() {
+    local log="$P2S_WORK/apt.log" name version arch vendor changed sury=false has_sury=false target source branch
+    local P2S_SURY_MIGRATION_ACTIVE=false
+    local packages cache_options status
+    packages=(); cache_options=()
+    : > "$P2S_WORK/dependency-approved"
+    if [ "${P2S_MODE:-fix}" = check ]; then cache_options=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=); fi
+    if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
+        p2s_disruptive_sury_validate_equivalents || return 1
+        P2S_SURY_MIGRATION_ACTIVE=true
+        p2s_message_print warn "Checking the explicitly allowed Sury/ondrej fallback for branches without a verified fix from their current publisher. Only equivalent packages with matching PHP branches, architecture and extension APIs are eligible."
+        p2s_manifest_record provider_migration 'Sury|explicit_opt_in|same_names_branches_architectures_and_extension_API|required_fixed_candidates|selectors_frozen'
+    fi
+    while IFS='|' read -r name version arch vendor; do
+        if p2s_package_deb_is_sury "$version"; then has_sury=true; fi
+    done < "$P2S_WORK/packages"
+    : > "$P2S_WORK/apt-selected"
+    while IFS='|' read -r name version arch vendor; do
+        case "${P2S_PANEL:-}:$name" in cpanel:cpanel-php*|cpanel:sw-engine*) continue ;; esac
+        if $has_sury || $P2S_SURY_MIGRATION_ACTIVE || [ -n "${P2S_APT_PHASE_BRANCHES:-}" ]; then
+            # Freeze selectors: updating php-cli/php-xml can select a different already-installed branch.
+            case "${name%:*}" in php[0-9].[0-9]-*|libapache2-mod-php[0-9].[0-9]|php-common|php-pear) ;;
+                *) p2s_manifest_record source_preservation "$name|selector_or_unreviewed_package_not_selected"; continue ;;
+            esac
+            case "${name%:*}" in php-common|php-pear)
+                # New php-common revisions can Break older extension selectors; do not request a helper upgrade.
+                continue ;;
+            esac
+            if [ -n "${P2S_APT_PHASE_BRANCHES:-}" ] || { $P2S_SURY_MIGRATION_ACTIVE && ! p2s_package_deb_is_sury "$version"; }; then
+                source=$(awk -F'|' -v n="$name" -v v="$version" -v a="$arch" '$1==n && $2==v && $3==a && !seen[$4]++ {print $4}' "$P2S_WORK/deb-source-records")
+                branch=${name#libapache2-mod-}; branch=${branch%%-*}
+                [ "$source" = "$branch" ] || continue
+                if [ -n "${P2S_APT_PHASE_BRANCHES:-}" ] && ! grep -Fxq -- "$branch" "$P2S_APT_PHASE_BRANCHES"; then continue; fi
+            fi
+        fi
+        # Generic selectors do not contain a PHP engine and can have no candidate on otherwise patchable hosts.
+        case "${name%:*}" in php|php[0-9]|php[0-9].[0-9]|php-cli|php-cgi|php-fpm|php-phpdbg|libapache2-mod-php) continue ;; esac
+        packages[${#packages[@]}]="$name"
+        printf '%s|%s|%s|%s\n' "$name" "$version" "$arch" "$vendor" >> "$P2S_WORK/apt-selected"
+    done < "$P2S_WORK/packages"
+    [ "${#packages[@]}" -gt 0 ] || return 0
+    p2s_package_deb_preflight || return 1
+    if $has_sury || $P2S_SURY_MIGRATION_ACTIVE; then
+        p2s_package_deb_sury_trust_preflight || return 1
+        p2s_manifest_record source_preservation "APT|per_package_provider_checks|selectors_frozen|Sury_migration=$P2S_SURY_MIGRATION_ACTIVE"
+    fi
+    if [ "${P2S_MODE:-fix}" = fix ] && $P2S_SURY_MIGRATION_ACTIVE && ${P2S_ALLOW_SURY_REPOSITORY:-false}; then
+        p2s_disruptive_sury_add_repository || return 1
+    fi
+    if [ "${P2S_MODE:-fix}" = fix ]; then
+        if ! ${P2S_APT_INDEXES_REFRESHED:-false} || ${P2S_SURY_REPOSITORY_CREATED:-false}; then
+            p2s_package_deb_refresh_indexes || return 1
+        fi
+    else
+        p2s_manifest_record apt_refresh_scope 'cached_plan_only|repositories_not_refreshed|no_packages_or_services_changed'
+    fi
+    p2s_package_deb_load_candidate_origins || return 1
+    if $P2S_SURY_MIGRATION_ACTIVE && ${P2S_SURY_PREFERENCES_CREATED:-false} &&
+        ! awk '
+            $1 ~ /^-?[0-9]+$/ && $5=="Packages" {priority=$1; next}
+            $1=="release" && ("," $2 ",") ~ /,o=(deb[.]sury[.]org|LP-PPA-ondrej-php),/ {
+                scoped=1; if (priority>=0) unscoped=1
+            }
+            END {exit (!scoped || unscoped)}' "$P2S_WORK/candidate-origins"; then
+        p2s_fix_block candidate_provider "APT did not apply the new PHP repository's default exclusion. Review APT preferences and the default release before adding this source."; return 1
     fi
     packages=()
     : > "$P2S_WORK/apt-approved"
@@ -2916,7 +3065,12 @@ p2s_package_deb_update() {
     while IFS='|' read -r name version arch vendor; do
         sury=false
         if p2s_package_deb_is_sury "$version"; then sury=true; fi
-        p2s_package_deb_candidate "$name" "$version" "$arch" "$sury" || return 1
+        status=0
+        p2s_package_deb_candidate "$name" "$version" "$arch" "$sury" "$vendor" || status=$?
+        if [ "$status" -ne 0 ]; then
+            if [ "$status" -eq 2 ]; then p2s_fix_block candidate_fix "A verified fix from the current publisher was no longer an eligible candidate for $name."; fi
+            return 1
+        fi
         if [ "$P2S_DEB_CANDIDATE" = "$version" ]; then
             p2s_manifest_record candidate_unchanged "$name|$version|not_requested_for_upgrade"
             continue
@@ -2940,7 +3094,7 @@ p2s_package_deb_update() {
         p2s_fix_block no_candidate "No PHP update meeting this script's package-source and safety checks was found in the configured sources. See the package policy and candidate details in the run manifest."
         return 1
     fi
-    if $has_sury || $P2S_SURY_MIGRATION_ACTIVE; then
+    if $has_sury || $P2S_SURY_MIGRATION_ACTIVE || [ -n "${P2S_APT_PHASE_BRANCHES:-}" ]; then
         # APT can upgrade php-xml/php-curl selectors while resolving php-common, even if they
         # were not requested. Keep every other installed PHP package at its current version.
         # --only-upgrade also preserves their existing automatic/manual installation marks.
@@ -3019,6 +3173,7 @@ p2s_package_deb_update() {
         p2s_fix_block privileges 'A package installation requires explicit fix mode.'; return 1
     fi
     P2S_TRANSACTION_ATTEMPTED=true
+    if $P2S_SURY_MIGRATION_ACTIVE; then P2S_SURY_TRANSACTION_ATTEMPTED=true; fi
     P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }apt-get install --only-upgrade PHP packages"
     if ! (export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=l
         # P2S-MUTATION: Installs PHP and verified required library updates; package scripts can also change services.
@@ -3030,6 +3185,79 @@ p2s_package_deb_update() {
     fi
     p2s_package_log_report "$log"
     p2s_message_print fixmethod "Updated installed PHP packages and any verified required native libraries through APT without permitting removals or replacing local configuration."
+}
+
+# The migration options authorize a fallback. Plan all installed branches before changing sources.
+p2s_package_deb_update_current_sources_first() {
+    local name version arch vendor branch source source_version sury status split_branch
+    local P2S_APT_PHASE_BRANCHES='' P2S_APT_CURRENT_PROVIDER_ONLY=true P2S_APT_INDEXES_REFRESHED=true
+    local P2S_SURY_MIGRATION_ACTIVE=false
+    local decisions="$P2S_WORK/apt-branch-decisions" current="$P2S_WORK/apt-current-branches" fallback="$P2S_WORK/apt-migrate-branches"
+    p2s_package_deb_preflight && p2s_disruptive_sury_platform_preflight &&
+        p2s_package_deb_refresh_indexes && p2s_package_deb_load_candidate_origins || return 1
+    : > "$decisions"
+    while IFS='|' read -r name version arch vendor; do
+        p2s_package_is_engine "$name" || continue
+        branch=${name#libapache2-mod-}; branch=${branch%%-*}
+        case "$branch" in php[0-9].[0-9]) ;; *)
+            p2s_fix_block provider_migration "The PHP engine $name has no reviewed APT branch identity."; return 1 ;;
+        esac
+        source=$(awk -F'|' -v n="$name" -v v="$version" -v a="$arch" '$1==n && $2==v && $3==a && !seen[$4,$5]++ {print $4 "|" $5}' "$P2S_WORK/deb-source-records")
+        source_version=${source#*|}; source=${source%%|*}
+        if [ "$source" != "$branch" ] || [ -z "$source_version" ] || [[ "$source_version" == *$'\n'* ]]; then
+            p2s_fix_block candidate_provider "Could not verify the installed source-package identity for $name."; return 1
+        fi
+        sury=false
+        if p2s_package_deb_is_sury "$version"; then sury=true
+        else
+            case "$(p2s_package_provider "$name" "$vendor" "$version")" in Debian|Ubuntu) ;; *)
+                p2s_fix_block candidate_provider "The installed publisher of $name has no reviewed equivalent-package migration path."; return 1 ;;
+            esac
+        fi
+        status=0
+        if [ "$(p2s_version_package_state "$name" "$version" "$vendor" "$arch" "$source" "$source_version")" = N ]; then
+            status=fixed
+        else
+            p2s_package_deb_candidate "$name" "$version" "$arch" "$sury" "$vendor" || status=$?
+            case "$status" in
+                0) status=update ;;
+                2) status=migrate ;;
+                *) return 1 ;;
+            esac
+        fi
+        printf '%s|%s\n' "$branch" "$status" >> "$decisions"
+        p2s_manifest_record provider_choice "$name|$branch|current_publisher=$status"
+    done < "$P2S_WORK/packages"
+    [ -s "$decisions" ] || return 0
+    # A branch is a single dependency cohort. Refuse ambiguous mixed plans within it.
+    split_branch=$(awk -F'|' '$2=="migrate" {migrate[$1]=1; next} {keep[$1]=1}
+        END {for (branch in migrate) if (keep[branch]) print branch}' "$decisions")
+    if [ -n "$split_branch" ]; then
+        p2s_fix_block provider_migration "Some packages in $(printf '%s' "$split_branch" | tr '\n' ' ') have verified fixes from the current publisher and others do not. Review the branch's package versions before switching publishers."; return 1
+    fi
+    awk -F'|' '$2=="update" && !seen[$1]++ {print $1}' "$decisions" > "$current"
+    awk -F'|' '$2=="migrate" && !seen[$1]++ {print $1}' "$decisions" > "$fallback"
+    if [ -s "$current" ]; then
+        P2S_APT_PHASE_BRANCHES=$current
+        local P2S_ALLOW_SURY_MIGRATION=false
+        p2s_package_deb_update || return 1
+        P2S_ALLOW_SURY_MIGRATION=true
+        if [ -s "$fallback" ]; then
+            p2s_package_inventory_collect
+            if ${P2S_BLOCKED:-false} || [ ! -s "$P2S_WORK/packages" ]; then return 1; fi
+            if ! awk -F'|' 'FILENAME==ARGV[1] {pending[$4 "|" $2 "|" $3]=1; next}
+                {delete pending[$1 "|" $2 "|" $3]} END {for (package in pending) exit 1}' "$P2S_WORK/apt-approved" "$P2S_WORK/packages"; then
+                p2s_fix_block package_update "The installed PHP versions do not match the approved current-source update. Verify the package state before changing sources."; return 1
+            fi
+            p2s_package_sources_collect
+        fi
+    fi
+    if [ -s "$fallback" ]; then
+        P2S_APT_PHASE_BRANCHES=$fallback
+        p2s_package_deb_update
+    elif [ ! -s "$current" ]; then
+        p2s_message_print info "The installed PHP branches already have verified fixes. No repository or PHP publisher changes are needed."
+    fi
 }
 
 p2s_package_rpm_validate_plan() {
@@ -3055,11 +3283,16 @@ p2s_package_rpm_validate_plan() {
 
 # P2S-MUTATION: DNF/YUM update path; refreshes caches and can install PHP packages.
 p2s_package_rpm_update() {
-    local manager log="$P2S_WORK/rpm-update.log" name version arch vendor
-    local packages
+    local manager manager_version log="$P2S_WORK/rpm-update.log" name version arch vendor
+    local packages transaction_options
     packages=()
     while IFS='|' read -r name version arch vendor; do
         case "${P2S_PANEL:-}:$name" in cpanel:cpanel-php*|cpanel:sw-engine*) continue ;; esac
+        case "$vendor" in
+            ''|'(none)'|unknown)
+                p2s_fix_block rpm_vendor "The installed RPM does not identify a publisher for $name ($arch). Review the installed package and its intended source before updating PHP."
+                return 1 ;;
+        esac
         packages[${#packages[@]}]="$name"
     done < "$P2S_WORK/packages"
     [ "${#packages[@]}" -gt 0 ] || return 0
@@ -3067,14 +3300,35 @@ p2s_package_rpm_update() {
     elif p2s_command_exists yum; then manager=yum
     else p2s_fix_block rpm_manager "Neither dnf nor yum is available; cannot update RPM PHP packages."; return 1
     fi
+    if ! p2s_command_run 30 "$manager" --version > "$log" 2>&1; then
+        p2s_package_log_report "$log"
+        p2s_fix_block rpm_vendor "Could not verify that $manager can keep the installed PHP package publishers. Review the package manager before updating PHP."
+        return 1
+    fi
+    IFS= read -r manager_version < "$log"
+    transaction_options=(-y --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' --setopt=allow_vendor_change=false)
+    # DNF 4.4.2 introduced this solver option. YUM 3 cannot enforce it, but a yum alias for DNF can.
+    # DNF4 version output starts with "4.7.0". DNF5 starts with "dnf5 version 5.2.17.0".
+    if [[ "$manager_version" =~ ^4\.([0-9]{1,3})\.([0-9]{1,3})([.-][[:alnum:].-]+)?$ ]] &&
+        (( 10#${BASH_REMATCH[1]} > 4 || (10#${BASH_REMATCH[1]} == 4 && 10#${BASH_REMATCH[2]} >= 2) )); then
+        p2s_manifest_record source_preservation "$manager|DNF4|vendor_change_disabled"
+    elif [[ "$manager_version" =~ ^dnf5[[:blank:]]version[[:blank:]]5\.[0-9] ]]; then
+        # DNF5 policies can otherwise allow vendor changes even with allow_vendor_change=false.
+        transaction_options+=(--clear-vendor-policies)
+        p2s_manifest_record source_preservation "$manager|DNF5|vendor_change_disabled|vendor_policy_exceptions_disabled_for_this_run"
+    else
+        p2s_package_log_report "$log"
+        p2s_fix_block rpm_vendor "This version of $manager cannot be verified to keep the installed PHP package publishers. Use a supported DNF version or have an administrator review the candidate publishers before updating PHP."
+        return 1
+    fi
     # P2S-MUTATION: Writes refreshed repository metadata to the package-manager cache.
     if ! p2s_command_run 300 "$manager" -y '--setopt=*.metadata_expire=0' --setopt=timeout=20 --setopt=retries=1 --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' makecache > "$log" 2>&1; then
         p2s_package_refresh_failure_report "$log" "RPM metadata refresh failed. Check repositories, network/DNS, signatures and subscriptions."; return 1
     fi
     p2s_package_log_report "$log"
     # P2S-MUTATION: Test transaction can download/cache packages; no real PHP installation is requested.
-    if ! p2s_command_run 1800 "$manager" -y --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' --setopt=tsflags=test update "${packages[@]}" > "$log" 2>&1; then
-        p2s_package_log_report "$log"; p2s_fix_block transaction_plan "The RPM test transaction failed; no real update was requested."; return 1
+    if ! p2s_command_run 1800 "$manager" "${transaction_options[@]}" --setopt=tsflags=test update "${packages[@]}" > "$log" 2>&1; then
+        p2s_package_log_report "$log"; p2s_fix_block transaction_plan "The RPM test transaction failed with publisher protection enabled. Review the package manager output. No packages were installed."; return 1
     fi
     p2s_package_log_report "$log"
     # DNF can successfully report no work; that is not an unrecognised transaction.
@@ -3082,7 +3336,7 @@ p2s_package_rpm_update() {
     if grep -Fx 'Nothing to do.' "$log" >/dev/null; then
         p2s_manifest_record package_update_plan "$manager|no_updates"
         if $P2S_RESTART_PENDING || ${P2S_PANEL_UPDATE_COMPLETED:-false}; then return 0; fi
-        p2s_fix_block no_candidate "The configured repositories offered no newer installed PHP packages. The installed build remains unverified; check the vendor security advisory and any package holds or exclusions."
+        p2s_fix_block no_candidate "The configured repositories offered no newer versions for the installed PHP packages from their current publishers. Check the vendor security advisory, enabled repositories, and any package holds or exclusions."
         return 1
     fi
     if ! p2s_package_rpm_validate_plan "$log"; then
@@ -3092,11 +3346,11 @@ p2s_package_rpm_update() {
     P2S_TRANSACTION_ATTEMPTED=true
     P2S_UPDATE_METHOD="${P2S_UPDATE_METHOD:+$P2S_UPDATE_METHOD; }$manager update PHP packages"
     # P2S-MUTATION: Installs PHP RPM updates; package scriptlets can also change services.
-    if ! p2s_command_run 1800 "$manager" -y --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' update "${packages[@]}" > "$log" 2>&1; then
+    if ! p2s_command_run 1800 "$manager" "${transaction_options[@]}" update "${packages[@]}" > "$log" 2>&1; then
         p2s_package_log_report "$log"; p2s_fix_block package_update "The RPM PHP update failed or timed out; check the package transaction before retrying."; return 1
     fi
     p2s_package_log_report "$log"
-    p2s_message_print fixmethod "Updated installed PHP packages through $manager without switching streams or enabling package erasure."
+    p2s_message_print fixmethod "Updated installed PHP packages through $manager, keeping their publishers and enabled streams."
 }
 
 # Manual migration advice only: cache inspection never enables or switches a module stream.
@@ -3553,6 +3807,7 @@ p2s_process_inventory_collect() {
     P2S_PROCESS_USAGE_COMPLETE=false
     : > "$P2S_WORK/process-runtime-paths"
     : > "$P2S_WORK/web-restart-advisories"
+    : > "$P2S_WORK/php-restart-details"
     if [ ! -r /proc/1/stat ] || ! p2s_command_exists readlink || ! p2s_command_exists ps; then
         P2S_UNKNOWN=true
         p2s_fix_block process_inventory "Process executable information is unavailable; running PHP workers cannot be verified."
@@ -3639,7 +3894,10 @@ p2s_process_inventory_collect() {
             while IFS= read -r path; do
                 [ -n "$path" ] || continue
                 needs_restart=true
-                case "$path" in *' (deleted)') P2S_UNKNOWN=true; P2S_RESTART_PENDING=true ;; esac
+                case "$path" in *' (deleted)')
+                    P2S_UNKNOWN=true; P2S_RESTART_PENDING=true
+                    printf '%s|PHP module|%s\n' "$comm" "${path% (deleted)}" >> "$P2S_WORK/php-restart-details" ;;
+                esac
                 if ! [ "$entry/root${path% (deleted)}" -ef "${path% (deleted)}" ]; then
                     P2S_UNKNOWN=true
                     p2s_fix_block isolated_module "Process $pid maps a PHP module whose filesystem path differs from the host; its package and restart require manual review."
@@ -3666,6 +3924,7 @@ EOF
         case "$executable" in *' (deleted)')
             if $needs_restart; then
                 P2S_UNKNOWN=true; P2S_RESTART_PENDING=true
+                printf '%s|executable|%s\n' "$comm" "${executable% (deleted)}" >> "$P2S_WORK/php-restart-details"
                 p2s_manifest_record php_restart_pending "$pid|$comm|$executable|deleted_executable"
             elif $maps_verified; then
                 p2s_manifest_record web_restart_advisory "$pid|$comm|$executable|no_php_module_detected"
@@ -3764,6 +4023,12 @@ EOF
         p2s_message_print info "Scheduled background PHP tasks are running (launched by cron, the task scheduler). These recognised package-managed tasks do not block PHP package updates or supported web-service restarts. Already-running tasks keep their loaded PHP code until they finish; after a successful package update, new tasks use the updated executable. Task PIDs, user IDs and start times are in the run manifest."
     fi
     sort -u "$P2S_WORK/services" -o "$P2S_WORK/services"
+    if [ -s "$P2S_WORK/php-restart-details" ]; then
+        p2s_manifest_record php_restart_warning details_emitted
+        sort -u "$P2S_WORK/php-restart-details" | while IFS='|' read -r comm label path; do
+            p2s_message_print warn "$comm still uses the old $label at $path. Restart its service or wait for the process to exit. Run this check again."
+        done
+    fi
     if [ "$unreadable_executables" -gt 0 ] || [ "$unreadable_maps" -gt 0 ]; then
         p2s_message_print warn "We could not fully check some running PHP or web-server processes. Rerun the check; if this continues, review process access using the details in the run log."
     fi
@@ -4385,6 +4650,7 @@ p2s_fix_print_exposure_advice() {
 
 p2s_summary_print_result() {
     local unresolved_versions='' update_blockers='' issue_name=PHP2Shell fixes='both PHP2Shell fixes' check_options=--check
+    local migration_target target_branch target_state target_web target_cli target_preparation target_workloads
     if ${P2S_NOVEMBER:-false}; then
         issue_name='the November PHP vulnerabilities'
         fixes='the November PHP fixes'
@@ -4392,7 +4658,7 @@ p2s_summary_print_result() {
     fi
     # This describes the final phase only; before/after protocol markers remain unchanged.
     case "$P2S_STATE" in
-        Y) p2s_message_print warn "Result: This VM has at least one PHP installation identified as vulnerable to $issue_name. Update every affected installation and restart the services using it. If a prompt fix is not possible, temporarily disable the affected PHP applications." ;;
+        Y) p2s_message_print warn "Result: The check found PHP affected by $issue_name. Update the affected installations and restart the services that use them. If the fix has to wait, take the affected PHP applications offline." ;;
         '?')
             # Package and executable checks can disagree within one installation; describe component evidence.
             if p2s_state_has_only_fixed_versions; then
@@ -4405,13 +4671,13 @@ p2s_summary_print_result() {
             elif [ -s "$P2S_WORK/summary-versions" ] && awk -F'|' '
                 $2 == "N" { fixed=1 } $2 == "?" { unverified=1 }
                 END { exit !(fixed && unverified) }' "$P2S_WORK/summary-versions"; then
-                p2s_message_print warn "Result: Some PHP installations include $fixes; others still need verification or an update. See the PHP versions needing attention below."
+                p2s_message_print warn "Result: The check verified $fixes for some PHP installations. Review the versions below for installations that still need a fix or verification."
             else
                 p2s_message_print warn "Result: We could not verify whether all PHP installations include $fixes. See the checks needing attention below."
             fi ;;
         N)
             if [ "$P2S_COUNT" -eq 0 ]; then
-                p2s_message_print info "Result: No PHP installation was found in the checked packages and runtime locations. No PHP update was identified by this check."
+                p2s_message_print info "Result: The check found no PHP in the packages, runtime locations, or running processes it inspected. No PHP update is needed for this issue."
             else
                 p2s_message_print info "Result: All detected PHP installations include $fixes. No PHP restart is pending."
             fi ;;
@@ -4432,15 +4698,68 @@ p2s_summary_print_result() {
         fi
     fi
     if [ "$P2S_STATE" != N ]; then
-        if ${P2S_BLOCKED:-false}; then update_blockers='Resolve the reported update blockers before retrying. '; fi
+        if ${P2S_BLOCKED:-false}; then update_blockers='Resolve the problems in the warnings before running the update. '; fi
         if [ "$P2S_STATE" = '?' ] && p2s_state_has_only_fixed_versions; then
             p2s_message_print warn "Next action: ${update_blockers}Verify the remaining inventory, separate application environments and pending PHP restarts identified in this report, then rerun $check_options. The assessed PHP builds already have verified fixes."
         else
-            p2s_message_print warn "Next action: ${update_blockers}Confirm which websites, applications, scheduled jobs and dependencies require ${unresolved_versions:-PHP}. Obtain verified fixed packages or migrate required workloads to supported, patched PHP. Remove unneeded PHP packages only after reviewing dependencies and the proposed removals."
+            migration_target=''
+            if [ -s "$P2S_WORK/summary-versions" ]; then
+                # Sample: 8.4.28|N|PHP-FPM||Debian|8.4.28-1~deb13u1|N|executable|engine_package_assessment
+                # With unresolved PHP 7.4 this can suggest 8.4|fixed|1|0. A library or panel-only runtime is not a target.
+                migration_target=$(awk -F'|' '
+                    function older(left, right, a, b) {
+                        split(left, a, "."); split(right, b, ".")
+                        return (a[1]+0 < b[1]+0) || (a[1]+0 == b[1]+0 && a[2]+0 < b[2]+0)
+                    }
+                    $1 ~ /^[0-9]+[.][0-9]+[.][0-9]+$/ {
+                        branch=$1; sub(/[.][0-9]+$/, "", branch)
+                        if ($2 != "N") {
+                            unresolved[branch]=1
+                            if (!oldest || older(branch, oldest)) oldest=branch
+                        }
+                        if ($6 == "" || $9 != "engine_package_assessment" || $5 ~ /^(cPanel internal|WebPros sw-engine)/) next
+                        if ($5 == "" || $5 == "unverified source" || $5 == "unknown") next
+                        if ($3 ~ /^(PHP-FPM|Apache module|CGI)$/) web[branch]=1
+                        if ($3 == "command line") cli[branch]=1
+                        if (web[branch] || cli[branch]) installed[branch]=1
+                    }
+                    END {
+                        for (branch in installed) {
+                            if (!oldest || !older(oldest, branch)) continue
+                            # Prefer a verified target, then one with a web runtime, then the smallest applicable branch change.
+                            rank=(unresolved[branch] ? 0 : 2) + web[branch]
+                            if (!target || rank > best || (rank == best && older(branch, target))) {
+                                target=branch; best=rank
+                            }
+                        }
+                        if (target) print target "|" (unresolved[target] ? "unverified" : "fixed") "|" (web[target]+0) "|" (cli[target]+0)
+                    }' "$P2S_WORK/summary-versions")
+            fi
+            if [ -n "$migration_target" ]; then
+                IFS='|' read -r target_branch target_state target_web target_cli <<< "$migration_target"
+                if [ "$target_state" = fixed ]; then
+                    target_preparation="The check verified $fixes for the installed PHP $target_branch components it inspected. Confirm ongoing publisher support and verify the running PHP build, including any required service restart, before moving workloads."
+                else
+                    target_preparation="PHP $target_branch is also installed. Confirm with its publisher that a maintained package build includes $fixes, apply it, and rerun the check before moving any workloads."
+                fi
+                if [ "$target_web" = 1 ]; then
+                    target_workloads="Test website and extension compatibility, then move compatible sites by changing each site’s PHP handler."
+                    if [ "$target_cli" = 1 ]; then
+                        target_workloads="$target_workloads Update any compatible scheduled jobs to use the newer command-line PHP."
+                    else
+                        target_workloads="$target_workloads Verify a compatible command-line runtime separately before changing scheduled jobs."
+                    fi
+                else
+                    target_workloads="Test compatible scheduled jobs and command-line applications before changing the PHP executable they use. Verify a suitable web handler separately before moving any sites."
+                fi
+                p2s_message_print warn "Next action: ${update_blockers}Review moving workloads off the older PHP branches that still need attention. $target_preparation $target_workloads Test the migrated workloads. Review dependencies and the package manager’s proposed removals before manually uninstalling old PHP packages that nothing still uses."
+            else
+                p2s_message_print warn "Next action: ${update_blockers}Confirm which websites, applications, scheduled jobs and dependencies require ${unresolved_versions:-PHP}. Obtain verified fixed packages or migrate required workloads to supported, patched PHP. Remove unneeded PHP packages only after reviewing dependencies and the proposed removals."
+            fi
         fi
     fi
     case "$P2S_STATE" in
-        Y|'?') p2s_message_print info "RimuHosting offers a no-cost, no-obligation investigation and a report on mitigation or migration to a server with a supported OS and PHP, including for servers hosted elsewhere. A server migration can stay with your current hosting provider. Contact RimuHosting to coordinate the server manifest and investigation. Any changes or further work are agreed separately." ;;
+        Y|'?') p2s_message_print info "RimuHosting offers a free, no-obligation assessment for servers hosted here or elsewhere. We'll report options to reduce exposure or move to supported OS and PHP versions. You can keep your current hosting provider. We'll agree any further work with you first. Start at https://distrorejuve.com/" ;;
     esac
 }
 
@@ -4463,7 +4782,6 @@ p2s_inventory_collect_and_assess() {
     p2s_process_scheduled_php_verify
     p2s_package_release_usage_report
     if [ "$(id -u)" != 0 ]; then P2S_UNKNOWN=true; p2s_message_print warn "A root check is required to inspect all PHP workers."; fi
-    if $P2S_RESTART_PENDING; then p2s_message_print warn "A relevant process still uses a deleted executable or PHP module; a restart needs verification."; fi
     # All inventoried versions/interfaces (CLI, FPM, Apache module, embedded PHP) share one CVE marker.
     # Any known vulnerable installation wins; otherwise unknown evidence prevents a clean result.
     if $P2S_VULNERABLE; then P2S_STATE=Y
@@ -4557,7 +4875,7 @@ p2s_fix_preflight() {
             p2s_fix_block provider_migration "The Sury migration method requires native Debian/Ubuntu packages; no change between package formats or RPM package publishers is implemented."
             return 1
         fi
-        p2s_disruptive_sury_validate_equivalents || return 1
+        p2s_disruptive_sury_platform_preflight || return 1
     fi
     case "${P2S_PANEL:-}:$P2S_BACKEND" in
         cpanel:deb|plesk:deb)
@@ -4806,13 +5124,13 @@ $(cat "$P2S_WORK/recommend-migration-plan.log")"
 
 
 p2s_fix_report_patchability() {
-    local assessment source_scope='using its existing PHP package sources'
+    local assessment source_scope='from the existing PHP package sources'
     if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
-        source_scope='using the explicitly enabled Sury migration method'
+        source_scope='from the current sources first, with Sury allowed as a fallback'
     fi
     if [ "$P2S_STATE" = N ]; then
         assessment=not_needed
-        p2s_message_print info "Automatic update: No update is needed for PHP2Shell within the scope of this check."
+        p2s_message_print info "Automatic update: The PHP check found no update needed for this issue."
     else
         if p2s_fix_preflight; then
             if [ "$P2S_BACKEND" = deb ] && ! p2s_package_deb_preflight; then P2S_BLOCKED=true; fi
@@ -4822,13 +5140,13 @@ p2s_fix_report_patchability() {
         fi
         if $P2S_BLOCKED; then
             assessment=blocked
-            p2s_message_print warn "Automatic update: This script cannot proceed under the reported conditions. See the specific blockers above. No package installation or service restart was attempted."
+            p2s_message_print warn "Automatic update: The local checks could not confirm it was safe to run the PHP update. Review the check results before retrying."
         elif [ "$P2S_STATE" = Y ] && ! $P2S_UNKNOWN && ! ${P2S_PACKAGE_POLICY_REVIEW:-false} && p2s_command_exists df; then
             assessment=eligible_to_attempt
-            p2s_message_print info "Automatic update: This server appears suitable for an update attempt $source_scope. The local prerequisite checks passed. Run the update to find out whether patched packages are available and can be installed safely; successful updates and service restarts still need verification."
+            p2s_message_print info "Automatic update: The local checks passed. Running the PHP update attempts to install eligible fixes $source_scope. Afterward, review any PHP versions or restarts that still need attention."
         else
             assessment=unknown
-            p2s_message_print info "Automatic update: No local blocker was found; fix feasibility remains unresolved until the package sources and candidates are checked. Running the update will check the package sources and report what can be updated; any remaining unverified PHP installations will still need review."
+            p2s_message_print info "Automatic update: The local checks found no blocker. Running the PHP update refreshes package lists and attempts to install any fixes that pass the package checks. Afterward, review any PHP installations whose patch status is still unverified."
         fi
     fi
     # Keep fix eligibility separate from CVE state; refresh cached metadata before selecting an update candidate.
@@ -4840,7 +5158,7 @@ p2s_fix_run() {
     if [ "${P2S_MODE:-fix}" != fix ]; then
         p2s_fix_block mode 'Package updates, repairs and restarts require fix mode.'; return 1
     fi
-    P2S_TRANSACTION_ATTEMPTED=false; P2S_RESTART_ATTEMPTED=false; P2S_PANEL_UPDATE_COMPLETED=false
+    P2S_TRANSACTION_ATTEMPTED=false; P2S_SURY_TRANSACTION_ATTEMPTED=false; P2S_RESTART_ATTEMPTED=false; P2S_PANEL_UPDATE_COMPLETED=false
     P2S_PACKAGE_CONFIGURATION_ATTEMPTED=false; P2S_PACKAGE_REINSTALL_ATTEMPTED=false
     local selected_repairs=false
     if [ "${P2S_REPOSITORY_REPAIR:-none}" != none ] || ${P2S_ALLOW_PENDING_PHP_CONFIGURATION:-false} || ${P2S_ALLOW_EXACT_PHP_REINSTALL:-false}; then selected_repairs=true; fi
@@ -4880,7 +5198,16 @@ p2s_fix_run() {
     # Plesk owns its component transaction. cPanel website PHP still needs its own package update.
     if [ "$update_status" -eq 0 ] && [ "${P2S_PANEL:-}" != plesk ] && { ! $selected_repairs || [ "$P2S_STATE" != N ]; }; then
         # P2S-MUTATION: Dispatches to the APT or RPM PHP package update implementation.
-        case "$P2S_BACKEND" in deb) p2s_package_deb_update ;; rpm) p2s_package_rpm_update ;; *) return 1 ;; esac
+        case "$P2S_BACKEND" in
+            deb)
+                if ${P2S_DISRUPTIVE:-false} && ${P2S_ALLOW_SURY_MIGRATION:-false}; then
+                    p2s_package_deb_update_current_sources_first
+                else
+                    p2s_package_deb_update
+                fi ;;
+            rpm) p2s_package_rpm_update ;;
+            *) return 1 ;;
+        esac
         update_status=$?
     fi
     # Maintainer scripts may already have replaced workers; still verify the saved services.
@@ -4895,7 +5222,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-21.2 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-24.2 check_options=--check
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
         1:--fix|1:--fix-vuln) mode=fix ;;
@@ -4956,12 +5283,12 @@ p2s_main() {
     trap 'exit 143' TERM
     export LC_ALL=C
     if ${P2S_NOVEMBER:-false}; then
-        p2s_manifest_record schema 'php2shell-v1|CVE_2026_126714|covers=CVE-2026-115560,CVE-2026-126714,CVE-2026-129182,CVE-2026-129289,CVE-2026-129291,CVE-2026-129474,CVE-2026-129481,CVE-2026-129496|rules=2026-11-21'
+        p2s_manifest_record schema 'php2shell-v1|CVE_2026_126714|covers=CVE-2026-115560,CVE-2026-126714,CVE-2026-129182,CVE-2026-129289,CVE-2026-129291,CVE-2026-129474,CVE-2026-129481,CVE-2026-129496|rules=2026-11-24'
     else
         p2s_manifest_record schema 'php2shell-v1|CVE_2026_109618|covers=CVE-2026-109618,CVE-2026-109619|rules=2026-10-29'
     fi
     p2s_manifest_record script_revision "$script_revision"
-    p2s_manifest_record source_preservation 'policy=explicit_provider_migrations_only|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|other_providers_and_panel_transactions_require_separate_review'
+    p2s_manifest_record source_preservation 'policy=current_publisher_fixes_first|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|RPM_vendor_changes=disabled|panel_transactions_require_separate_review'
     p2s_manifest_record dependency_policy 'required_installed_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources_or_explicit_bullseye_Sury_PCRE2_migration|no_additions_removals_or_downgrades'
     p2s_manifest_record disruptive_options "enabled=${P2S_DISRUPTIVE:-false}|allow_sury_migration=${P2S_ALLOW_SURY_MIGRATION:-false}|allow_sury_repository=${P2S_ALLOW_SURY_REPOSITORY:-false}|repository_repair=${P2S_REPOSITORY_REPAIR:-none}|pending_php_configuration=${P2S_ALLOW_PENDING_PHP_CONFIGURATION:-false}|exact_php_reinstall=${P2S_ALLOW_EXACT_PHP_REINSTALL:-false}"
     p2s_manifest_record bash "$BASH_VERSION"
@@ -5073,14 +5400,15 @@ Usage: dephp2shell.sh [--check|--fix] [--enable-extra-fixes] [options]
                     Permit only the extra methods selected below; it does not bypass safety checks.
                     Implies --fix unless --check is explicit. Extra methods are disabled by default.
   --migrate-php-to-sury
-                    Change eligible PHP packages to Sury (Debian) or the ondrej PHP PPA (Ubuntu).
+                    Apply verified fixes from the current PHP publishers first. Allow eligible branches
+                    without a verified current-source fix to switch to Sury (Debian) or the ondrej PHP PPA (Ubuntu).
                     Keep the PHP branch; download through an existing authenticated APT source.
                     This flag adds no repository. Switching PHP package publishers still needs application testing.
   --add-sury-repository
-                    Also allow a new matching Sury/PPA source file and dedicated verified signing key.
+                    Also allow a matching source, dedicated verified signing key and scoped APT preference if needed.
                     Sources: packages.sury.org/php or ppa.launchpadcontent.net/ondrej/php/ubuntu.
-                    Requires --migrate-php-to-sury. New files remain after a transaction attempt,
-                    including failure; they are removed on exit if no transaction was attempted.
+                    Requires --migrate-php-to-sury. New files remain after a migration install attempt
+                    for recovery and future updates. An earlier current-source update does not retain them.
   --refresh-sury-signing-key
                     Restore access to Sury updates by replacing the key that verifies their source.
                     Download and replace the standard Debian Sury signing key; retain a backup.

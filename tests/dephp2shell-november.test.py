@@ -56,11 +56,46 @@ P2S_RELEASE=26.10
 p2s_version_package_state php8.5-fpm 8.5.9-0ubuntu2.2 "$vendor" amd64
 p2s_version_package_state php8.5-fpm 8.5.4-0ubuntu1.6 "$vendor" amd64
 P2S_RELEASE=22.04
-p2s_version_package_state php8.1-fpm 8.1.2-1ubuntu2.29 "$vendor" amd64
+for name in libapache2-mod-php8.1 php8.1-cli php8.1-common php8.1-fpm; do
+    p2s_version_package_state "$name" 8.1.2-1ubuntu2.28 "$vendor" amd64
+    p2s_version_package_state "$name" 8.1.2-1ubuntu2.29 "$vendor" amd64
+done
+p2s_version_package_state php8.1-fpm 8.1.2-1ubuntu2.30 "$vendor" amd64
+p2s_version_package_state php8.1-fpm 8.1.2-1ubuntu2.29+ppa1 "$vendor" amd64
 P2S_RELEASE=20.04
 p2s_version_package_state php7.4-fpm 7.4.3-4ubuntu2.29+esm6 "$vendor" amd64
 ''')
-        self.assertEqual(result.splitlines(), list('YNYNYN??NY??'))
+        expected_resolute_stonking = list('YNYNYN??NY')
+        expected_jammy = list('YNYNYNYN??')
+        self.assertEqual(result.splitlines(), expected_resolute_stonking + expected_jammy + ['?'])
+
+    def test_enterprise_linux_backports_match_only_reviewed_builds(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=rocky; P2S_MAJOR=9
+vendor='Rocky Enterprise Software Foundation'
+for build in 8.2.35-1.module+el9.9.0+40474+554e1069.0.1 8.3.36-1.module+el9.9.0+40475+972eba12.0.1 8.4.27-1.module+el9.9.0+40476+dc5d3092.0.1; do
+    p2s_version_package_state php-common "0:$build" "$vendor" x86_64
+    p2s_version_package_state php-cli "0:$build" "$vendor" aarch64
+    p2s_version_package_state php-cli "0:$build" 'Other RPM publisher' x86_64
+    p2s_version_package_state php-cli "0:$build.local" "$vendor" x86_64
+done
+p2s_version_package_state php-common 0:8.0.30-8.el9_8.1 "$vendor" x86_64
+P2S_MAJOR=8
+for build in 7.4.33-8.module+el8.10.0+40472+363a2c29.0.1 8.2.35-1.module+el8.10.0+40473+6f592aac.0.1; do
+    p2s_version_package_state php-common "0:$build" "$vendor" x86_64
+    p2s_version_package_state php-cli "0:$build" "$vendor" aarch64
+done
+P2S_DISTRO=almalinux
+p2s_version_package_state php-common 0:7.4.33-9.module_el8.10.0+4385+9e3d9df0 AlmaLinux x86_64
+p2s_version_package_state php-common 0:7.4.33-9.module_el8.10.0+4385+9e3d9df0 AlmaLinux aarch64
+p2s_version_package_state php-common 0:7.4.33-8.module_el8.10.0+4379+4cffe92b.alma.1 AlmaLinux x86_64
+P2S_MAJOR=9
+p2s_version_package_state php-common 0:8.0.30-8.el9_8.alma.1 AlmaLinux x86_64
+p2s_version_package_state php-common 0:8.0.30-8.el9_8.1 AlmaLinux x86_64
+p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.1 AlmaLinux x86_64
+p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.2 AlmaLinux x86_64
+''')
+        self.assertEqual(result.splitlines(), list('N???N???N???YN?N?N?NYYN?'))
 
     def test_report_retains_affected_build_after_candidate_changes(self):
         result = self.shell(r'''

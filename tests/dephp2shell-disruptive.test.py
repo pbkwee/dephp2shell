@@ -181,6 +181,84 @@ p2s_package_deb_update
         self.assertIn('INSTALL:', out)
         self.assertIn('php8.2-cli:amd64=8.2.35-1~deb12u1', out)
 
+    def test_migration_opt_in_uses_verified_native_fix_first(self):
+        fixture = self.fixture('''
+P2S_NOVEMBER=true; P2S_ALLOW_SURY_REPOSITORY=true
+candidate=8.2.36-1~deb12u1; repository_uri=https://deb.debian.org/debian; origin=Debian
+''').replace('\np2s_package_deb_update\n', '''
+p2s_disruptive_sury_add_repository() { printf 'UNEXPECTED_SOURCE_ADDITION\\n'; return 97; }
+p2s_package_deb_update_current_sources_first
+''')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        self.assertIn('php8.2-cli:amd64=8.2.36-1~deb12u1', out)
+        self.assertNotIn('UNEXPECTED_SOURCE_ADDITION', out)
+
+    def test_migration_retains_other_fixed_branch(self):
+        fixture = self.fixture().replace('\np2s_package_deb_update\n', '''
+printf 'php8.3-cli|8.3.36|amd64|Debian PHP Maintainers\\n' >> "$P2S_WORK/packages"
+printf 'php8.3-cli|8.3.36|amd64|php8.3|8.3.36|source_field\\n' >> "$P2S_WORK/deb-source-records"
+p2s_package_deb_update_current_sources_first
+''')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+        self.assertIn('php8.3-cli:amd64=8.3.36', install)
+        self.assertIn('php8.2-cli:amd64=8.2.35-1+0~', install)
+
+    def test_verified_native_candidate_wins_an_equal_priority_tie(self):
+        fixture = self.fixture('P2S_NOVEMBER=true; P2S_ALLOW_SURY_REPOSITORY=true')
+        fixture = fixture.replace('if $duplicate_origin; then', '''
+                        printf '     8.2.36-1~deb12u1 500\\n        500 https://deb.debian.org/debian bookworm/main amd64 Packages\\n'
+                        if $duplicate_origin; then''')
+        fixture = fixture.replace('else\n                        name=${last%:*}', '''
+                        printf ' 500 https://deb.debian.org/debian bookworm/main amd64 Packages\\n     release o=Debian,n=bookworm,c=main,b=amd64\\n'
+                    else
+                        name=${last%:*}''')
+        fixture = fixture.replace('"$fixture_candidate" "$fixture_proposed_arch"', '"${last#*=}" "$fixture_proposed_arch"')
+        fixture = fixture.replace('"$name" "$fixture_old" "$fixture_candidate"\n                    done',
+                                  '"$name" "$fixture_old" "8.2.36-1~deb12u1"\n                    done')
+        fixture = fixture.replace('\np2s_package_deb_update\n', '\np2s_package_deb_update_current_sources_first\n')
+        out = self.shell(fixture, isolated_sources=True)
+        self.assertIn('RC=0|ATTEMPTED=true', out)
+        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+        self.assertIn('php8.2-cli:amd64=8.2.36-1~deb12u1', install)
+        self.assertIn('same_priority=500', out)
+
+    def test_current_publisher_install_must_finish_before_other_branch_can_migrate(self):
+        body = r'''
+P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12; P2S_PANEL=none
+P2S_DISRUPTIVE=true; P2S_ALLOW_SURY_MIGRATION=true
+printf 'php8.2-cli|8.2.29|amd64|Debian\nphp7.4-cli|7.4.33|amd64|Debian\n' > "$P2S_WORK/packages"
+printf 'php8.2-cli|8.2.29|amd64|php8.2|8.2.29\nphp7.4-cli|7.4.33|amd64|php7.4|7.4.33\n' > "$P2S_WORK/deb-source-records"
+p2s_package_deb_preflight() { :; }
+p2s_disruptive_sury_platform_preflight() { :; }
+p2s_package_deb_refresh_indexes() { :; }
+p2s_package_deb_load_candidate_origins() { :; }
+p2s_package_deb_candidate() { if [ "$1" = php7.4-cli ]; then return 2; fi; }
+p2s_package_inventory_collect() {
+    printf 'php8.2-cli|8.2.35|amd64|Debian\nphp7.4-cli|7.4.33|amd64|Debian\n' > "$P2S_WORK/packages"
+}
+p2s_package_sources_collect() { :; }
+p2s_package_deb_update() {
+    printf 'PHASE: %s %s\n' "$P2S_ALLOW_SURY_MIGRATION" "$(cat "$P2S_APT_PHASE_BRANCHES")"
+    if ! $P2S_ALLOW_SURY_MIGRATION; then
+        printf 'php8.2-cli|8.2.35|amd64|php8.2-cli\n' > "$P2S_WORK/apt-approved"
+        return "$native_install_status"
+    fi
+    grep -Fxq 'php8.2-cli|8.2.35|amd64|Debian' "$P2S_WORK/packages"
+}
+p2s_package_deb_update_current_sources_first
+printf 'RC=%s\n' "$?"
+'''
+        for status in (0, 1):
+            with self.subTest(status=status):
+                out = self.shell('native_install_status=' + str(status) + '\n' + body)
+                phases = [line for line in out.splitlines() if line.startswith('PHASE:')]
+                self.assertEqual(phases, ['PHASE: false php8.2', 'PHASE: true php7.4']
+                                 if status == 0 else ['PHASE: false php8.2'])
+                self.assertIn('RC=' + str(status), out)
+
     def test_incompatible_or_unverified_candidates_never_install(self):
         cases = {'wrong_arch': 'proposed_arch=i386', 'installed_32bit': 'arch=i386',
                  'wrong_source': 'source=php8.3', 'foreign_suite': 'suite=trixie',
@@ -283,14 +361,31 @@ p2s_disruptive_sury_cleanup_added_repository
         self.assertEqual(out.count('MODE:644'), 2)
         self.assertIn('OWNED_FILES_REMOVED', out)
 
-    def test_added_source_is_retained_after_any_install_attempt(self):
+    def test_added_source_is_retained_after_a_migration_install_attempt(self):
         out = self.shell(self.source_fixture(after=r'''
 P2S_TRANSACTION_ATTEMPTED=true
+P2S_SURY_TRANSACTION_ATTEMPTED=true
 p2s_disruptive_sury_cleanup_added_repository
 [ -f "$fixture_source" ] && [ -f "$fixture_key" ] && printf 'RECOVERY_FILES_RETAINED\n'
 '''), isolated_sources=True)
         self.assertIn('SOURCE_RC=0', out)
         self.assertIn('RECOVERY_FILES_RETAINED', out)
+
+    def test_new_source_excludes_other_branches_and_is_removed_after_native_only_install(self):
+        out = self.shell(self.source_fixture(changes=r'''
+P2S_APT_PHASE_BRANCHES="$P2S_WORK/branches"
+printf 'php8.2\nphp7.4\n' > "$P2S_APT_PHASE_BRANCHES"
+''', after=r'''
+preferences="$P2S_WORK/etc/apt/preferences.d/dephp2shell-sury-php.pref"
+cat "$preferences"
+P2S_TRANSACTION_ATTEMPTED=true
+p2s_disruptive_sury_cleanup_added_repository
+[ ! -e "$preferences" ] && [ ! -e "$fixture_source" ] && [ ! -e "$fixture_key" ] && printf 'OWNED_FILES_REMOVED\n'
+'''), isolated_sources=True)
+        self.assertIn('Package: src:php8.2:any\nPin: release o=deb.sury.org,n=bookworm\nPin-Priority: 500', out)
+        self.assertIn('Package: src:php7.4:any', out)
+        self.assertIn('Package: *\nPin: release o=deb.sury.org,n=bookworm\nPin-Priority: -1', out)
+        self.assertIn('OWNED_FILES_REMOVED', out)
 
     def test_failed_key_write_cleans_its_partial_file_and_preserves_other_sources(self):
         out = self.shell(self.source_fixture(changes=r'''

@@ -100,7 +100,7 @@ for pid in 4242 4243; do
     printf '0::/system.slice/%s\n' "$unit" > "$P2S_WORK/proc/$pid/cgroup"
     case "$mapping" in
         php) printf '1234 r-xp 0 0 0 %s\n' "$module" > "$P2S_WORK/proc/$pid/maps" ;;
-        deleted_php) printf '1234 r-xp 0 0 0 %s (deleted)\n' "$module" > "$P2S_WORK/proc/$pid/maps" ;;
+        deleted_php) printf '1234 r-xp 0 0 0 %s (deleted)\n1235 r--p 0 0 0 %s (deleted)\n' "$module" "$module" > "$P2S_WORK/proc/$pid/maps" ;;
         unreadable) : ;;
         *) printf '1234 rw-s 0 0 0 /dev/zero (deleted)\n1235 r-xp 0 0 0 /fixture/libssl.so (deleted)\n' > "$P2S_WORK/proc/$pid/maps" ;;
     esac
@@ -140,6 +140,13 @@ fi
                 self.assertEqual("run: sudo systemctl stop 'php8.3-fpm.service'" in out,
                                  name == 'php-fpm8.3')
                 self.assertNotIn("run: sudo systemctl stop 'nginx.service'", out)
+                next_step = 'Restart its service or wait for the process to exit. Run this check again.'
+                self.assertEqual(out.count(f'{name} still uses the old executable at /fixture/{name}. {next_step}'),
+                                 1 if pending else 0)
+                module_warning = r'httpd still uses the old PHP module at .*?/libphp\.so\. ' + re.escape(next_step)
+                self.assertEqual(len(re.findall(module_warning, out)), 1 if maps == 'deleted_php' else 0)
+                self.assertEqual(out.count('dss:manifest:php_restart_warning:beforefix|details_emitted'),
+                                 1 if pending or maps == 'deleted_php' else 0)
                 advice = [line for line in out.splitlines() if 'Separate maintenance:' in line]
                 if state == 'N':
                     # One warning in each inventory; never one per worker.
