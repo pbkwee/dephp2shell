@@ -554,7 +554,9 @@ unverified contents or publishers still require manual review.
 StackX offers amd64 PHP 5.6 and 7.0–7.4 on Debian 9 Stretch, 10 Buster and
 11 Bullseye. Its main repositories also offer PHP 8.0–8.1 on Stretch, 8.0–8.3
 on Buster and 8.0–8.5 on Bullseye. The fallback covers those published branches
-on machines without a detected hosting panel. [StackX release notes](https://www.christophe-casalegno.com/en/contributions/stackx-php-maintenance-and-fixes-for-debian-9-10-11/)
+on machines without a detected hosting panel and on Virtualmin. Virtualmin keeps
+its per-site PHP handlers, pool configuration and existing APT restrictions.
+[StackX release notes](https://www.christophe-casalegno.com/en/contributions/stackx-php-maintenance-and-fixes-for-debian-9-10-11/)
 
 The StackX choice configures the matching repository when needed. It verifies
 the publisher signing fingerprint
@@ -735,6 +737,13 @@ sudo bash dephp2shell.sh --fix --enable-extra-fixes \
 ```
 
 ## Finish pending PHP package configuration
+
+Before configuring a pending PHP-FPM package, the script checks the accounts in
+its standard pool configuration. An unresolved user blocks package repair.
+Check the account and the site's pool assignment before retrying. The script
+can still report newer candidates from configured APT sources while repair is
+pending. Candidate availability alone does not establish a security fix or a
+successful installation plan.
 
 If package configuration fails, the report names the targets and dpkg exit code.
 For FPM packages it also collects limited service state, recent unit journal entries

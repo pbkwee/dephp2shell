@@ -724,6 +724,13 @@ manifest method identifiers retain their existing internal names.
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | `DP2S_CONFIGURE_PENDING_PHP_PACKAGES=true` | Only reviewed unpacked/half-configured versioned PHP packages with matching repository and package publisher identity. Explicit PHP-only triggers can finish; unrelated pending state or trigger chains remain blocked. No blanket pending configuration is used. |
 | [`--reinstall-php-same-version`](resolution-options.md#reinstall-the-exact-php-package-version) | `DP2S_REINSTALL_PHP_SAME_VERSION=true` | Reinstall identified PHP packages from authenticated exact installed-version normal candidates with unchanged package publisher, source and architecture. The simulation must contain every target and no dependency/version changes or unrelated configuration. Missing archives and unrelated legacy libraries stay blocked. |
 
+Before configuring selected PHP-FPM packages, the script checks named pool
+users and Unix socket owners or ACL users with `getent`. PHP-FPM resolves the
+standard configuration's includes. The raw dump stays in private scratch space
+and is discarded because it can contain secrets. Unit overrides can choose a
+different configuration. APT candidate reporting remains available while
+package repair is blocked, without authorizing an installation.
+
 A failed pending-PHP configuration records its explicit package targets and the
 actual dpkg exit status, distinguishing timeout status 124 from a package-script
 failure. For selected versioned FPM packages, read-only diagnostics collect unit

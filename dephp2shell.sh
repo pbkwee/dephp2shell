@@ -507,7 +507,8 @@ p2s_stackx_suite() {
 }
 
 p2s_stackx_scope() {
-    ${P2S_NOVEMBER:-false} && [ "${P2S_PANEL:-none}" = none ] && p2s_stackx_suite >/dev/null
+    case "${P2S_PANEL:-none}" in none|virtualmin) ;; *) return 1 ;; esac
+    ${P2S_NOVEMBER:-false} && p2s_stackx_suite >/dev/null
 }
 
 p2s_stackx_reviewed_november_build() {
@@ -3104,7 +3105,8 @@ p2s_backports_preview_source() {
         if [ ! -s "$keyring" ]; then
             p2s_apt_source_download "$uri/debian-php-backports.asc" "$P2S_WORK/backports-preview.asc" &&
                 p2s_backports_verify_key "$P2S_WORK/backports-preview.asc" &&
-                p2s_command_run 30 gpg --no-options --batch --dearmor < "$P2S_WORK/backports-preview.asc" +                    > "$keyring.tmp" && mv -- "$keyring.tmp" "$keyring" || return 1
+                p2s_command_run 30 gpg --no-options --batch --dearmor < "$P2S_WORK/backports-preview.asc" > "$keyring.tmp" &&
+                mv -- "$keyring.tmp" "$keyring" || return 1
         fi
     fi
     if [ ! -s "${prefix}InRelease" ]; then
@@ -4215,6 +4217,84 @@ $(p2s_service_diagnostic_redact < "$P2S_WORK/repair-service.log")"
     return 0
 }
 
+# Resolve pool accounts before maintainer scripts try to start a selected FPM service.
+p2s_package_deb_repair_fpm_users_check() {
+    local name branch binary config pool user status missing=false
+    [ -r "$1" ] || return 0
+    while IFS='|' read -r name _; do
+        name=${name%:*}
+        case "$name" in php[0-9].[0-9]-fpm) ;; *) continue ;; esac
+        branch=${name#php}; branch=${branch%-fpm}
+        binary="/usr/sbin/php-fpm$branch"; config="/etc/php/$branch/fpm/php-fpm.conf"
+        if [ ! -x "$binary" ] || [ ! -r "$config" ] || ! p2s_command_exists getent; then
+            p2s_manifest_record package_repair_service_probe "$name.service|pool_users|standard_inspection_unavailable"
+            continue
+        fi
+        # Let FPM expand includes. Override logging only in this test since the dump can contain secrets.
+        printf 'include = %s\n[global]\nlog_level = notice\nerror_log = /dev/stderr\n' "$config" > "$P2S_WORK/repair-fpm.conf" || continue
+        status=0
+        p2s_command_run 30 "$binary" -y "$P2S_WORK/repair-fpm.conf" -tt > "$P2S_WORK/repair-fpm-config" 2>&1 || status=$?
+        # NOTICE: [site] and NOTICE:     user = siteuser yield site|siteuser.
+        # Some versions stop before the dump with ERROR: [pool site] cannot get uid for user 'siteuser'.
+        # Unix socket ACLs take precedence over listen.owner when either ACL is set.
+        awk '
+            function account(name, numeric) {
+                if (name!="" && name!="undefined" && name !~ /[|\001-\037\177]/ &&
+                    (numeric || name !~ /^[0-9]+$/) && !seen[pool,name]++) print pool "|" name
+            }
+            function emit(  count,i,users) {
+                if (pool=="" || pool=="global" || pool ~ /[|\001-\037\177]/) return
+                account(user, 0)
+                if (listen=="" || listen !~ /\//) return
+                if (acl_users!="" || acl_groups!="") {
+                    count=split(acl_users, users, ",")
+                    for (i=1; i<=count; i++) account(users[i], 1)
+                } else account(owner, 0)
+            }
+            {sub(/^\[[^]]+\][ \t]+/, "")}
+            /^ERROR: \[pool [^]]+\] cannot get uid for user \047[^\047]+\047/ {
+                emit()
+                pool=$0; sub(/^ERROR: \[pool /, "", pool); sub(/\] cannot get uid for user .*/, "", pool)
+                sub(/^.*cannot get uid for user \047/, ""); sub(/\047.*/, "")
+                if (pool !~ /[|\001-\037\177]/) account($0, 1)
+                pool=""; next
+            }
+            /^NOTICE: \[[^]]+\][ \t]*$/ {
+                emit()
+                pool=$0; sub(/^NOTICE: \[/, "", pool); sub(/\][ \t]*$/, "", pool)
+                user=listen=owner=acl_users=acl_groups=""; next
+            }
+            /^NOTICE:[ \t]+(user|listen|listen\.owner|listen\.acl_users|listen\.acl_groups)[ \t]*=/ {
+                sub(/^NOTICE:[ \t]+/, "")
+                key=$0; sub(/[ \t]*=.*/, "", key)
+                sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]+$/, "")
+                if ($0=="undefined") $0=""
+                if (key=="user") user=$0
+                if (key=="listen") listen=$0
+                if (key=="listen.owner") owner=$0
+                if (key=="listen.acl_users") acl_users=$0
+                if (key=="listen.acl_groups") acl_groups=$0
+            }
+            END {emit()}' "$P2S_WORK/repair-fpm-config" > "$P2S_WORK/repair-fpm-users"
+        rm -f "$P2S_WORK/repair-fpm-config"
+        p2s_manifest_record package_repair_service_probe "$name.service|pool_users|config_dump_exit=$status"
+        while IFS='|' read -r pool user; do
+            status=0
+            p2s_command_run 10 getent -- passwd "$user" >/dev/null 2>&1 || status=$?
+            case "$status" in
+                0) ;;
+                2)
+                    p2s_fix_block package_repair_fpm_user "PHP-FPM $branch pool [$pool] refers to user '$user', which getent could not resolve. Restore the correct account or review the pool configuration before retrying package repair."
+                    missing=true ;;
+                *)
+                    p2s_manifest_record package_repair_service_probe "$name.service|pool_users|account_lookup_exit=$status"
+                    break ;;
+            esac
+        done < "$P2S_WORK/repair-fpm-users"
+    done < "$1"
+    ! $missing
+}
+
 # P2S-MUTATION: Configure only verified unpacked/half-configured standard PHP packages.
 p2s_disruptive_package_configure_pending_php() {
     local name version arch target configure_status=0 started
@@ -4228,6 +4308,7 @@ p2s_disruptive_package_configure_pending_php() {
     if ! $P2S_PENDING_PHP_REPAIR_ELIGIBLE; then
         p2s_fix_block package_repair_scope "Pending package configuration has no bounded standard PHP-only repair: $P2S_PACKAGE_REPAIR_REASON."; return 1
     fi
+    p2s_package_deb_repair_fpm_users_check "$P2S_WORK/repair-pending" || return 1
     while IFS='|' read -r name version arch; do
         target=${name%:*}; [ "$arch" = all ] || target="$target:$arch"
         targets[${#targets[@]}]="$target"
@@ -5074,6 +5155,16 @@ p2s_package_deb_update() {
         p2s_disruptive_sury_add_repository || return 1
     fi
     if $P2S_STACKX_ACTIVE; then
+        if [ "${P2S_PANEL:-none}" = virtualmin ] && [ -r "$P2S_WORK/apt-policy-records" ] &&
+            awk -F'|' 'FILENAME==ARGV[1] {
+                if ($1 ~ /^libapache2-mod-php/) {sub(/:[^:]+$/, "", $1); selected[$1]=1}
+                next
+            }
+            $1=="missing" && $3==1 {sub(/:[^:]+$/, "", $2); if ($2 in selected) blocked=1}
+            END {exit !blocked}' "$P2S_WORK/apt-selected" "$P2S_WORK/apt-policy-records"; then
+            p2s_fix_block candidate_provider "A selected Virtualmin Apache PHP module has no APT candidate and a negative priority. Review the existing mod_php restriction before using StackX for this branch."
+            return 1
+        fi
         p2s_stackx_prepare_source "$stackx_suite" "$stackx_uri" || return 1
         if $P2S_STACKX_PREVIEW_ONLY; then
             p2s_manifest_record stackx_preflight 'source_setup_required|signed_candidates_available|simulation_after_source_setup'
@@ -7069,7 +7160,7 @@ p2s_fix_check_distro_recipe() {
     fi
     if ${P2S_ALLOW_STACKX:-false}; then
         if ! p2s_stackx_scope; then
-            p2s_fix_block provider_migration "The StackX fallback requires Debian 9, 10 or 11 without a detected hosting panel. Select an eligible amd64 PHP branch."
+            p2s_fix_block provider_migration "The StackX fallback requires Debian 9, 10 or 11 with Virtualmin or without a detected hosting panel. Select an eligible amd64 PHP branch."
             return 1
         fi
         p2s_manifest_record update_recipe 'apt|explicit_stackx|signed_source_setup_if_needed'
@@ -7653,6 +7744,38 @@ p2s_backports_update_last() {
     p2s_package_deb_update backports
 }
 
+# APT can query candidates while dpkg configuration is pending. Keep this separate from install approval.
+p2s_package_deb_pending_candidates_report() (
+    local name version arch vendor kind installed candidate record evidence=cached examined=false newer=false
+    local -a packages=()
+    [ -s "$P2S_WORK/packages" ] || return 0
+    while IFS='|' read -r name version arch vendor; do
+        p2s_package_is_engine "$name" || continue
+        if [ "$arch" != all ]; then name="${name%:*}:$arch"; fi
+        packages[${#packages[@]}]=$name
+    done < "$P2S_WORK/packages"
+    [ "${#packages[@]}" -gt 0 ] || return 0
+    if [ "${P2S_REPOSITORY_REFRESH:-}" != refreshed ]; then p2s_check_refresh_packages; fi
+    if [ "${P2S_REPOSITORY_REFRESH:-}" = refreshed ]; then evidence=refreshed; fi
+    p2s_package_deb_policy_collect "${packages[@]}"
+    while IFS='|' read -r kind name installed candidate record; do
+        [ "$kind" = candidate ] || continue
+        installed=${installed#installed=}; candidate=${candidate#candidate=}
+        case "$installed" in ''|'(none)') continue ;; esac
+        examined=true
+        case "$candidate" in ''|'(none)') continue ;; esac
+        if dpkg --compare-versions "$candidate" gt "$installed"; then
+            newer=true
+            p2s_message_print info "APT's $evidence indexes show a newer candidate for $name ($installed to $candidate). Package repair must finish before checking whether this candidate is patched and installable."
+        fi
+    done < "$P2S_WORK/apt-policy-records"
+    if ! $examined; then
+        p2s_message_print warn "Could not read APT candidates for the installed PHP engines while package repair is pending."
+    elif ! $newer; then
+        p2s_message_print info "APT found no newer candidate for the installed PHP engines in the $evidence indexes. Package repair is still pending."
+    fi
+)
+
 # Plan using the metadata already on disk. A separate refresh records its outcome.
 p2s_fix_plan_options() {
     local name version arch vendor exact=true native_php=false migration_repair='' source_evidence=cached_only plan_blocker
@@ -7671,6 +7794,8 @@ p2s_fix_plan_options() {
         p2s_package_deb_repair_audit_collect
         if ${P2S_REPAIR_AUDIT_NEEDED:-false}; then
             if ${P2S_PENDING_PHP_REPAIR_ELIGIBLE:-false}; then
+                p2s_package_deb_pending_candidates_report
+                p2s_package_deb_repair_fpm_users_check "$P2S_WORK/repair-pending" || return 0
                 if [ "$P2S_PHASE" = afterfix ] && ${P2S_PACKAGE_CONFIGURATION_ATTEMPTED:-false}; then
                     p2s_message_print warn "The attempted PHP package configuration is still incomplete. Review the dpkg and service diagnostics, resolve the reported problem, then run --check before trying the repair again."
                     return 0
@@ -7953,7 +8078,8 @@ p2s_fix_run() {
     local restart_status=0
     # P2S-MUTATION: Replaces workers after an installation attempt or a pending restart.
     if $P2S_TRANSACTION_ATTEMPTED ||
-        { $P2S_RESTART_PENDING && ! ${P2S_ALLOW_BACKPORTS:-false} && ! ${P2S_ALLOW_STACKX:-false}; }; then
+        { { ! $selected_repairs || [ "$update_status" -eq 0 ]; } &&
+            $P2S_RESTART_PENDING && ! ${P2S_ALLOW_BACKPORTS:-false} && ! ${P2S_ALLOW_STACKX:-false}; }; then
         p2s_service_restart_and_verify; restart_status=$?
     fi
     p2s_manifest_record fix_commands "update_exit=$update_status|restart_exit=$restart_status|restart_attempted=$P2S_RESTART_ATTEMPTED|pending_php_configuration_attempted=$P2S_PACKAGE_CONFIGURATION_ATTEMPTED|exact_php_reinstall_attempted=$P2S_PACKAGE_REINSTALL_ATTEMPTED"
@@ -7964,7 +8090,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-26.6 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-26.7 check_options=--check
     local P2S_APT_PLAN=
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;

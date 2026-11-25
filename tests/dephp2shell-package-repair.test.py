@@ -58,6 +58,10 @@ p2s_command_run() {
                 esac ;;
             esac ;;
         apt-cache)
+            if [ -n "${newer_fpm_candidate:-}" ]; then
+                printf '%s:\n  Installed: %s\n  Candidate: %s\n' "$fixture_package:$fixture_arch" "$fixture_version" "$newer_fpm_candidate"
+                return 0
+            fi
             case "$*" in
                 *' policy '*|*' policy')
                     if [ "$last" = policy ]; then
@@ -89,7 +93,15 @@ p2s_command_run() {
         journalctl)
             printf 'ERROR: [pool oldsite] cannot get uid for user missing-user\npassword=private-value\nhttps://login:credential@repo.invalid/private-path\n'
             return "$journal_exit" ;;
+        getent)
+            if [ "$*" = "10 getent -- passwd ${missing_pool_user:-}" ]; then return 2; fi
+            [ "$#" -eq 5 ] && [ "$3:$4" = --:passwd ] ;;
         */php-fpm*)
+            if [ "$last" = -tt ]; then
+                grep -Fxq "include = $P2S_WORK/etc/php/7.4/fpm/php-fpm.conf" "$4" || return 97
+                if [ -r "$P2S_WORK/fpm-dump" ]; then cat "$P2S_WORK/fpm-dump"; fi
+                return "${dump_exit:-0}"
+            fi
             if [ "$config_exit" -eq 0 ]; then printf 'NOTICE: configuration test is successful\n'
             else printf 'ERROR: [pool oldsite] cannot get uid for user missing-user\n'; fi
             return "$config_exit" ;;
@@ -165,6 +177,74 @@ $P2S_TRANSACTION_ATTEMPTED && $P2S_BLOCKED || exit 2
 ''', f'configure_fail=true; configure_exit={status}\n')
             self.assertIn(f'package_repair_exit:beforefix|configure_pending_php|exit={status}|targets=php8.2-cli:amd64', out)
             self.assertIn(f'Could not finish configuring php8.2-cli:amd64 (dpkg exit {status}', out)
+
+    def test_pending_fpm_repair_blocks_missing_users_but_still_checks_newer_candidates(self):
+        for user in ('missing-worker', 'missing-owner', 'missing-acl', 'missing-before-dump', ''):
+            with self.subTest(user=user):
+                out = self.shell(r'''
+mkdir -p "$P2S_WORK/usr/sbin" "$P2S_WORK/etc/php/7.4/fpm"
+touch "$P2S_WORK/usr/sbin/php-fpm7.4" "$P2S_WORK/etc/php/7.4/fpm/php-fpm.conf"
+chmod u+x "$P2S_WORK/usr/sbin/php-fpm7.4"
+cat > "$P2S_WORK/fpm-dump" <<'EOF'
+[25-Nov-2026 23:19:03] NOTICE: [pool-one]
+[25-Nov-2026 23:19:03] NOTICE:     user = missing-worker
+[25-Nov-2026 23:19:03] NOTICE:     listen = /run/php/site-one.sock
+[25-Nov-2026 23:19:03] NOTICE:     listen.owner = missing-owner
+[25-Nov-2026 23:19:03] NOTICE:     listen.acl_users = undefined
+[25-Nov-2026 23:19:03] NOTICE:     env[SECRET] = fixture-secret NOTICE: user = fake-user
+[25-Nov-2026 23:19:03] NOTICE: [pool-two]
+[25-Nov-2026 23:19:03] NOTICE:     user = 1234
+[25-Nov-2026 23:19:03] NOTICE:     listen = /run/php/site-two.sock
+[25-Nov-2026 23:19:03] NOTICE:     listen.owner = ignored-owner
+[25-Nov-2026 23:19:03] NOTICE:     listen.acl_users = allowed,missing-acl
+[25-Nov-2026 23:19:03] NOTICE: [pool-three]
+[25-Nov-2026 23:19:03] NOTICE:     user = allowed
+[25-Nov-2026 23:19:03] NOTICE:     listen = 127.0.0.1:9000
+[25-Nov-2026 23:19:03] NOTICE:     listen.owner = ignored-tcp-owner
+EOF
+if [ "$missing_pool_user" = missing-before-dump ]; then
+    printf "[25-Nov-2026 23:19:03] ERROR: [pool pool-one] cannot get uid for user '%s'\n" "$missing_pool_user" > "$P2S_WORK/fpm-dump"
+    dump_exit=78
+fi
+: > "$P2S_WORK/services"; : > "$P2S_WORK/processes"
+P2S_RESTART_PENDING=true; P2S_STATE=Y
+p2s_package_lock_warn() { :; }
+p2s_fix_selected_repair_preflight() { :; }
+p2s_fix_prepare_selected_methods() { p2s_disruptive_package_configure_pending_php; }
+p2s_fix_preflight() { :; }
+p2s_package_deb_update() { :; }
+p2s_service_restart_and_verify() { printf 'RESTART_ATTEMPT\n'; }
+p2s_fix_run
+printf 'FIX_RC=%s|attempted=%s\n' "$?" "$P2S_PACKAGE_CONFIGURATION_ATTEMPTED"
+if [ -n "$missing_pool_user" ]; then
+    P2S_MODE=check; P2S_PHASE=afterfix; P2S_BLOCKED=true
+    p2s_check_refresh_packages() { printf 'REFRESH_ONLY\n'; P2S_REPOSITORY_REFRESH=refreshed; }
+    p2s_package_deb_repair_audit_collect() { P2S_REPAIR_AUDIT_NEEDED=true; p2s_package_deb_repair_assess; }
+    printf 'package_state\n' > "$P2S_WORK/blocker-keys"
+    p2s_fix_plan_options
+fi
+cat "$P2S_WORK/commands"
+''', f'''package=php7.4-fpm; source=php7.4; version=7.4.33-1~deb12u1; status='install ok half-configured'
+missing_pool_user='{user}'; newer_fpm_candidate=7.4.33-2~deb12u1
+''')
+                self.assertNotIn('fixture-secret', out)
+                self.assertNotIn('fake-user', out)
+                self.assertNotIn('ignored-owner', out)
+                self.assertNotIn('ignored-tcp-owner', out)
+                self.assertNotIn('passwd 1234', out)
+                if user:
+                    pool = 'pool-two' if user == 'missing-acl' else 'pool-one'
+                    self.assertIn(f"pool [{pool}] refers to user '{user}'", out)
+                    self.assertIn('FIX_RC=1|attempted=false', out)
+                    self.assertNotIn(' --configure ', out)
+                    self.assertNotIn('RESTART_ATTEMPT', out)
+                    self.assertIn('REFRESH_ONLY', out)
+                    self.assertIn("APT's refreshed indexes show a newer candidate", out)
+                    self.assertIn('7.4.33-2~deb12u1', out)
+                    self.assertNotIn('fix_recommendation:afterfix|pending_php', out)
+                else:
+                    self.assertIn('FIX_RC=0|attempted=true', out)
+                    self.assertIn(' --configure php7.4-fpm:amd64', out)
 
     def test_failed_fpm_configuration_collects_read_only_redacted_diagnostics(self):
         for tools_available, journal_exit, config_exit in ((True, 0, 78), (True, 124, 78), (False, 0, 78), (True, 0, 0)):

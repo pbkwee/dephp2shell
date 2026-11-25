@@ -340,11 +340,12 @@ P2S_NOVEMBER=true; P2S_ALLOW_STACKX=true; P2S_MODE=check
 P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_PANEL=none
 P2S_REPOSITORY_REFRESH=refreshed; P2S_RELEASE=10.13
 P2S_PHP_SOURCE_BRANCHES=php5.6
-suite=buster; branch=php5.6; old=5.6.40-1; arch=amd64; native_arch=amd64
+suite=buster; branch=php5.6; old=5.6.40-1; arch=amd64; native_arch=amd64; component=cli
 duplicate=false; tamper=false; removal=false; configured=true; broad_pin=false; unreviewed=false
 fixture_fingerprint=AF97ED98AACE4CE129A03B6E2C9736B593BABF7F
 ''' + changes + r'''
-fixture_name=$branch-cli
+fixture_name=$branch-$component
+if [ "$component" = apache ]; then fixture_name=libapache2-mod-$branch; fi
 fixture_arch=$arch
 fixture_version=$(p2s_stackx_published_build "$suite" "$branch")
 if $unreviewed; then fixture_version=${fixture_version%.1}.2; fi
@@ -449,6 +450,26 @@ fi
                 self.assertIn('STACKX_RC=1', out)
                 self.assertNotIn('INSTALL:', out)
                 self.assertNotIn('UNEXPECTED administrative command:', out)
+
+    def test_stackx_allows_virtualmin_fpm_and_respects_its_apache_pin(self):
+        out = self.stackx_plan('P2S_PANEL=virtualmin; component=fpm', run=r'''
+p2s_fix_check_distro_recipe && p2s_package_deb_update stackx
+''')
+        self.assertIn('STACKX_RC=0', out)
+        self.assertIn('SIMULATE:', out)
+        self.assertIn('php5.6-fpm:amd64=', out)
+        self.assertNotIn('INSTALL:', out)
+        out = self.stackx_plan('P2S_PANEL=virtualmin; component=apache; P2S_MODE=fix; configured=false', run=r'''
+printf 'missing|%s|1\n' "$fixture_name" > "$P2S_WORK/apt-policy-records"
+p2s_package_deb_update stackx
+''')
+        self.assertIn('STACKX_RC=1', out)
+        self.assertIn('Review the existing mod_php restriction', out)
+        self.assertNotIn('MANAGED_SOURCE', out)
+        self.assertNotIn('INSTALL:', out)
+        out = self.stackx_plan('P2S_PANEL=plesk; P2S_MODE=fix')
+        self.assertIn('STACKX_RC=1', out)
+        self.assertNotIn('INSTALL:', out)
 
     def test_stackx_recommendation_carries_the_simulated_branch_scope(self):
         out = self.stackx_plan(run=r'''
@@ -753,43 +774,53 @@ p2s_deb_leftover_removal_preview php7.0 'php7.0-cli, php7.0-common'
         self.assertIn('includes other package changes (php-mcrypt)', out)
         self.assertNotIn('UNEXPECTED', out)
 
-    def test_backports_offer_checks_signed_index_and_complete_branch(self):
-        out = self.shell(r'''
-P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
+    def backports_offer(self, release, suite, branch, installed):
+        return self.shell(f'P2S_RELEASE={release}; suite={suite}; branch={branch}; old={installed}\n' + r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu
 P2S_MODE=check; P2S_STATE=Y; P2S_REPOSITORY_REFRESH=refreshed
-P2S_BACKPORTS_ADD_KEYRING="$P2S_WORK/reviewed.gpg"
-old=7.2.24-0ubuntu0.18.04.17
-new=7.2.34-71+debsuryorg12.1+1+ubuntu18.04+animaa1
+new=$(p2s_backports_build "$suite" "$branch" amd64); new=${new%%|*}
 helper=2:106~exp1+debsuryorg12.1+1+animaa1
-printf '%s\n' "php7.2-cli|$old|amd64|Ubuntu" "php7.2-xml|$old|amd64|Ubuntu" \
-    'php-common|1:60ubuntu1|all|Ubuntu' > "$P2S_WORK/packages"
-printf '%s\n' "php7.2-cli|$old|amd64|php7.2|$old" "php7.2-xml|$old|amd64|php7.2|$old" \
-    'php-common|1:60ubuntu1|all|php-defaults|60ubuntu1' > "$P2S_WORK/deb-source-records"
+printf '%s\n' "$branch-cli|$old|amd64|Ubuntu" "$branch-xml|$old|amd64|Ubuntu" > "$P2S_WORK/packages"
+printf '%s\n' "$branch-cli|$old|amd64|$branch|$old" "$branch-xml|$old|amd64|$branch|$old" > "$P2S_WORK/deb-source-records"
+if [ "$suite" = bionic ]; then
+    printf '%s\n' 'php-common|1:60ubuntu1|all|Ubuntu' >> "$P2S_WORK/packages"
+    printf '%s\n' 'php-common|1:60ubuntu1|all|php-defaults|60ubuntu1' >> "$P2S_WORK/deb-source-records"
+fi
 payload_hash=$(printf '%064d' 9)
 p2s_apt_source_download() {
     case "$1" in
+        */debian-php-backports.asc) printf 'fixture key\n' > "$2" ;;
         */InRelease) : > "$2"; printf '%s\n' release > "$2" ;;
         */Packages.gz) gzip -c "$P2S_WORK/fixture-Packages" > "$2" ;;
         *) return 1 ;;
     esac
 }
+p2s_backports_verify_key() { grep -Fxq 'fixture key' "$1"; }
 p2s_backports_verify_release() {
-    [ "$1" = bionic ] && [ "$3" = "$P2S_BACKPORTS_ADD_KEYRING" ] && "$valid_signature"
+    [ "$1" = "$suite" ] && grep -Fxq 'fixture key' "$3" && "$valid_signature"
 }
-p2s_backports_index_sha256() { [ "$*" = 'bionic sury amd64' ] && printf '%s\n' "$reviewed"; }
-p2s_command_run() { case "$2" in gzip|sha256sum) shift; "$@" ;; *) return 97 ;; esac; }
+p2s_backports_index_sha256() { [ "$*" = "$suite sury amd64" ] && printf '%s\n' "$reviewed"; }
+p2s_command_run() {
+    case "$2" in
+        gpg) [ "$*" = '30 gpg --no-options --batch --dearmor' ] && cat ;;
+        gzip|sha256sum) shift; "$@" ;;
+        *) return 97 ;;
+    esac
+}
 p2s_package_deb_preflight() { return 0; }
 p2s_package_deb_sury_trust_preflight() { return 0; }
 p2s_november_apt_route() { return 1; }
 p2s_repository_repair_assess() { return 1; }
-p2s_backports_missing_components() { [ "$1" = bionic ] && printf 'sury\n'; }
-p2s_backports_add_preflight() { P2S_BACKPORTS_ADD_KEYRING="$P2S_WORK/reviewed.gpg"; }
-for scenario in not_reviewed missing_helper wrong_signer good; do
-    rm -f "$P2S_WORK"/backports-preview-bionic-sury-*
-    for name in php7.2-cli php7.2-xml; do
+p2s_backports_missing_components() { [ "$1" = "$suite" ] && printf 'sury\n'; }
+p2s_backports_add_preflight() { :; }
+scenarios='not_reviewed wrong_signer good'
+if [ "$suite" = bionic ]; then scenarios="missing_helper $scenarios"; fi
+for scenario in $scenarios; do
+    rm -f "$P2S_WORK"/backports-preview*
+    for name in "$branch-cli" "$branch-xml"; do
         printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nSHA256: %s\n\n' "$name" "$new" "$payload_hash"
     done > "$P2S_WORK/fixture-Packages"
-    if [ "$scenario" != missing_helper ]; then
+    if [ "$suite" = bionic ] && [ "$scenario" != missing_helper ]; then
         printf 'Package: php-common\nVersion: %s\nArchitecture: all\nSHA256: %s\n' "$helper" "$payload_hash" >> "$P2S_WORK/fixture-Packages"
     fi
     reviewed=$(sha256sum "$P2S_WORK/fixture-Packages"); reviewed=${reviewed%% *}
@@ -800,12 +831,23 @@ for scenario in not_reviewed missing_helper wrong_signer good; do
     p2s_november_apt_update
 done
 ''', isolated_sources=True)
-        self.assertIn('Backports index differs from the reviewed SHA256 snapshot', out)
-        self.assertIn('no eligible equivalent for php-common (all)', out)
-        before_good, good = out.split('SCENARIO=good\n')
-        option = 'fix_recommendation:beforefix|debian_php_backports|'
-        self.assertNotIn(option, before_good)
-        self.assertIn(option, good)
+
+    def test_backports_offer_checks_fresh_key_signed_index_and_complete_branch(self):
+        for release, suite, branch, installed in (
+            ('18.04', 'bionic', 'php7.2', '7.2.24-0ubuntu0.18.04.17'),
+            ('20.04', 'focal', 'php7.4', '7.4.3-4ubuntu2.29'),
+        ):
+            with self.subTest(suite=suite):
+                out = self.backports_offer(release, suite, branch, installed)
+                self.assertIn('Backports index differs from the reviewed SHA256 snapshot', out)
+                self.assertIn('Could not verify the published Backports release', out)
+                if suite == 'bionic':
+                    self.assertIn('no eligible equivalent for php-common (all)', out)
+                before_good, good = out.split('SCENARIO=good\n')
+                option = 'fix_recommendation:beforefix|debian_php_backports|'
+                self.assertNotIn(option, before_good)
+                self.assertIn(option, good)
+                self.assertIn(f'--php-source-branches={branch}', good)
 
     def test_bionic_backports_approves_only_the_reviewed_php_common_dependency(self):
         out = self.shell(r'''
