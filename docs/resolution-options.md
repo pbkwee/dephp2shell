@@ -353,6 +353,71 @@ no automatic package rollback.
 sudo bash dephp2shell.sh --fix --enable-extra-fixes --migrate-php-to-sury
 ```
 
+## Use an existing Debian PHP Backports repository
+
+Choose the community Debian PHP Backports feed as a last resort when the
+installed PHP branch has no verified update from a preferred source. The
+November check can offer this option after an authenticated refresh and
+successful package simulation.
+
+Configure the publisher's same-release HTTPS APT source and dedicated
+signing key manually. Verify the key fingerprint
+`32E998308C448BF6CC57BD7BFEE348611F66C3D6` and use a keyring name containing
+`debian-php-backports`. Follow the publisher setup up to the repository
+refresh. [Community repository instructions](https://github.com/animaartificialis/debian-php-backports#apt-repository)
+
+On Debian 10 Buster, the community `sury` component publishes a reviewed
+PHP 5.6 build, `5.6.40-110+debsuryorg12.1+1+debian10+animaa1`.
+Freexian PHP LTS lists PHP 5.6 under a separate subscription. Public Debian
+Extended LTS supplies native PHP 7.3.
+
+Run the normal November check first. If it recommends the community
+update, use the explicit opt-in during the approved maintenance window.
+
+```bash
+bash dephp2shell.sh --check --november-2026
+bash dephp2shell.sh --fix --november-2026 --enable-extra-fixes --use-debian-php-backports
+```
+
+The fix rechecks the signed index, exact candidate and PHP extension ABI
+before installing packages. Check mode refreshes repository metadata and
+simulates the plan. The recipe requires the existing signed HTTPS feed.
+Use the package and runtime results to verify every installed branch.
+
+## November source choice by PHP branch
+
+Start with the publisher of the installed PHP packages. Keep the PHP branch
+and verify the signed OS suite, full fixed revision, and extensions. If the
+current publisher cannot supply a fix, check the distribution's native
+security feed, then consider an eligible Sury/ondrej update with consent.
+Freexian is the next option where it has a verified build or can supply one
+under a subscription. Community Debian PHP Backports is the last resort.
+
+| OS | Native PHP and preferred source | Alternatives for installed non-native PHP |
+| --- | --- | --- |
+| Debian 13 Trixie and 12 Bookworm | PHP 8.4 from Debian security and 8.2 from Debian LTS, respectively. | Keep an eligible installed Sury branch on Sury. Check subscribed Freexian PHP LTS for listed pairs. |
+| Debian 11 Bullseye | PHP 7.4 from Freexian Extended LTS. | The checked Sury index had October builds. Check subscribed Freexian PHP LTS for other branches. |
+| Debian 10 Buster | PHP 7.3 from Freexian Extended LTS. | For PHP 5.6 or 7.4, check subscribed Freexian PHP LTS first. Community Backports publishes reviewed builds for both. |
+| Debian 9 Stretch | PHP 7.0 from Freexian Extended LTS. | Check subscribed Freexian PHP LTS. Community Backports publishes reviewed builds for 5.6, 7.3, and 7.4. |
+| Debian 8 Jessie, 7 Wheezy, and 6 Squeeze | Community Backports for installed PHP 5.6 on Jessie or 5.4 on Wheezy and Squeeze. Squeeze's native PHP 5.3 needs a branch migration. | Community Backports also publishes versioned PHP 5.6 and 7.1 for Jessie. |
+| Ubuntu 26.10 Stonking | PHP 8.5 from Ubuntu security. | The checked Sury and Launchpad PPA suites had no candidates. |
+| Ubuntu 26.04 Resolute, 24.04 Noble, and 22.04 Jammy | PHP 8.5, 8.3, and 8.1, respectively, from Ubuntu security. | Use the eligible installed Sury family source. The PPA has verified Jammy and Noble candidates. Resolute has signed Sury mirror candidates and an empty PPA index. Check subscribed Freexian PHP LTS for listed pairs. |
+| Ubuntu 20.04 Focal and 18.04 Bionic | PHP 7.4 and 7.2, respectively, from Ubuntu Pro. | Check subscribed Freexian PHP LTS. Community Backports publishes reviewed builds for 5.6, 7.2, and 7.4 on both releases. |
+| Ubuntu 16.04 Xenial and 14.04 Trusty | PHP 7.0 and 5.5, respectively, from Ubuntu Legacy. | Community Backports publishes reviewed builds for Xenial PHP 5.6, 7.3, and 7.4 and Trusty PHP 5.6 and 7.4. |
+| AlmaLinux 8, 9, and 10 | Prefer the installed AlmaLinux stream. Reviewed November builds cover 7.4 and 8.2 on EL8, 8.0 and 8.2–8.4 on EL9, and 8.3–8.4 on EL10. [AlmaLinux advisories](https://almalinux.org/blog/2026-11-19-php-security-release/) | For other branches, check the installed vendor's advisory or review a supported stream change. |
+| Rocky Linux 8, 9, and 10 | Prefer the installed Rocky Linux stream. Reviewed coverage includes 7.4 and 8.2 on EL8, 8.2–8.4 on EL9, and 8.4 on EL10. [Rocky Linux advisories](https://errata.rockylinux.org/) | Check the Rocky-specific build and architecture. EL9 PHP 8.0 and EL10 PHP 8.3 needed separate evidence in the checked indexes. |
+| CentOS Stream 9 and 10 | Prefer CentOS Stream AppStream. The checked binary indexes had no verified November stock PHP fix. [Stream 9 AppStream](https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/) · [Stream 10 AppStream](https://mirror.stream.centos.org/10-stream/AppStream/x86_64/os/Packages/) | Check the installed vendor, such as Remi, before planning a supported stream change. |
+| CentOS Linux 6–8 and CentOS Stream 8 | The distribution archives preserve historical PHP packages. Use an installed vendor with a verified fix or plan an OS migration. [CentOS lifecycles](https://www.centos.org/cl-vs-cs/) | Check the existing panel or PHP publisher, such as cPanel, CloudLinux, or TuxCare. |
+| Hosting panels | Prefer the panel's PHP publisher and supported service procedure for its PHP packages. | Keep panel-managed and system PHP on their respective update paths. |
+
+The community rows describe standard builds reviewed from `v2026.11.23.3`.
+The project publishes amd64 packages for all listed targets and arm64 packages
+for its Buster and Focal targets. The script requires the canonical signed
+HTTPS feed. Old APT clients that cannot reach that endpoint need a manual
+plan. Some targets require a new shared library or `php-common`. The script
+can decline a build when the simulation changes packages outside the reviewed
+cohort. [Community packages and setup](https://github.com/animaartificialis/debian-php-backports#packages)
+
 ## Add the Sury or PPA repository
 
 Allow the script to add the update source if an eligible PHP branch still lacks
