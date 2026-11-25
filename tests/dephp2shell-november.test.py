@@ -122,6 +122,7 @@ fixture_native=; fixture_native_priority=500; fixture_duplicate=false
 fixture_native_uri=https://archive.debian.org/debian; fixture_native_suite=buster
 fixture_extension=php7.3-json; fixture_signer_ok=true
 fixture_candidate_api=phpapi-20180731; fixture_installed_api=phpapi-20180731
+fixture_digest=$(printf '%064d' 1); fixture_metadata_digest=$fixture_digest
 fixture_install=false
 ''' + changes + r'''
 printf ' 500 %s %s/%s amd64 Packages\n     release o=%s,a=%s,n=%s,l=%s,c=%s,b=amd64\n' \
@@ -150,8 +151,8 @@ p2s_command_run() {
         *' apt-cache '*" show $fixture_name:amd64="*|*' apt-cache '*" show $fixture_extension:amd64="*)
             provides=$fixture_candidate_api
             if [ "$fixture_package" = "$fixture_extension" ]; then provides=php-json; fi
-            printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nSource: %s\nProvides: %s\n' \
-                "$fixture_package" "${last#*=}" "$fixture_source" "$provides" ;;
+            printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nSource: %s\nProvides: %s\nSHA256: %s\n' \
+                "$fixture_package" "${last#*=}" "$fixture_source" "$provides" "$fixture_metadata_digest" ;;
         *' dpkg-query '*'Provides'*) printf '%s\n' "$fixture_installed_api" ;;
         *' apt-get -s '*)
             printf 'SIMULATE:%s\n' "$*" >> "$P2S_WORK/calls"
@@ -324,6 +325,10 @@ printf '%s\n' "$fixture_extension|$fixture_old|amd64|php5.6|$fixture_old" >> "$P
 printf '%s\n' unsupported_os > "$P2S_WORK/blocker-keys"
 P2S_MODE=check; P2S_BLOCKED=true; P2S_STATE=Y; P2S_REPOSITORY_REFRESH=refreshed
 p2s_backports_signed_index() { "$fixture_signer_ok"; }
+p2s_backports_verify_indexes() {
+    printf '%s|%s|amd64|%s|%s\n' "$fixture_name" "$fixture_elts" "$fixture_component" "$fixture_digest" \
+        "$fixture_extension" "$fixture_elts" "$fixture_component" "$fixture_digest" > "$P2S_WORK/backports-binary-hashes"
+}
 p2s_repository_repair_assess() { return 1; }
 if $fixture_preferred; then p2s_fix_plan_options() { P2S_VERIFIED_PROVIDER_PLAN=true; }; fi
 if $fixture_default_install; then
@@ -347,7 +352,8 @@ if [ -r "$P2S_WORK/calls" ]; then cat "$P2S_WORK/calls"; fi
         self.assertIn(recommendation, out)
         self.assertRegex(out, r'(?m)^SIMULATE:.* php5\.6-fpm:amd64=5\.6\.40-110\S+ '
                               r'php5\.6-json:amd64=5\.6\.40-110\S+ php7\.3-cli:amd64=7\.3\.31-1~deb10u7 php-cli=2:7\.3\+69$')
-        for rejected in ('fixture_signer_ok=false', 'fixture_duplicate=true', 'fixture_candidate_api=phpapi-20200930'):
+        for rejected in ('fixture_signer_ok=false', 'fixture_duplicate=true', 'fixture_candidate_api=phpapi-20200930',
+                         'fixture_metadata_digest=$(printf "%064d" 2)'):
             with self.subTest(rejected=rejected):
                 out = self.freexian_candidate(settings + rejected + '\n', run=run)
                 self.assertNotIn(recommendation, out)
@@ -357,6 +363,7 @@ if [ -r "$P2S_WORK/calls" ]; then cat "$P2S_WORK/calls"; fi
         simulation = next(line for line in out.splitlines() if line.startswith('SIMULATE:'))
         installation = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
         self.assertEqual(simulation.split('install --only-upgrade ')[1], installation.split('install --only-upgrade ')[1])
+        self.assertIn('DPkg::Pre-Install-Pkgs::=', installation)
         out = self.freexian_candidate(settings + 'fixture_install=true; fixture_default_install=true\n', run=run)
         self.assertIn('php_branch_update:beforefix|php5.6|backports|configured_source', out)
         self.assertIn('UPDATE_RC=0', out)
@@ -381,6 +388,35 @@ printf 'CANDIDATE_RC=%s\n' "$?"
 ''')
         self.assertIn('A preferred PHP security build is available for php7.4-fpm (7.4.3-4ubuntu2.29+esm6).', out)
         self.assertIn('CANDIDATE_RC=1', out)
+
+    def test_backports_pins_index_and_archive_bytes(self):
+        out = self.shell(r'''
+mkdir -p "$P2S_WORK/var/lib/apt/lists"
+index="$P2S_WORK/var/lib/apt/lists/animaartificialis.github.io_debian-php-backports_dists_buster_sury_binary-amd64_Packages"
+archive="$P2S_WORK/approved package.deb"
+printf 'reviewed payload\n' > "$archive"
+digest=$(sha256sum "$archive"); digest=${digest%% *}
+printf 'Package: php5.6-fpm\nVersion: 5.6.40-110\nArchitecture: amd64\nSHA256: %s\n' "$digest" > "$index"
+index_digest=$(sha256sum "$index"); index_digest=${index_digest%% *}
+p2s_backports_index_sha256() { [ "$*" = 'buster sury amd64' ] && printf '%s\n' "$index_digest"; }
+p2s_command_run() { [ "$2" = sha256sum ] && shift && "$@"; }
+p2s_backports_verify_indexes buster || exit 1
+expected=$(p2s_backports_candidate_sha256 php5.6-fpm 5.6.40-110 amd64 sury) || exit 2
+[ "$expected" = "$digest" ] || exit 3
+printf 'php5.6-fpm|5.6.40-110|amd64|php5.6-fpm\n' > "$P2S_WORK/apt-approved"
+printf 'php5.6-fpm|5.6.40-110|amd64|%s\n' "$expected" > "$P2S_WORK/backports-approved-sha256"
+printf 'Inst php5.6-fpm [5.6.40-105] (5.6.40-110 Backports [amd64])\n' > "$P2S_WORK/apt.log"
+p2s_backports_prepare_archive_guard "$P2S_WORK/apt.log" || exit 4
+printf '%s\n' "$archive" | sh "$P2S_WORK/backports-archive-guard" || exit 5
+printf 'republished payload\n' > "$archive"
+if printf '%s\n' "$archive" | sh "$P2S_WORK/backports-archive-guard" 2>&1; then exit 6; fi
+republished=$(sha256sum "$archive"); republished=${republished%% *}
+sed -i "s/$digest/$republished/" "$index"
+if p2s_backports_verify_indexes buster; then exit 7; fi
+''', isolated_sources=True)
+        self.assertIn('all downloaded packages matched', out)
+        self.assertIn('downloaded packages differ', out)
+        self.assertIn('Backports index differs from the reviewed SHA256 snapshot', out)
 
     def test_freexian_recommendation_simulates_the_exact_branch_with_its_extensions(self):
         fixture = r'''

@@ -360,7 +360,10 @@ sudo bash dephp2shell.sh --fix --enable-extra-fixes --migrate-php-to-sury
 When a November check finds no verified update plan, it can report Freexian
 setup or subscription guidance for installed PHP branches, including on a
 server without a configured Freexian feed. Automatic use requires a fresh,
-signed Extended LTS index and a successful package simulation.
+signed Extended LTS index and a successful package simulation. Eligible
+native PHP updates can use a required installed library from the same
+verified public ELTS suite. The package plan must establish the exact
+installed library, its selected build and the PHP version requirement.
 
 The ordinary November check and fix consider an already configured, signed
 public Extended LTS feed for the reviewed native Debian PHP branches below.
@@ -422,10 +425,12 @@ bash dephp2shell.sh --fix --november-2026 --enable-extra-fixes \
     --add-debian-php-backports --php-source-branches=php5.6,php7.4
 ```
 
-The fix uses the matching HTTPS suite and a dedicated signing key. It verifies
-the signed repository and simulates the approved PHP transaction before
-applying changes. Automatic setup requires APT 1.1 or newer and working HTTPS
-transport. The managed preference permits the exact reviewed versions of the
+The fix uses the matching HTTPS suite and a dedicated signing key. The signed
+package index must match a reviewed SHA256 snapshot. The update verifies the
+hashes of the package archives APT will install. A changed index requires a
+fresh review, even if APT still shows the same package versions. The fix
+simulates the approved PHP transaction before applying changes. Automatic
+setup requires APT 1.1 or newer and working HTTPS transport. The managed preference permits the exact reviewed versions of the
 approved installed packages. Review later community versions before changing
 that preference. A later check cannot add branches to an earlier approval. Commands using
 `--use-debian-php-backports` remain accepted for compatibility.
@@ -435,6 +440,30 @@ PHP 5.6 revision `5.6.40-110+debsuryorg12.1+1+debian10+animaa1`.
 Freexian PHP LTS lists PHP 5.6 under a separate subscription. The public
 Debian Extended LTS feed supplies native PHP 7.3.
 [Community repository instructions](https://github.com/animaartificialis/debian-php-backports#apt-repository)
+
+The community project publishes source archives and build workflows.
+The reviewed Buster PHP 5.6 source archive contains upstream Sury source files
+that match the signed Sury index. The project applies its build changes and
+produces its own binaries. The reviewed release passed container install tests
+on amd64 and arm64. The publisher skips the full upstream PHP test suite.
+Independent reproduction of the binaries and production adoption remain
+unverified. Use this last-resort update while planning an OS migration.
+[Build configuration](https://github.com/animaartificialis/debian-php-backports/blob/cf06126cf0b933a984e0b5a7f5373d8a2840b4e7/targets/debian10-buster/php5.6-sury/target.conf)
+[Publisher CI run](https://github.com/animaartificialis/debian-php-backports/actions/runs/45085778049)
+
+## Repair a retired distribution mirror
+
+The ordinary November fix can repair a stock, matching Debian or Ubuntu APT
+source when its refresh returns 404 or reports a missing Release file. The
+script keeps the same OS release and uses the official distribution archive.
+The repaired sources must pass a fresh authenticated APT refresh. If the retry
+fails, the script restores the changed source entries. Check mode reports the
+failure with the source files intact. Review failing third-party sources and
+repository authentication separately. The live Ubuntu archive remains the
+source for Trusty, Xenial, Bionic and Focal. An archived Ubuntu suite uses
+`old-releases.ubuntu.com` where the installed PHP has an eligible update path.
+[Debian archive](https://www.debian.org/distrib/archive)
+[Ubuntu old release package archive](https://old-releases.ubuntu.com/ubuntu/dists/)
 
 ## November source choice by PHP branch
 

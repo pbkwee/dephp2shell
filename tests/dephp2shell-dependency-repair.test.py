@@ -77,6 +77,26 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
         self.assertIn('libxml2:amd64=2.9.15-1', out)
         self.assertNotIn('UNEXPECTED_', out)
 
+    def test_public_elts_library_upgrade_requires_verified_same_release_indexes(self):
+        changes = '''
+P2S_RELEASE=10; P2S_FREEXIAN_ACTIVE=true; P2S_REPOSITORY_REFRESH=refreshed
+P2S_FREEXIAN_SIGNED_SUITES=' buster buster-lts '
+uri=https://deb.freexian.com/extended-lts; suite=buster-lts; origin=Freexian
+native_uri=$uri; native_suite=buster; native_origin=Freexian
+'''
+        before = r'''
+sed -i 's/release o=Freexian,n=\([^,]*\)/release o=Freexian,a=\1,n=\1,l=Freexian-Extended-LTS/' "$P2S_WORK/candidate-origins"
+'''
+        out = self.run_plan(changes, before)
+        self.assertIn('RC=0', out)
+        self.assertIn('Freexian-ELTS|signed_suite|source=libxml2', out)
+        self.assertIn('libxml2:amd64=2.9.15-1', out)
+        for rejected in ("P2S_FREEXIAN_SIGNED_SUITES=' stretch-lts '", 'P2S_REPOSITORY_REFRESH=failed'):
+            with self.subTest(rejected=rejected):
+                out = self.run_plan(changes + rejected + '\n', before)
+                self.assertIn('RC=1', out)
+                self.assertNotIn('dependency_approval:', out)
+
     def test_required_pcre_upgrade_is_approved_without_extra_permissions(self):
         out = self.run_plan("lib=libpcre2-8-0; source=pcre2; installed_source=pcre2; "
                             "old=10.42-1; candidate=10.42-2; normal_candidate=10.42-2; "

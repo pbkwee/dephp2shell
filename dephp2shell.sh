@@ -1840,6 +1840,135 @@ p2s_backports_signed_index() {
     return 1
 }
 
+# The uncompressed Packages digests from the reviewed v2026.11.23.3 snapshot
+# bind each Package/Architecture/Version tuple to its binary SHA256.
+p2s_backports_index_sha256() {
+    awk -F'|' -v suite="$1" -v component="$2" -v arch="$3" '
+        $1==suite && $2==component && $3==arch {print $4; found=1}
+        END {exit !found}
+    ' <<'EOF'
+bionic|sury|amd64|7c49f88b7a104269f0a23c4f7758f9f7018eccf102de0c4840e7821a6d9494ca
+buster|sury|amd64|123dbc4d6844c7211b6fe72dd943ab0c2e3379084e20af13f8a1d03313074341
+buster|sury|arm64|039b06813dbe72ecca5259329f186a92a4f9b63e18a0393d0af5b6bc97a5d7ad
+focal|sury|amd64|eab1603e663aa8d83f39592c79b2f22cca6b22d55b2b2697ef77e0879000f430
+focal|sury|arm64|05bab6df9402e468f7ccf7a0b9cd1a47b3315b72f6d2b94556d99c17fa4f1bfd
+jessie|debian|amd64|0a9f46ead8111f781b8cd2de26a412fe229ebcf5462022fbaceccd1b95b3243d
+jessie|sury|amd64|274f95837cf2fcc9da6929ef35ab0471ea73ce29c37fe6a9a412f0971e26ebdd
+squeeze|debian7-compat|amd64|ae8f595f73ae89e6d7907e758ca02443a494462601a16ca47a940f6ab2f9dbcc
+squeeze|debian7|amd64|c52a85814f7f0bddc6dd1babc0087016b5e3ba3952cf31de1b485b36da54db1b
+stretch|sury|amd64|18b2a5b69c87078fe6157a76a62e788eec066c10fc2013867393292119f8b0a6
+trusty|sury|amd64|68b75a7c66b590c55e90f965cb0a4275f250c72a012c26711cf812892aadde32
+wheezy|debian-compat|amd64|32c5fa7efe63a8af06d658f0e6c70b950e723fd9c10062d01206152a543cc95e
+wheezy|debian|amd64|0b903694bfc1750e448088422c968408ef7ec6cb6d9d40c81e72d333e1bf30a0
+xenial|sury|amd64|a322541462ffa13901f0216f0ad65852904684b0a7bd9bd273162710f67185af
+EOF
+}
+
+p2s_backports_verify_indexes() {
+    local suite=$1 index prefix component arch expected observed
+    prefix="/var/lib/apt/lists/animaartificialis.github.io_debian-php-backports_dists_${suite}_"
+    : > "$P2S_WORK/backports-binary-hashes" || return 1
+    for index in "$prefix"*_binary-*_Packages "$prefix"*_binary-*_Packages.*; do
+        [ -f "$index" ] || continue
+        component=${index#"$prefix"}; component=${component%%_binary-*}
+        arch=${index#*_binary-}; arch=${arch%%_Packages*}
+        if ! expected=$(p2s_backports_index_sha256 "$suite" "$component" "$arch"); then
+            p2s_fix_block candidate_checksum "The $suite/$component $arch Backports package index has no reviewed SHA256 pin."
+            return 1
+        fi
+        case "$index" in
+            *_Packages) cat "$index" ;;
+            *.gz) p2s_command_run 30 gzip -dc -- "$index" ;;
+            *.xz) p2s_command_run 30 xz -dc -- "$index" ;;
+            *.lz4|*.zst) p2s_command_run 30 /usr/lib/apt/apt-helper cat-file "$index" ;;
+            *) return 1 ;;
+        esac > "$P2S_WORK/backports-index-content" || {
+            p2s_fix_block candidate_checksum "Could not read the $suite/$component $arch Backports package index."
+            return 1
+        }
+        observed=$(p2s_command_run 30 sha256sum "$P2S_WORK/backports-index-content") || return 1
+        observed=${observed%% *}
+        if [ "$expected" != "$observed" ]; then
+            p2s_manifest_record backports_index_checksum "$suite|$component|$arch|expected=$expected|observed=$observed"
+            p2s_fix_block candidate_checksum "The signed $suite/$component $arch Backports index differs from the reviewed SHA256 snapshot. Review the publisher's new metadata before using it."
+            return 1
+        fi
+        p2s_manifest_record backports_index_checksum "$suite|$component|$arch|verified=$observed"
+        awk -v component="$component" '
+            function emit() {
+                if (n!="" && v!="" && a!="" && length(h)==64 && h !~ /[^0-9a-f]/)
+                    print n "|" v "|" a "|" component "|" h
+                n=v=a=h=""
+            }
+            /^Package: / {n=$2}
+            /^Version: / {v=$2}
+            /^Architecture: / {a=$2}
+            /^SHA256: / {h=$2}
+            /^$/ {emit()}
+            END {emit()}
+        ' "$P2S_WORK/backports-index-content" >> "$P2S_WORK/backports-binary-hashes" || return 1
+    done
+    if [ ! -s "$P2S_WORK/backports-binary-hashes" ]; then
+        p2s_fix_block candidate_checksum "APT has no readable reviewed Backports binary index for $suite. Check the configured components and available architectures."
+        return 1
+    fi
+}
+
+p2s_backports_candidate_sha256() {
+    awk -F'|' -v n="$1" -v v="$2" -v a="$3" -v c="$4" '
+        $1==n && $2==v && $3==a && $4==c {if (sha!="" && sha!=$5) bad=1; sha=$5}
+        END {if (bad || sha=="") exit 1; print sha}
+    ' "$P2S_WORK/backports-binary-hashes"
+}
+
+# APT passes the actual archive paths to a version-1 Pre-Install-Pkgs hook.
+p2s_backports_prepare_archive_guard() {
+    local plan=$1 name version arch target digest
+    rm -f "$P2S_WORK/backports-archive-guard-started" "$P2S_WORK/backports-archive-guard-passed" || return 1
+    awk -F'|' '
+        FILENAME==ARGV[1] { row[$1]=row[$1 ":" $3]=$0; next }
+        /^Inst / { split($0, fields, " "); if (fields[2] in row) print row[fields[2]]; else bad=1 }
+        END {exit bad}
+    ' "$P2S_WORK/apt-approved" "$plan" > "$P2S_WORK/backports-downloads" || return 1
+    : > "$P2S_WORK/backports-download-sha256" || return 1
+    while IFS='|' read -r name version arch target; do
+        digest=$(awk -F'|' -v n="$name" -v v="$version" -v a="$arch" '
+            $1==n && $2==v && $3==a {print $4}
+        ' "$P2S_WORK/backports-approved-sha256") || return 1
+        if [ -z "$digest" ]; then
+            awk -F'|' -v n="$name" -v v="$version" -v a="$arch" '
+                $1==n && $2==v && $3==a {found=1} END {exit !found}
+            ' "$P2S_WORK/dependency-approved" || return 1
+            target=$name; [ "$arch" = all ] || target="$name:$arch"
+            p2s_command_run 30 apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= show "$target=$version" > "$P2S_WORK/backports-dependency-sha256" || return 1
+            digest=$(awk '
+                /^SHA256: / && length($2)==64 && $2 !~ /[^0-9a-f]/ {if (sha!="" && sha!=$2) bad=1; sha=$2}
+                END {if (bad || sha=="") exit 1; print sha}
+            ' "$P2S_WORK/backports-dependency-sha256") || return 1
+        fi
+        printf '%s\n' "$digest" >> "$P2S_WORK/backports-download-sha256" || return 1
+    done < "$P2S_WORK/backports-downloads"
+    [ -s "$P2S_WORK/backports-download-sha256" ] &&
+        LC_ALL=C sort -o "$P2S_WORK/backports-download-sha256" "$P2S_WORK/backports-download-sha256" || return 1
+    cat > "$P2S_WORK/backports-archive-guard" <<'EOF'
+set -e
+work=${0%/*}
+: > "$work/backports-archive-guard-started"
+: > "$work/backports-observed-sha256"
+while IFS= read -r archive; do
+    checksum=$(sha256sum -- "$archive")
+    printf '%s\n' "${checksum%% *}" >> "$work/backports-observed-sha256"
+done
+LC_ALL=C sort -o "$work/backports-observed-sha256" "$work/backports-observed-sha256"
+if ! cmp -s "$work/backports-download-sha256" "$work/backports-observed-sha256"; then
+    printf '%s\n' 'Backports archive guard: downloaded packages differ from the reviewed SHA256 transaction. Packages were not passed to dpkg.' >&2
+    exit 1
+fi
+: > "$work/backports-archive-guard-passed"
+printf '%s\n' 'Backports archive guard: all downloaded packages matched the approved SHA256 transaction.'
+EOF
+}
+
 p2s_backports_legacy_affected() {
     local suite=$1 source=$2 version=$3 limit distro_release
     case "$suite:$source:$version" in
@@ -1923,7 +2052,7 @@ p2s_package_deb_candidate() {
     local name="$1" installed="$2" arch="$3" sury="$4" target candidate observed matches other seen record metadata source source_version expected suite branch old_branch rest installed_source provider query_status=0
     local origin_details origin_reason native_origin native_matches native_versions alternate expected_source vendor="${5:-}"
     local version_priority candidate_priority probe_version current_source_candidate='' prefer_native=false freexian_versions freexian_seen
-    local backports_suite='' backports_component='' backports_build='' backports_version='' backports_priority backports_seen preferred_versions sury_versions
+    local backports_suite='' backports_component='' backports_build='' backports_version='' backports_priority backports_seen preferred_versions sury_versions digest installed_provider
     # Explicit migration must reach Sury; a native candidate can still lack the requested security fixes.
     if ${P2S_SURY_MIGRATION_ACTIVE:-false}; then sury=true; fi
     target=${name%:*}; [ "$arch" = all ] || target="$target:$arch"
@@ -2207,6 +2336,15 @@ $record"
             return 1
         fi
     fi
+    if ${P2S_BACKPORTS_ACTIVE:-false}; then
+        if ! digest=$(p2s_backports_candidate_sha256 "${name%:*}" "$candidate" "$arch" "$backports_component") ||
+            [ "$(sed -n 's/^SHA256: //p' "$P2S_WORK/candidate-metadata" | sort -u)" != "$digest" ]; then
+            p2s_fix_block candidate_checksum "APT's SHA256 for $name=$candidate does not match the reviewed $backports_suite/$backports_component package index."
+            return 1
+        fi
+        printf '%s|%s|%s|%s\n' "${name%:*}" "$candidate" "$arch" "$digest" >> "$P2S_WORK/backports-approved-sha256" || return 1
+        p2s_manifest_record backports_package_checksum "$name|$candidate|$arch|verified=$digest"
+    fi
     if [ "$sury" = true ]; then
         installed_source=
         if [ -r "$P2S_WORK/deb-source-records" ]; then
@@ -2271,6 +2409,18 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/candidate-query.err")"
     record=normal_APT_candidate
     if [ "$candidate" = "$current_source_candidate" ]; then record=equal_priority_current_publisher; fi
     p2s_manifest_record candidate_selection "$name|$installed|$candidate|$arch|sury_only=$sury|$record|exact_version_required"
+    if [ "$candidate" != "$installed" ] && p2s_package_is_engine "$name"; then
+        provider=
+        installed_provider=$(p2s_package_provider "$name" "$vendor" "$installed")
+        if ${P2S_BACKPORTS_ACTIVE:-false}; then
+            case "$installed_provider" in debian-php-backports*) ;; *) provider=debian-php-backports ;; esac
+        elif ${P2S_APT_NATIVE_FALLBACK:-false}; then provider=$native_origin
+        elif ${P2S_SURY_MIGRATION_ACTIVE:-false} && ! p2s_package_deb_is_sury "$installed"; then provider=Sury/ondrej
+        fi
+        if [ -n "$provider" ]; then
+            p2s_manifest_record provider_switch "$name|$arch|$installed|$candidate|from=$installed_provider|to=$provider|authorization=${P2S_PROVIDER_AUTHORIZATION:-configured_source_policy}|candidate_verified"
+        fi
+    fi
 }
 
 # Explicit Sury migration methods keep exact binary names, versioned branches and architectures.
@@ -3622,7 +3772,13 @@ p2s_package_deb_approve_metapackage() {
 # Read-only proposal approval; caller must rerun the pinned simulation and guard installation.
 p2s_package_deb_dependency_approve_plan() {
     local log="$1" name old candidate arch installed_source record target suite origin file parent dep op required installed_version candidate_version maintainer plan_arch sury_pcre policy_status metadata_version
+    local signed_elts=''
+    if ${P2S_FREEXIAN_ACTIVE:-false} && [ "${P2S_REPOSITORY_REFRESH:-}" = refreshed ]; then
+        signed_elts=${P2S_FREEXIAN_SIGNED_SUITES:-}
+    fi
     case "$P2S_BACKEND:$P2S_DISTRO:$P2S_RELEASE" in
+        deb:debian:9|deb:debian:9.*) suite=stretch; origin=Debian ;;
+        deb:debian:10|deb:debian:10.*) suite=buster; origin=Debian ;;
         deb:debian:11|deb:debian:11.*) suite=bullseye; origin=Debian ;;
         deb:debian:12|deb:debian:12.*) suite=bookworm; origin=Debian ;;
         deb:debian:13|deb:debian:13.*) suite=trixie; origin=Debian ;;
@@ -3631,6 +3787,10 @@ p2s_package_deb_dependency_approve_plan() {
         deb:ubuntu:26.04) suite=resolute; origin=Ubuntu ;;
         *) p2s_fix_block dependency_platform "No reviewed native dependency upgrade method exists for this OS release."; return 1 ;;
     esac
+    if { [ "$suite" = stretch ] || [ "$suite" = buster ]; } && [ -z "${signed_elts// /}" ]; then
+        p2s_fix_block dependency_platform "This legacy Debian release requires a verified public Freexian Extended LTS update path for automatic PHP library upgrades."
+        return 1
+    fi
     : > "$P2S_WORK/dependency-approved"
     : > "$P2S_WORK/dependency-arguments"
     : > "$P2S_WORK/dependency-needed"
@@ -3693,9 +3853,9 @@ p2s_package_deb_dependency_approve_plan() {
             [ "${name%:*}" = libpcre2-8-0 ] && [ "$installed_source" = pcre2 ] && p2s_package_deb_is_sury "$candidate"; then
             sury_pcre=true
         fi
-        if awk -v suite="$suite" -v origin="$origin" -v wanted="$candidate" -v old="$old" -v sury_pcre="$sury_pcre" '
+        if awk -v suite="$suite" -v origin="$origin" -v wanted="$candidate" -v old="$old" -v sury_pcre="$sury_pcre" -v signed_elts="$signed_elts" '
             function official(uri) {
-                if (origin=="Debian") return uri ~ /^https?:\/\/(deb[.]debian[.]org\/debian(-security)?|security[.]debian[.]org(\/debian-security)?)\/?$/
+                if (origin=="Debian") return uri ~ /^https?:\/\/((deb|archive)[.]debian[.]org\/debian(-security)?|security[.]debian[.]org(\/debian-security)?)\/?$/
                 return uri ~ /^https?:\/\/(([a-z][a-z][.])?archive[.]ubuntu[.]com\/ubuntu|security[.]ubuntu[.]com\/ubuntu)\/?$/
             }
             NR==FNR {
@@ -3705,6 +3865,17 @@ p2s_package_deb_dependency_approve_plan() {
                     if (native && repo_arch=="amd64" && index(line,",b=amd64,") && index(line,",o=" origin ",") &&
                         (index(line,",n=" suite ",") || index(line,",n=" suite "-updates,") || index(line,",n=" suite "-security,"))) {
                         native_sources[key]=1; approved[key]=1
+                    }
+                    if (signed_elts!="" && uri ~ /^https:\/\/deb[.]freexian[.]com\/extended-lts\/?$/ &&
+                        repo_arch=="amd64" && index(line,",o=Freexian,") && index(line,",l=Freexian-Extended-LTS,") &&
+                        index(line,",c=main,") && index(line,",b=amd64,")) {
+                        for (i=1; i<=split(signed_elts,releases," "); i++) {
+                            release=releases[i]
+                            if ((release==suite || release==suite "-lts") && component==release "/main" &&
+                                index(line,",a=" release ",") && index(line,",n=" release ",")) {
+                                native_sources[key]=1; approved[key]=1; elts_sources[key]=1
+                            }
+                        }
                     }
                     if (sury_pcre=="true" && uri ~ /^https?:\/\/packages[.]sury[.]org\/php\/?$/ && component==suite "/main" && repo_arch=="amd64" &&
                         index(line,",o=deb.sury.org,") && index(line,",n=" suite ",") && index(line,",c=main,") && index(line,",b=amd64,")) approved[key]=1
@@ -3722,13 +3893,16 @@ p2s_package_deb_dependency_approve_plan() {
             }
             version==wanted && $1 ~ /^-?[0-9]+$/ && NF>=2 {
                 if ($2=="/var/lib/dpkg/status") next
-                if ($5=="Packages" && approved[$2 "|" $3 "|" $4]) matches++; else other++
+                if ($5=="Packages" && approved[$2 "|" $3 "|" $4]) {
+                    matches++; if (elts_sources[$2 "|" $3 "|" $4]) elts++
+                } else other++
             }
             END {
                 if (installed!=old || native_installed<1 || foreign_installed) exit 2
-                exit !(candidate==wanted && matches>0 && other==0)
+                if (!(candidate==wanted && matches>0 && other==0)) exit 1
+                if (elts) print "Freexian-ELTS"
             }
-        ' "$P2S_WORK/candidate-origins" "$P2S_WORK/dependency-policy"; then
+        ' "$P2S_WORK/candidate-origins" "$P2S_WORK/dependency-policy" > "$P2S_WORK/dependency-provider"; then
             :
         else
             policy_status=$?
@@ -3737,7 +3911,7 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/dependency-policy")"
             if [ "$policy_status" -eq 2 ]; then
                 p2s_fix_block dependency_provider "The installed version of $name could not be matched exclusively to reviewed native sources for this OS suite. Maintainer names do not establish package origin."
             else
-                p2s_fix_block dependency_provider "The normal candidate for $name is not exclusively from reviewed sources for this OS suite. Sury PCRE2 is permitted only for an explicitly requested Debian 11 Sury migration."
+                p2s_fix_block dependency_provider "The normal candidate for $name is not exclusively from reviewed sources for this OS suite. Sury PCRE2 is eligible only during a reviewed Debian 11 Sury publisher switch."
             fi
             return 1
         fi
@@ -3758,7 +3932,9 @@ $(p2s_manifest_redact_repository_urls < "$P2S_WORK/dependency-policy")"
         printf '%s=%s\n' "$target" "$candidate" >> "$P2S_WORK/dependency-arguments"
         if $sury_pcre; then
             p2s_message_print warn "The proposed Sury migration also upgrades the installed shared PCRE2 library ($name: $old to $candidate). Other applications can use this library; PHP still retains its current version branch."
-            p2s_manifest_record dependency_provider "$name|$old|$candidate|Sury|explicit_bullseye_migration|source=pcre2|architecture=$arch"
+            p2s_manifest_record dependency_provider "$name|$old|$candidate|Sury|bullseye_migration|source=pcre2|architecture=$arch|authorization=${P2S_PROVIDER_AUTHORIZATION:-explicit_option}"
+        elif [ -s "$P2S_WORK/dependency-provider" ]; then
+            p2s_manifest_record dependency_provider "$name|$old|$candidate|Freexian-ELTS|signed_suite|source=$installed_source|architecture=$arch"
         fi
     done < "$P2S_WORK/dependency-plan"
     [ -s "$P2S_WORK/dependency-approved" ] || return 0
@@ -3829,6 +4005,205 @@ p2s_package_deb_preflight() {
     p2s_package_deb_holds_preflight
 }
 
+p2s_package_deb_archive_suite() {
+    case "$P2S_DISTRO:${P2S_RELEASE%%.*}:$P2S_RELEASE" in
+        debian:6:*) printf 'squeeze\n' ;; debian:7:*) printf 'wheezy\n' ;; debian:8:*) printf 'jessie\n' ;;
+        debian:9:*) printf 'stretch\n' ;; debian:10:*) printf 'buster\n' ;; debian:11:*) printf 'bullseye\n' ;;
+        ubuntu:*:12.04) printf 'precise\n' ;; ubuntu:*:14.10) printf 'utopic\n' ;; ubuntu:*:15.04) printf 'vivid\n' ;;
+        ubuntu:*:15.10) printf 'wily\n' ;; ubuntu:*:16.10) printf 'yakkety\n' ;; ubuntu:*:17.04) printf 'zesty\n' ;;
+        ubuntu:*:17.10) printf 'artful\n' ;; ubuntu:*:18.10) printf 'cosmic\n' ;; ubuntu:*:19.04) printf 'disco\n' ;;
+        ubuntu:*:19.10) printf 'eoan\n' ;; ubuntu:*:20.10) printf 'groovy\n' ;; ubuntu:*:21.04) printf 'hirsute\n' ;;
+        ubuntu:*:21.10) printf 'impish\n' ;; ubuntu:*:22.10) printf 'kinetic\n' ;; ubuntu:*:23.04) printf 'lunar\n' ;;
+        ubuntu:*:23.10) printf 'mantic\n' ;; ubuntu:*:24.10) printf 'oracular\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Match repository-level metadata failures. InRelease alone can fall back to Release.
+p2s_package_deb_archive_failures() {
+    awk '
+        BEGIN {quote=sprintf("%c",39)}
+        function emit(uri, suite) {sub(/\/$/, "", uri); print uri "|" suite}
+        /^(E|W): The repository / && /(does not have|no longer has) a Release file[.]?$/ &&
+            substr($4,1,1)==quote && $6=="Release" quote {emit(substr($4,2),$5)}
+        $1=="E:" && $2=="Failed" && $3=="to" && $4=="fetch" && $6=="404" && $7=="Not" && $8=="Found" {
+            uri=$5
+            if (uri !~ /\/dists\/[a-z0-9\/-]+\/Release$/) next
+            sub(/\/dists\/.*/,"",uri)
+            suite=substr($5,length(uri)+8); sub(/\/Release$/,"",suite)
+            emit(uri,suite)
+        }
+        /^Err:[0-9]+ / && $4=="Release" {uri=$2; suite=$3; next}
+        {if (uri!="" && $1=="404" && $2=="Not" && $3=="Found") emit(uri,suite); uri=""}
+    ' "$1"
+}
+
+# Replace only the URI token. Even within a Deb822 stanza, keep comments, options,
+# signing key configuration, architectures, types, suites and components intact.
+p2s_package_deb_archive_render() {
+    local file=$1 suite=$2 scheme=$3 failures=$4 changes=$5
+    awk -v base="$suite" -v distro="$P2S_DISTRO" -v scheme="$scheme" -v changes="$changes" '
+        FILENAME==ARGV[1] {failed[$0]=1; next}
+        function replacement(uri, suite,    normalized, host, target, prefix) {
+            normalized=uri; sub(/\/$/,"",normalized)
+            if (!(normalized "|" suite in failed)) return ""
+            host=normalized; sub(/^https?:\/\//,"",host)
+            if (host==normalized) return ""
+            if (distro=="debian") {
+                if (host ~ /^(deb|ftp([.][a-z][a-z])?)[.]debian[.]org\/debian$/) {
+                    if (suite==base || (base=="squeeze" && suite=="squeeze-lts") ||
+                        (suite==base "-updates" && (base=="buster" || base=="bullseye")) ||
+                        (suite==base "-proposed-updates" && base !~ /^(wheezy|jessie)$/) ||
+                        ((suite==base "-backports" || suite==base "-backports-sloppy") && base!="squeeze"))
+                        target="archive.debian.org/debian"
+                    if (base=="squeeze" && suite=="squeeze-backports") target="archive.debian.org/debian-backports"
+                } else if (host ~ /^(security|deb)[.]debian[.]org\/debian-security$/ ||
+                    (host=="security.debian.org" && base!="bullseye")) {
+                    if ((base=="bullseye" && suite=="bullseye-security") || (base!="bullseye" && suite==base "/updates"))
+                        target="archive.debian.org/debian-security"
+                } else if (host=="backports.debian.org/debian-backports" && base=="squeeze" && suite=="squeeze-backports")
+                    target="archive.debian.org/debian-backports"
+            } else if (distro=="ubuntu" && host ~ /^(([a-z][a-z][.])?archive|security)[.]ubuntu[.]com\/ubuntu$/ &&
+                (suite==base || suite==base "-updates" || suite==base "-security" ||
+                    suite==base "-backports" || suite==base "-proposed")) target="old-releases.ubuntu.com/ubuntu"
+            if (target=="") return ""
+            # Older APT may lack HTTPS transport. Never downgrade an existing HTTPS entry.
+            prefix=(uri ~ /^https:/ ? "https" : scheme)
+            return prefix "://" target (uri ~ /\/$/ ? "/" : "")
+        }
+        function log_change(uri, suite, target) {print uri "|" suite "|" target >> changes}
+        function stanza(    i, count, ids, newuri, target, start) {
+            if (!invalid && fields["types"] ~ /^(deb|deb-src)( (deb|deb-src))?$/ &&
+                (fields["enabled"]=="" || tolower(fields["enabled"])=="yes") &&
+                fields["uris"] ~ /^[^ \t]+$/ && !folded_uri && fields["components"]!="") {
+                count=split(fields["suites"],ids," ")
+                for (i=1; i<=count; i++) {
+                    target=replacement(fields["uris"],ids[i])
+                    if (target=="" || (i>1 && newuri!=target)) {newuri=""; break}
+                    newuri=target
+                }
+                if (newuri!="") {
+                    start=index(lines[uri_line],fields["uris"])
+                    lines[uri_line]=substr(lines[uri_line],1,start-1) newuri substr(lines[uri_line],start+length(fields["uris"]))
+                    for (i=1; i<=count; i++) log_change(fields["uris"],ids[i],newuri)
+                }
+            }
+            for (i=1; i<=line_count; i++) {print lines[i]; delete lines[i]}
+            for (key in fields) delete fields[key]
+            line_count=uri_line=folded_uri=invalid=0
+            key=""
+        }
+        FILENAME ~ /[.]sources$/ {
+            if ($0 ~ /^[ \t\r]*$/) {stanza(); print; next}
+            lines[++line_count]=$0
+            if ($0 ~ /^[ \t]*#/) next
+            value=$0
+            if ($0 ~ /^[ \t]/) {
+                if (key=="uris") folded_uri=1
+            } else {
+                if ($0 !~ /^[A-Za-z][A-Za-z0-9-]*:/) {invalid=1; next}
+                key=tolower($0); sub(/:.*/,"", key); sub(/^[^:]*:/,"",value)
+                if (key in fields) invalid=1
+                if (key=="uris") uri_line=line_count
+            }
+            sub(/^[ \t]+/,"",value); sub(/[ \t\r]+$/,"",value); gsub(/[ \t]+/," ",value)
+            fields[key]=(fields[key]=="" ? value : fields[key] " " value)
+            next
+        }
+        {
+            if (!match($0,/^[ \t]*(deb|deb-src)[ \t]+(\[[^]]*\][ \t]+)?/)) {print; next}
+            first=RLENGTH
+            rest=substr($0,first+1); sub(/#.*/,"",rest); sub(/\r$/,"",rest)
+            count=split(rest,fields_list,/[ \t]+/)
+            uri=fields_list[1]; pocket=fields_list[2]
+            target=(count>=3 && fields_list[3]!="" ? replacement(uri,pocket) : "")
+            if (target=="") print
+            else {print substr($0,1,first) target substr($0,first+length(uri)+1); log_change(uri,pocket,target)}
+        }
+        END {if (FILENAME ~ /[.]sources$/) stanza()}
+    ' "$failures" "$file"
+}
+
+# P2S-MUTATION: Replace enabled same-release stock URI tokens, then keep the
+# rewrite only after a complete refresh with the existing authentication policy.
+p2s_package_deb_repair_archived_sources() (
+    local log=$1 suite scheme=http file staged backup pending='' committed=false seen=0
+    local before after pocket old_uri new_uri i
+    local -a sources replacements backups
+    sources=(); replacements=(); backups=()
+    ${P2S_NOVEMBER:-false} && [ "${P2S_MODE:-check}" = fix ] || return 1
+    case "${P2S_PANEL:-}" in ''|none) ;; *) return 1 ;; esac
+    suite=$(p2s_package_deb_archive_suite) || return 1
+    p2s_package_deb_archive_failures "$log" > "$P2S_WORK/archive-failures" || return 1
+    [ -s "$P2S_WORK/archive-failures" ] || return 1
+    if [ -x /usr/lib/apt/methods/https ]; then scheme=https; fi
+    for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [ -f "$file" ] || continue
+        case "${file##*/}" in *[!a-zA-Z0-9_.-]*) continue ;; esac
+        staged="$P2S_WORK/archive-source-$seen"
+        before="$staged.before"
+        after="$staged.after"
+        cp -p -- "$file" "$before" || return 1
+        : > "$staged.changes" || return 1
+        p2s_package_deb_archive_render "$file" "$suite" "$scheme" "$P2S_WORK/archive-failures" "$staged.changes" > "$after" || return 1
+        [ -s "$staged.changes" ] || continue
+        if [ -L "$file" ] || [ "$(stat -c '%h' -- "$file")" != 1 ]; then
+            p2s_manifest_record repository_archive_repair "skipped|file=$file|reason=source_is_linked"
+            return 1
+        fi
+        if [ -n "$(tail -c 1 -- "$before")" ]; then truncate -s -1 -- "$after" || return 1; fi
+        sources[$seen]=$file
+        replacements[$seen]=$staged
+        seen=$((seen+1))
+    done
+    [ "$seen" -gt 0 ] || return 1
+    p2s_package_deb_sury_trust_preflight || return 1
+    trap '
+        [ -z "$pending" ] || rm -f -- "$pending"
+        for ((i=${#backups[@]}-1; i>=0; i--)); do
+            file=${sources[i]}; staged=${replacements[i]}; backup=${backups[i]}
+            if $committed || { [ ! -L "$file" ] && cmp -s -- "$backup" "$file"; }; then
+                rm -f -- "$backup"
+            elif [ ! -L "$file" ] && cmp -s -- "$staged.after" "$file" && mv -fT -- "$backup" "$file"; then
+                p2s_manifest_record repository_archive_repair "restored|file=$file"
+            else
+                p2s_message_print warn "Could not restore $file safely. Its original is saved at $backup."
+                p2s_manifest_record repository_archive_repair "restore_required|file=$file|backup=$backup"
+            fi
+        done
+    ' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    for ((i=0; i<seen; i++)); do
+        file=${sources[i]}; staged=${replacements[i]}
+        backup=$(mktemp "${file%/*}/.dephp2shell-archive-original.XXXXXX") || return 1
+        if [ -L "$file" ] || ! cmp -s -- "$staged.before" "$file" || ! cp --preserve=all -- "$file" "$backup"; then
+            rm -f -- "$backup"
+            p2s_manifest_record repository_archive_repair "skipped|file=$file|reason=source_changed_or_backup_failed"
+            return 1
+        fi
+        backups[$i]=$backup
+        pending=$(mktemp "${file%/*}/.dephp2shell-archive-staged.XXXXXX") || return 1
+        if ! cp --preserve=all -- "$backup" "$pending" || ! cat "$staged.after" > "$pending" ||
+            [ -L "$file" ] || ! cmp -s -- "$backup" "$file" || ! mv -fT -- "$pending" "$file"; then
+            p2s_manifest_record repository_archive_repair "skipped|file=$file|reason=source_changed_or_publish_failed"
+            return 1
+        fi
+        pending=''
+        while IFS='|' read -r old_uri pocket new_uri; do
+            p2s_manifest_record repository_archive_repair "retrying|file=$file|suite=$pocket|from=$old_uri|to=$new_uri"
+            p2s_message_print info "Moved $pocket from $old_uri to $new_uri in $file. Checking all APT sources."
+        done < "$staged.changes"
+    done
+    if ! p2s_package_deb_refresh_indexes archive-retry; then
+        p2s_message_print warn "APT archive repair did not yield a complete authenticated refresh. Restoring the original source files."
+        return 1
+    fi
+    committed=true
+    p2s_manifest_record repository_archive_repair "retained|files=$seen|authenticated_refresh=complete"
+)
+
 p2s_package_deb_refresh_indexes() {
     local log="$P2S_WORK/apt.log" status=0 hook scope
     local apt_update_options=()
@@ -3859,6 +4234,17 @@ p2s_package_deb_refresh_indexes() {
         -o Acquire::IndexTargets::deb::Contents-udeb::DefaultEnabled=false \
         -o Acquire::IndexTargets::deb-src::Contents-dsc::DefaultEnabled=false update > "$log" 2>&1 || status=$?
     p2s_manifest_record repository_refresh "apt-get update|exit=$status"
+    if [ "${1:-}" != archive-retry ] && ${P2S_NOVEMBER:-false} && [ "${P2S_MODE:-check}" = fix ] && [ "$status" -ne 124 ] &&
+        { [ "$status" -ne 0 ] || grep -Ei '^(E:|W:.*(Failed to fetch|Some index files|GPG error|not signed))' "$log" >/dev/null; }; then
+        # The retry reuses apt.log. Keep the first failure intact for diagnostics.
+        if cp -- "$log" "$P2S_WORK/apt-original-refresh.log"; then
+            if p2s_package_deb_repair_archived_sources "$P2S_WORK/apt-original-refresh.log"; then
+                P2S_REPOSITORY_REFRESH=refreshed
+                return 0
+            fi
+            log="$P2S_WORK/apt-original-refresh.log"
+        fi
+    fi
     case "$status" in
         0) ;;
         124) p2s_package_refresh_failure_report "$log" "apt-get update timed out after 300 seconds. Check repository connectivity and retry."; return 1 ;;
@@ -3886,8 +4272,15 @@ p2s_package_deb_update() {
     local P2S_SURY_MIGRATION_ACTIVE=false P2S_DEB_NATIVE_PREFERENCE=false
     local P2S_FREEXIAN_ACTIVE=false P2S_FREEXIAN_SIGNED_SUITES=''
     local P2S_BACKPORTS_ACTIVE=false
-    local packages cache_options status freexian_branch='' backports_suite
-    packages=(); cache_options=()
+    local packages cache_options install_options status freexian_branch='' backports_suite
+    local P2S_PROVIDER_AUTHORIZATION=explicit_option
+    packages=(); cache_options=(); install_options=()
+    if ${P2S_APT_NOVEMBER_POLICY:-false}; then
+        P2S_PROVIDER_AUTHORIZATION=configured_source_policy
+        if ${P2S_SURY_REPOSITORY_CREATED:-false} || ${P2S_BACKPORTS_REPOSITORY_CREATED:-false}; then
+            P2S_PROVIDER_AUTHORIZATION=explicit_source_addition
+        fi
+    fi
     P2S_FREEXIAN_SELECTED=false
     if [ "${1:-}" = backports ]; then
         P2S_BACKPORTS_ACTIVE=true
@@ -3895,6 +4288,7 @@ p2s_package_deb_update() {
         backports_suite=$(p2s_backports_suite) && p2s_backports_select_branches "$backports_suite" || {
             p2s_fix_block candidate_fix "No vulnerable installed PHP branch matches the reviewed Debian PHP Backports packages for this OS and architecture."; return 1;
         }
+        : > "$P2S_WORK/backports-approved-sha256" || return 1
     fi
     if ${P2S_ALLOW_FREEXIAN:-false} && p2s_freexian_native_scope; then
         freexian_branch=$(p2s_freexian_suite) || return 1
@@ -3907,7 +4301,7 @@ p2s_package_deb_update() {
         p2s_disruptive_sury_validate_equivalents || return 1
         P2S_SURY_MIGRATION_ACTIVE=true
         p2s_message_print warn "Checking the Sury/ondrej fallback for branches without a verified fix from their current publisher. Only equivalent packages with matching PHP branches, architecture and extension APIs are eligible."
-        p2s_manifest_record provider_migration 'Sury|same_names_branches_architectures_and_extension_API|required_fixed_candidates|selectors_frozen'
+        p2s_manifest_record provider_migration "Sury|authorization=$P2S_PROVIDER_AUTHORIZATION|same_names_branches_architectures_and_extension_API|required_fixed_candidates|selectors_frozen"
     fi
     while IFS='|' read -r name version arch vendor; do
         if p2s_package_deb_is_sury "$version"; then has_sury=true; fi
@@ -3978,6 +4372,7 @@ p2s_package_deb_update() {
         p2s_fix_block source_authentication "Could not verify the refreshed Debian PHP Backports index and published signing key for $backports_suite. Configure the signed source manually and rerun the check."
         return 1
     fi
+    if $P2S_BACKPORTS_ACTIVE; then p2s_backports_verify_indexes "$backports_suite" || return 1; fi
     p2s_package_deb_load_candidate_origins || return 1
     if $P2S_SURY_MIGRATION_ACTIVE && ${P2S_SURY_PREFERENCES_CREATED:-false} &&
         ! awk '
@@ -4118,6 +4513,13 @@ p2s_package_deb_update() {
     if [ "${P2S_MODE:-fix}" != fix ]; then
         p2s_fix_block privileges 'A package installation requires explicit fix mode.'; return 1
     fi
+    if $P2S_BACKPORTS_ACTIVE; then
+        if ! p2s_backports_prepare_archive_guard "$log"; then
+            p2s_fix_block candidate_checksum "Could not verify SHA256 values for every package in the approved Backports transaction."
+            return 1
+        fi
+        install_options=(-o 'DPkg::Pre-Install-Pkgs::=sh "$P2S_BACKPORTS_ARCHIVE_GUARD"')
+    fi
     P2S_TRANSACTION_ATTEMPTED=true
     if $P2S_SURY_MIGRATION_ACTIVE; then P2S_SURY_TRANSACTION_ATTEMPTED=true; fi
     if $P2S_BACKPORTS_ACTIVE && ${P2S_BACKPORTS_REPOSITORY_CREATED:-false}; then P2S_BACKPORTS_TRANSACTION_ATTEMPTED=true; fi
@@ -4125,14 +4527,19 @@ p2s_package_deb_update() {
     p2s_message_print info "Installing the approved PHP package updates with APT. This can take up to 30 minutes."
     status=0
     (export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none NEEDRESTART_MODE=l
+        if $P2S_BACKPORTS_ACTIVE; then export P2S_BACKPORTS_ARCHIVE_GUARD="$P2S_WORK/backports-archive-guard"; fi
         # P2S-MUTATION: Installs PHP and verified required library updates; package scripts can also change services.
-        p2s_command_run 1800 apt-get -y --no-remove -o APT::Get::AllowUnauthenticated=false \
+        p2s_command_run 1800 apt-get -y --no-remove "${install_options[@]}" -o APT::Get::AllowUnauthenticated=false \
             -o Acquire::AllowInsecureRepositories=false -o Acquire::AllowWeakRepositories=false \
             -o Acquire::AllowDowngradeToInsecureRepositories=false -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true \
             -o Dpkg::Options::=--force-confold install --only-upgrade "${packages[@]}" > "$log" 2>&1) || status=$?
     if [ "$status" -ne 0 ]; then
         p2s_package_log_report "$log"
-        if [ "$status" -eq 124 ]; then
+        if $P2S_BACKPORTS_ACTIVE && [ -f "$P2S_WORK/backports-archive-guard-started" ] &&
+            [ ! -f "$P2S_WORK/backports-archive-guard-passed" ]; then
+            P2S_BACKPORTS_TRANSACTION_ATTEMPTED=false
+            p2s_fix_block candidate_checksum "APT stopped before passing Backports packages to dpkg because the archive SHA256 check failed. Review the downloaded package and repository diagnostics."
+        elif [ "$status" -eq 124 ]; then
             p2s_fix_block package_update "APT reached the 30-minute installation limit. Check dpkg --audit and your websites before retrying. The APT output is in the detailed log."
         else
             p2s_fix_block package_update "APT installation failed (exit $status). Check dpkg --audit and your websites before retrying. The APT output is in the detailed log."
@@ -6647,7 +7054,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-25.7 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-25.8 check_options=--check
     local P2S_APT_PLAN=
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
@@ -6720,8 +7127,11 @@ p2s_main() {
     fi
     p2s_manifest_record script_revision "$script_revision"
     p2s_manifest_record source_preservation 'policy=current_publisher_fixes_first|script_repository_changes=explicit_opt_in_only|APT_Sury_candidates=provider_branch_architecture_and_exact_version_guarded|RPM_vendor_changes=disabled|panel_transactions_require_separate_review'
-    p2s_manifest_record dependency_policy 'required_installed_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources_or_explicit_bullseye_Sury_PCRE2_migration|no_additions_removals_or_downgrades'
+    p2s_manifest_record dependency_policy 'required_installed_libraries|automatic_with_APT_PHP_updates|reviewed_list_only|matching_official_OS_sources_or_reviewed_bullseye_Sury_PCRE2_migration|no_additions_removals_or_downgrades'
     p2s_manifest_record disruptive_options "enabled=${P2S_DISRUPTIVE:-false}|allow_sury_migration=${P2S_ALLOW_SURY_MIGRATION:-false}|allow_sury_repository=${P2S_ALLOW_SURY_REPOSITORY:-false}|repository_repair=${P2S_REPOSITORY_REPAIR:-none}|pending_php_configuration=${P2S_ALLOW_PENDING_PHP_CONFIGURATION:-false}|exact_php_reinstall=${P2S_ALLOW_EXACT_PHP_REINSTALL:-false}"
+    if ${P2S_NOVEMBER:-false}; then
+        p2s_manifest_record configured_provider_policy 'eligible_APT_branches|configured_publisher_fallback_enabled|source_additions_require_approval'
+    fi
     if ${P2S_ALLOW_FREEXIAN:-false}; then p2s_manifest_record freexian_opt_in 'enabled|existing_signed_ELTS_only'; fi
     p2s_manifest_record bash "$BASH_VERSION"
     # SSH can deliver source on stdin; $0 would identify Bash, not the delivered script.
