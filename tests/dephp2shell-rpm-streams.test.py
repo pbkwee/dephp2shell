@@ -96,6 +96,15 @@ printf 'php-common|N\n' > "$P2S_WORK/package-states"
         self.assertIn('target=7.4|', out)
         self.assertNotIn('First try --fix', out)
 
+    def test_verified_november_remi_build_keeps_migration_advice(self):
+        out = self.shell(self.fixture(REMI, '0:8.1.34-7.module_php.8.1.el8.remi', 'Remi Collet', r'''
+P2S_NOVEMBER=true
+printf 'php-common|N\n' > "$P2S_WORK/package-states"
+'''))
+        self.assertIn('already has verified November fixes', out)
+        self.assertIn('target=remi-8.4/common|', out)
+        self.assertNotIn('First try --fix', out)
+
     def test_native_80_never_suggests_a_downgrade_to_74(self):
         listing = NATIVE.replace('[d][e]', '[d]').replace('php 8.0 common', 'php 8.0 [e] common')
         out = self.shell(self.fixture(listing, '0:8.0.30-1.module+el8.10.0+1+abcdef'))

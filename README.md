@@ -46,8 +46,8 @@ The tool checks prerequisites, attempts supported package or panel updates, rest
 
 Normal `--fix` preserves PHP branches. The November update can use eligible
 verified updates from configured sources when the current publisher has no fix. APT updates
-include proven necessary upgrades of reviewed, already-installed native libraries
-from matching official OS sources. Other applications may share those libraries
+include verified required runtime libraries from reviewed sources. Supported
+DNF4 updates can also install verified required runtime libraries. Other applications may share those libraries
 and need testing afterwards. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
 
 Adding or expanding a PHP repository requires separate approval for the offered

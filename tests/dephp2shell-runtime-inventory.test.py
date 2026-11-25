@@ -521,13 +521,19 @@ cat "$P2S_WORK/paths.raw"
         self.assertEqual(out.splitlines(), ['/fixture/bin/lsphp', '/fixture/bin/sw-engine'])
 
     def test_rocky9_fixed_backport_clears_without_installing_or_restarting(self):
-        out = self.shell(r'''
-P2S_DISTRO=rocky; P2S_RELEASE=9.5; P2S_MAJOR=9
+        for november, build, marker, message in (
+            ('false', '8.0.30-8.el9_8.1', 'CVE_2026_109618', 'fixes verified for both PHP2Shell vulnerabilities'),
+            ('true', '8.0.30-8.el9_9.2', 'CVE_2026_126714', 'November PHP fixes verified'),
+        ):
+            with self.subTest(build=build):
+                out = self.shell(f'P2S_NOVEMBER={november}; build={build}\n' + r'''
+P2S_DISTRO=rocky; P2S_RELEASE=9.7; P2S_MAJOR=9
 p2s_package_inventory_collect() {
+    local name
     P2S_BACKEND=rpm
-    printf '%s\n' 'php-common|0:8.0.30-8.el9_8.1|x86_64|Rocky Enterprise Software Foundation' \
-        'php-cli|0:8.0.30-8.el9_8.1|x86_64|Rocky Enterprise Software Foundation' \
-        'php|0:8.0.30-8.el9_8.1|x86_64|Rocky Enterprise Software Foundation' > "$P2S_WORK/packages"
+    for name in php php-common php-cli php-fpm; do
+        printf '%s\n' "$name|0:$build|x86_64|Rocky Enterprise Software Foundation"
+    done > "$P2S_WORK/packages"
 }
 mkdir -p "$P2S_WORK/usr/bin"
 for name in php php-cgi; do : > "$P2S_WORK/usr/bin/$name"; chmod 700 "$P2S_WORK/usr/bin/$name"; done
@@ -540,13 +546,15 @@ p2s_command_run() { [ "$2:$3" = rpm:-ql ] || return 97; }
 id() { printf '0\n'; }
 p2s_inventory_collect_and_assess
 p2s_summary_print_result
+p2s_vulnerability_result afterfix "$P2S_STATE"
 printf 'STATE=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_STATE" "$P2S_UNKNOWN" "$P2S_BLOCKED"
 ''')
-        self.assertIn('STATE=N|UNKNOWN=false|BLOCKED=false', out)
-        self.assertIn('fixes verified for both PHP2Shell vulnerabilities', out)
-        self.assertIn('The PHP package publisher added the security fixes without changing the PHP version', out)
-        self.assertNotIn('dss:warn:', out)
-        self.assertNotIn('No recognised web-server', out)
+                self.assertIn('STATE=N|UNKNOWN=false|BLOCKED=false', out)
+                self.assertIn('dss:isvulnerable:afterfix: ' + marker + 'N', out)
+                self.assertIn(message, out)
+                self.assertIn('The PHP package publisher added the security fixes without changing the PHP version', out)
+                self.assertNotIn('dss:warn:', out)
+                self.assertNotIn('No recognised web-server', out)
 
     def test_package_directories_named_php_do_not_make_fixed_runtime_unknown(self):
         out = self.shell(r'''

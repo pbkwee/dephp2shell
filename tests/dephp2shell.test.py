@@ -2146,6 +2146,86 @@ printf 'SERVICES=%s|PROCESSES=%s\\n' "$(cat "$P2S_WORK/services")" "$(cat "$P2S_
                 body += 'p2s_package_rpm_validate_plan "$P2S_WORK/plan"'
                 self.shell(body, status=0 if valid else 1)
 
+    def test_rpm_update_reports_required_and_weak_additions_without_installing(self):
+        out = self.shell(r'''
+printf '%s\n' 'php-intl|0:8.1.34-6.module_php.8.1.el8.remi|x86_64|Remi' > "$P2S_WORK/packages"
+p2s_command_exists() { [ "$1" = dnf ]; }
+p2s_command_run() {
+    case " $* " in
+        *' --version '*) printf '4.7.0\n' ;;
+        *' makecache '*) return 0 ;;
+        *' --setopt=tsflags=test '*)
+            cat <<'EOF'
+Upgrading:
+ php-intl      x86_64  8.1.34-7.module_php.8.1.el8.remi     remi-modular  256 k
+Installing dependencies:
+ libicu78      x86_64  78.3-2.el8.remi                      remi-safe      11 M
+Installing weak dependencies:
+ icu-tzdata    noarch  2026f-1.el8.remi                     remi-safe     196 k
+
+Transaction Summary
+Install   2 Packages
+Upgrade   1 Package
+EOF
+            ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+P2S_TRANSACTION_ATTEMPTED=false
+p2s_package_rpm_update
+printf 'RC=%s|ATTEMPTED=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
+''')
+        self.assertIn('blocker:beforefix|transaction_scope|The RPM plan would also install libicu78 (required), icu-tzdata (weak).', out)
+        self.assertIn('RC=1|ATTEMPTED=false', out)
+
+    def test_rpm_update_approves_only_verified_required_runtime_libraries(self):
+        for outcome in ('library', 'wrong-vendor', 'no-soname', 'mixed-service'):
+            with self.subTest(outcome=outcome):
+                out = self.shell(f'fixture={outcome}\n' + r'''
+P2S_DISTRO=rocky
+fixture_vendor="Remi's RPM repository <https://rpms.remirepo.net/> #StandWithUkraine"
+printf '%s\n' "php-intl|0:8.1.34-6.module_php.8.1.el8.remi|x86_64|$fixture_vendor" > "$P2S_WORK/packages"
+p2s_command_exists() { [ "$1" = dnf ]; }
+p2s_command_run() {
+    case "$2:$3:$4" in
+        rpm:-qp:--qf)
+            if [ "$fixture" = wrong-vendor ]; then fixture_vendor=unrecognized; fi
+            printf 'libicu78|x86_64|0:78.3-2.el8.remi|%s\n' "$fixture_vendor"; return ;;
+        rpm:-qp:--provides)
+            if [ "$fixture" = no-soname ]; then printf 'libicu78 = 78.3-2.el8.remi\n'
+            else printf 'libicuuc.so.78()(64bit)\n'; fi
+            return ;;
+        rpm:-qpl:*)
+            printf '/usr/lib64/libicuuc.so.78.3\n'
+            if [ "$fixture" = mixed-service ]; then printf '/usr/lib/systemd/system/something.service\n'; fi
+            return ;;
+    esac
+    case " $* " in
+        *' --version '*) printf '4.7.0\n' ;;
+        *' makecache '*) return 0 ;;
+        *' --setopt=install_weak_deps=False '*' --setopt=tsflags=test '*)
+            mkdir -p "$P2S_WORK/rpm-cache/remi-safe-1234567890abcdef/packages"
+            : > "$P2S_WORK/rpm-cache/remi-safe-1234567890abcdef/packages/libicu78-78.3-2.el8.remi.x86_64.rpm"
+            printf '%s\n' 'Upgrading:' ' php-intl x86_64 8.1.34-7.module_php.8.1.el8.remi remi-modular 256 k' \
+                'Installing dependencies:' ' libicu78 x86_64 78.3-2.el8.remi remi-safe 11 M' \
+                'Transaction Summary' 'Install  1 Package' 'Upgrade  1 Package' ;;
+        *' --setopt=install_weak_deps=False '*' --cacheonly update php-intl-8.1.34-7.module_php.8.1.el8.remi.x86_64 '*)
+            printf 'APPLIED_CACHED_UPGRADE\n' ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+P2S_TRANSACTION_ATTEMPTED=false
+p2s_package_rpm_update
+printf 'RC=%s|ATTEMPTED=%s\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
+''')
+                if outcome == 'library':
+                    self.assertIn('dependency_approval:beforefix|libicu78|x86_64|78.3-2.el8.remi|remi-safe', out)
+                    self.assertIn('APPLIED_CACHED_UPGRADE', out)
+                    self.assertIn('RC=0|ATTEMPTED=true', out)
+                else:
+                    self.assertNotIn('APPLIED_CACHED_UPGRADE', out)
+                    self.assertIn('RC=1|ATTEMPTED=false', out)
+
     def test_restart_only_for_pending_deleted_workers(self):
         out = self.shell('''
 P2S_BACKEND=deb; P2S_RESTART_PENDING=true

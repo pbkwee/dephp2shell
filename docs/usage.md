@@ -31,6 +31,7 @@ repositories. Legacy explicit configured-source flags are still accepted.
 | `--november-2026` | Assess the November PHP security release. By default the script assesses October PHP2Shell. |
 | `--enable-extra-fixes` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
 | [`--add-debian-php-backports`](resolution-options.md#add-the-community-debian-php-backports-repository) | Allow adding or expanding the reviewed community feed with `--november-2026 --enable-extra-fixes` and an explicit PHP branch list. |
+| [`--use-stackx`](resolution-options.md#use-the-stackx-php-fallback) | Configure the signed StackX fallback if needed and update the selected PHP branches on Debian 9–11 amd64. Requires `--november-2026 --enable-extra-fixes` and a PHP branch list. |
 | `--php-source-branches=LIST` | Comma-separated source package names approved for the repository change, such as `php5.6,php7.4` or legacy `php5`. |
 | [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | With `--enable-extra-fixes`, allow a closely matched native-to-Sury PHP package change. |
 | [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | Allow an offered change to the matching Sury/ondrej repository. Review the approved PHP branches first. |
@@ -106,9 +107,9 @@ Review the check first. Ensure backups, console access and a maintenance window 
 sudo bash dephp2shell.sh --fix
 ```
 
-Fix mode uses the supported procedure for the detected setup. APT updates include
-proven necessary upgrades of reviewed, already-installed native shared libraries
-from matching official OS sources. These need no extra option. Other applications
+Fix mode uses the supported procedure for the detected setup. APT and supported
+DNF4 transactions can install verified required runtime libraries. APT can
+also upgrade reviewed installed native libraries. These need no extra option. Other applications
 may use those libraries and need testing. See [library update limits](resolution-options.md#allow-the-native-libraries-php-needs). Package holds, pins, signing requirements and package publisher boundaries remain in effect. A blocked update reports the reason and the next step. Changes can already have occurred if a package operation or restart fails; there is no automatic rollback.
 
 The former `--upgrade-required-php-libraries` flag and

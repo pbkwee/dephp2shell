@@ -16,6 +16,7 @@ P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12
 P2S_DISRUPTIVE=false
 lib=libxml2; old=2.9.14-1; candidate=2.9.15-1; arch=amd64; installed_arch=amd64
 source=libxml2; installed_source=libxml2; maintainer='Debian XML Team'
+new_library=false; section=libs; essential=no; protected=no; host_arch=amd64
 uri=https://deb.debian.org/debian; suite=bookworm; origin=Debian
 native_uri=https://security.debian.org/debian-security; native_suite=bookworm-security
 native_origin=Debian; native_arch=amd64; installed_repo_version=
@@ -27,32 +28,40 @@ installed_repo_version=${installed_repo_version:-$old}
 fixture_installed_metadata_source=${installed_metadata_source:-$installed_source}
 fixture_installed_metadata_arch=${installed_metadata_arch:-$installed_arch}
 fixture_installed_metadata_version=${installed_metadata_version:-$old}
-fixture_installed_source=$installed_source; fixture_maintainer=$maintainer; fixture_arch=$arch
+fixture_installed_source=$installed_source; fixture_maintainer=$maintainer; fixture_arch=$arch; fixture_old=$old
 printf '%s\n' 'php8.2-cli|8.2.35-1|amd64|php8.2-cli' > "$P2S_WORK/apt-approved"
 printf '%s\n' 'php8.2-cli|8.2.29-1|amd64|Debian' > "$P2S_WORK/packages"
 printf ' 500 %s %s/main amd64 Packages\n     release o=%s,n=%s,c=main,b=amd64\n' "$uri" "$suite" "$origin" "$suite" > "$P2S_WORK/candidate-origins"
 printf ' 500 %s %s/main %s Packages\n     release o=%s,n=%s,c=main,b=%s\n' "$native_uri" "$native_suite" "$native_arch" "$native_origin" "$native_suite" "$native_arch" >> "$P2S_WORK/candidate-origins"
-printf 'Inst php8.2-cli [8.2.29-1] (8.2.35-1 Debian:12 [amd64])\nInst %s [%s] (%s Debian:12 [%s])\n' "$lib" "$old" "$candidate" "$arch" > "$P2S_WORK/plan"
+printf 'Inst php8.2-cli [8.2.29-1] (8.2.35-1 Debian:12 [amd64])\n' > "$P2S_WORK/plan"
+if $new_library; then
+    printf 'Inst %s (%s Debian:12 [%s])\n' "$lib" "$candidate" "$arch" >> "$P2S_WORK/plan"
+else
+    printf 'Inst %s [%s] (%s Debian:12 [%s])\n' "$lib" "$old" "$candidate" "$arch" >> "$P2S_WORK/plan"
+fi
 dpkg() { [ "$1" = --compare-versions ] || return 97; command dpkg "$@"; }
 p2s_command_run() {
     local last
     for last in "$@"; do :; done
     case "$2" in
+        dpkg) [ "$last" = --print-architecture ] || return 97; printf '%s\n' "$host_arch" ;;
         dpkg-query) printf 'install ok installed|%s|%s|%s|%s|%s\n' "$lib" "$old" "$installed_arch" "$fixture_installed_source" "$fixture_maintainer" ;;
         apt-cache)
             case " $* " in
                 *' policy '*)
-                    printf '%s:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n        500 %s %s/main amd64 Packages\n' "$lib" "$old" "$normal_candidate" "$candidate" "$uri" "$suite"
+                    printf '%s:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n        500 %s %s/main amd64 Packages\n' "$lib" "$fixture_old" "$normal_candidate" "$candidate" "$uri" "$suite"
                     if $duplicate; then printf '        500 https://foreign.invalid/repo bookworm/main amd64 Packages\n'; fi
-                    printf ' *** %s 500\n' "$installed_repo_version"
-                    if ! $missing_native; then printf '        500 %s %s/main %s Packages\n' "$native_uri" "$native_suite" "$native_arch"; fi
-                    if $duplicate_installed; then printf '        500 https://foreign.invalid/repo bookworm/main amd64 Packages\n'; fi
-                    printf '        100 /var/lib/dpkg/status\n' ;;
+                    if [ "$fixture_old" != '(none)' ]; then
+                        printf ' *** %s 500\n' "$installed_repo_version"
+                        if ! $missing_native; then printf '        500 %s %s/main %s Packages\n' "$native_uri" "$native_suite" "$native_arch"; fi
+                        if $duplicate_installed; then printf '        500 https://foreign.invalid/repo bookworm/main amd64 Packages\n'; fi
+                        printf '        100 /var/lib/dpkg/status\n'
+                    fi ;;
                 *' show '*)
                     case "$last" in
                         php*) printf 'Package: php8.2-cli\nVersion: 8.2.35-1\nArchitecture: amd64\nDepends: %s\n' "$dependency" ;;
                         *"=$old") printf 'Package: %s\nVersion: %s\nArchitecture: %s\nSource: %s\n' "${lib%:*}" "$fixture_installed_metadata_version" "$fixture_installed_metadata_arch" "$fixture_installed_metadata_source" ;;
-                        *) printf 'Package: %s\nVersion: %s\nArchitecture: %s\nSource: %s\n' "${lib%:*}" "$candidate" "$fixture_arch" "$source" ;;
+                        *) printf 'Package: %s\nVersion: %s\nArchitecture: %s\nSource: %s\nSection: %s\nEssential: %s\nProtected: %s\n' "${lib%:*}" "$candidate" "$fixture_arch" "$source" "$section" "$essential" "$protected" ;;
                     esac ;;
                 *) return 97 ;;
             esac ;;
@@ -76,6 +85,29 @@ printf 'ARGUMENTS\n'; cat "$P2S_WORK/dependency-arguments" 2>/dev/null
         self.assertIn('libxml2|2.9.15-1|amd64|libxml2', out)
         self.assertIn('libxml2:amd64=2.9.15-1', out)
         self.assertNotIn('UNEXPECTED_', out)
+
+    def test_new_native_library_is_approved_as_an_implicit_hard_dependency(self):
+        for requirement in ('libicu72', 'libicu72 (>= 72.1)', 'libicu72 (>> 71)'):
+            with self.subTest(requirement=requirement):
+                out = self.run_plan(f"new_library=true; old='(none)'; lib=libicu72; source=icu; "
+                                    f"candidate=72.1-3; normal_candidate=$candidate; dependency='{requirement}'")
+                self.assertIn('RC=0', out)
+                self.assertIn('libicu72|72.1-3|amd64|libicu72', out)
+                self.assertNotIn('libicu72:amd64=', out)
+        out = self.run_plan("new_library=true; old='(none)'; lib=zlib1g; source=zlib; dependency=zlib1g")
+        self.assertIn('RC=0', out)
+        self.assertIn('zlib1g|2.9.15-1|amd64|zlib1g', out)
+
+    def test_new_packages_require_a_native_library_and_hard_dependency(self):
+        for changes in ('section=utils', 'section=libdevel', 'essential=yes', 'protected=yes', 'duplicate=true', 'suite=trixie',
+                        'arch=arm64', 'host_arch=arm64', 'old=71-1', 'lib=tool',
+                        'dependency=libother', "dependency='libicu72 | libother'",
+                        "dependency='libicu72 (>= 83)'", "lib='libicu72:arm64'"):
+            with self.subTest(changes=changes):
+                out = self.run_plan("new_library=true; old='(none)'; lib=libicu72; source=icu; "
+                                    "candidate=72.1-3; normal_candidate=$candidate; dependency=libicu72; " + changes)
+                self.assertIn('RC=1', out)
+                self.assertNotIn('dependency_approval:', out)
 
     def test_public_elts_library_upgrade_requires_verified_same_release_indexes(self):
         changes = '''
@@ -288,7 +320,8 @@ sed -i 's/php8.2-cli/php7.4-cli/g' "$P2S_WORK/apt-approved" "$P2S_WORK/packages"
             return 0 ;;
     esac
     case "$2" in''')
-        body = body.replace('"$fixture_arch" "$source" ;;', '"$fixture_arch" "$source"; printf "Depends: libonig5 (>= 2.0)\\n" ;;')
+        body = body.replace('"$source" "$section" "$essential" "$protected" ;;',
+                            '"$source" "$section" "$essential" "$protected"; printf "Depends: libonig5 (>= 2.0)\\n" ;;')
         out = self.shell(body + r'''
 printf 'Inst libonig5 [1.0-1] (2.0-1 Debian:12 [amd64])\n' >> "$P2S_WORK/plan"
 p2s_package_deb_dependency_approve_plan "$P2S_WORK/plan"

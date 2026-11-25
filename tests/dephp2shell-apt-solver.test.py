@@ -19,6 +19,77 @@ DEPENDENCY_HELPERS = runpy.run_path(str(Path(__file__).with_name('dephp2shell-de
 class PinnedDependencyPlanTest(unittest.TestCase):
     shell = DEPENDENCY_HELPERS['DependencyRepairTest'].shell
 
+    def test_new_library_needs_an_unchanged_replay_and_matching_archives(self):
+        fixture = DEPENDENCY_HELPERS['DependencyRepairTest']().fixture(
+            "new_library=true; old='(none)'; lib=libicu72; source=icu; "
+            "candidate=72.1-3; normal_candidate=$candidate; dependency=libicu72").replace(
+                'p2s_command_run() {', 'fixture_dependency_command() {')
+        for scenario in ('unchanged', 'version', 'missing', 'tampered'):
+            with self.subTest(scenario=scenario):
+                out = self.shell(fixture + '\nscenario=' + shlex.quote(scenario) + r'''
+P2S_MODE=fix
+cp "$P2S_WORK/candidate-origins" "$P2S_WORK/fixture-origins"
+printf 'php archive' > "$P2S_WORK/php.deb"
+printf 'library archive' > "$P2S_WORK/lib.deb"
+sha_php=$(sha256sum "$P2S_WORK/php.deb"); sha_lib=$(sha256sum "$P2S_WORK/lib.deb")
+p2s_command_exists() { case "$1" in apt-get|apt-cache|dpkg|apt-mark) return 0 ;; *) return 1 ;; esac; }
+p2s_package_deb_candidate() { P2S_DEB_CANDIDATE=8.2.35-1; }
+p2s_package_deb_sury_trust_preflight() { return 0; }
+p2s_command_run() {
+    local last
+    for last in "$@"; do :; done
+    case "$2" in
+        apt-mark) return 0 ;;
+        dpkg) [ "$last" = --audit ] || fixture_dependency_command "$@" ;;
+        apt-cache)
+            if [ "$last" = policy ]; then cat "$P2S_WORK/fixture-origins"; return 0; fi
+            fixture_dependency_command "$@" || return
+            case "$last" in
+                php8.2-cli:amd64=*) printf 'SHA256: %s\n' "${sha_php%% *}" ;;
+                libicu72:amd64=*) printf 'SHA256: %s\n' "${sha_lib%% *}" ;;
+            esac ;;
+        apt-get)
+            case " $* " in
+                *' update ') return 0 ;;
+                *' -s '*)
+                    printf '%s\n' "$*" >> "$P2S_WORK/simulations"
+                    if [ "$(wc -l < "$P2S_WORK/simulations")" -eq 2 ]; then
+                        case "$scenario" in
+                            version) sed '2s/(72.1-3 /(72.1-4 /' "$P2S_WORK/plan"; return ;;
+                            missing) sed -n '1p' "$P2S_WORK/plan"; return ;;
+                        esac
+                    fi
+                    cat "$P2S_WORK/plan" ;;
+                *' install '*)
+                    if [ "$scenario" = tampered ]; then printf 'tampered' > "$P2S_WORK/lib.deb"; fi
+                    printf '%s\n' "$P2S_WORK/php.deb" "$P2S_WORK/lib.deb" | sh "$P2S_BACKPORTS_ARCHIVE_GUARD" || return 97
+                    printf 'INSTALLED %s\n' "$*" >> "$P2S_WORK/installations" ;;
+                *) printf 'UNEXPECTED_APT_OPERATION\n'; return 97 ;;
+            esac ;;
+        *) printf 'UNEXPECTED_UPDATE_OPERATION\n'; return 97 ;;
+    esac
+}
+p2s_package_deb_update
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+printf 'SIMULATIONS=%s\n' "$(wc -l < "$P2S_WORK/simulations")"
+cat "$P2S_WORK/installations" 2>/dev/null
+:
+''')
+                self.assertIn('SIMULATIONS=2', out)
+                self.assertIn('dependency_approval:', out)
+                self.assertNotIn('UNEXPECTED_', out)
+                if scenario == 'unchanged':
+                    self.assertIn('RC=0|BLOCKED=false', out)
+                    self.assertRegex(out, r'INSTALLED .*--no-install-recommends .*php8\.2-cli:amd64=8\.2\.35-1')
+                    self.assertNotIn('libicu72:amd64=', out)
+                else:
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    self.assertNotIn('INSTALLED', out)
+                    if scenario == 'tampered':
+                        self.assertIn('candidate_checksum', out)
+                    else:
+                        self.assertIn('pinned dependency simulation changed scope', out)
+
     def test_only_unchanged_pinned_resimulation_reaches_installation(self):
         fixture = DEPENDENCY_HELPERS['DependencyRepairTest']().fixture().replace(
             'p2s_command_run() {', 'fixture_dependency_command() {')

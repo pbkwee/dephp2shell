@@ -1,6 +1,6 @@
 # Coverage and update boundaries
 
-DePHP2Shell assesses CVE-2026-109618 and CVE-2026-109619 in the PHP installations and processes it can inspect locally. Checks use locally maintained version and vendor-backport rules. The script sends no exploit probes and does not download a rule feed.
+DePHP2Shell assesses the October PHP2Shell vulnerabilities CVE-2026-109618 and CVE-2026-109619 by default. Use `--november-2026` for the November security release. Both modes inspect local installations and processes using maintained version and vendor-backport rules. The script sends no exploit probes and does not download a rule feed.
 
 ## Discovery
 
@@ -8,7 +8,35 @@ The inventory includes Debian/RPM PHP packages, package-owned executables and Ap
 
 `php -v` reports command-line PHP, which can differ from the PHP serving a website. Each discovered PHP branch is assessed separately against reviewed version and vendor-backport rules. Build dates and process start times describe when files were built and processes launched; fix status uses the reviewed rules.
 
-Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older distribution or vendor versions need a matching reviewed backport rule. Unrecognised older builds remain unverified.
+| PHP branch | October fixed upstream release | November fixed upstream release |
+| --- | --- | --- |
+| 8.6 | Use the November check | 8.6.0 |
+| 8.5 | 8.5.12 | 8.5.13 |
+| 8.4 | 8.4.27 | 8.4.28 |
+| 8.3 | 8.3.36 | 8.3.37 |
+| 8.2 | 8.2.35 | 8.2.36 |
+| 8.1 and earlier | Matching reviewed vendor build required | Matching reviewed vendor build required |
+
+The table records upstream package fixes. Check [PHP's support dates](https://www.php.net/supported-versions.php) before choosing a migration target. Distribution and third-party backports use separate package rules. See [package sources by OS and publisher](resolution-options.md#package-managed-php-sources) and the [November RPM rule coverage](maintainer-reference.md#november-rpm-rules). Unrecognised builds that require a backport remain unverified.
+
+### Debian and Ubuntu November package evidence
+
+| OS release | Reviewed package evidence |
+| --- | --- |
+| Debian 6–8 | Selected exact releases from Community Backports. |
+| Debian 9–10 | Selected Community Backports, native Freexian Extended LTS builds, and the [StackX main releases](stackx-backport-evidence.md). |
+| Debian 11 | Native Freexian Extended LTS builds and the [StackX main release](stackx-backport-evidence.md). |
+| Debian 12–13 | Debian security advisories and [reviewed Sury builds](sury-backport-evidence.md). |
+| Ubuntu 14.04 and 16.04 | Native Ubuntu Pro Legacy advisories and selected Community Backports. |
+| Ubuntu 18.04 and 20.04 | Native Ubuntu Pro advisories and selected Community Backports. |
+| Ubuntu 22.04, 24.04 and 26.04 | Canonical advisories and [reviewed Sury builds](sury-backport-evidence.md). |
+| Ubuntu 26.10 | Canonical advisories. |
+| Other Debian and Ubuntu releases, including old interim releases | Upstream fixed-version rules still apply. A backport needs evidence for its publisher and exact build. |
+
+The same checks apply to recognised older native packages left after an OS
+upgrade. The checker records their original advisory release and can show
+APT's proposed removal plan for manual review. See [installed build and
+removal verification](resolution-options.md#verify-older-release-packages-and-republished-builds).
 
 ## Updates
 
@@ -16,15 +44,15 @@ Fixed upstream branch releases are PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. Older 
 | --- | --- |
 | Supported Debian/Ubuntu | Refresh APT metadata and simulate a targeted installed-PHP update. Reject removals and unapproved new dependencies. Preserve local package configuration. |
 | Existing Sury/ondrej PHP | Use an authenticated, recognised fixed candidate from the existing package publisher, retaining the source package, branch and architecture. |
-| Supported RPM systems | Check the proposed transaction, then use DNF or YUM. |
+| Supported RPM systems, including installed Remi PHP | Use a supported DNF implementation to test an update from the current publishers. DNF4 can also install verified required runtime libraries. Stream changes require manual review. |
 | Compatible Virtualmin | Use the existing package-manager procedure. |
 | Supported cPanel | Request critical panel security updates, then update installed website PHP packages separately. |
 | Supported Plesk | Use the Plesk installer for installed components within the current Plesk release. This can update other components, including databases, mail and web servers. |
 
 Configuration checks and service restarts require a recognised safe procedure. Unmapped launchers, incompatible panel setups, package conflicts or unverifiable transactions can block an automatic fix.
 
-Ordinary APT fixes include proven necessary upgrades of reviewed installed native
-libraries from matching official OS sources. Separate disruptive options cover
+Ordinary APT fixes include verified required additions and upgrades of native
+runtime libraries from matching official OS sources. Separate disruptive options cover
 bounded repository/package repairs. These do not authorize general system repair. Check mode recommends matching options using installed/cached evidence. See [resolution options](resolution-options.md).
 
 Normal updates keep each PHP package with its existing package publisher and preserve unrelated PHP selectors. The tool adds no persistent pins or holds. A native-to-Sury package publisher change requires a separately enabled `--enable-extra-fixes` method and a compatible proposed transaction. Adding the matching official source requires a further repository opt-in. See [resolution options](resolution-options.md) and [the bounded Sury evidence](sury-backport-evidence.md) for exact recognised older builds.

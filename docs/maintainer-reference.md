@@ -671,8 +671,12 @@ and `libsodium23`. Each upgrade needs versioned, non-alternative PHP dependency
 proof, including transitive edges, plus matching binary/source/architecture,
 a newer normal candidate exclusively from matching official OS sources and no
 library hold. Pin exact approved candidates, repeat the simulation and recheck
-scope, versions and architecture before installation. Additions, removals,
-replacements, downgrades, RPM and base-system library changes remain excluded.
+scope, versions and architecture before installation. New required libraries
+must come from the matching reviewed native feed and declare `Section: libs`.
+The exact library must be reachable from the PHP upgrade through hard
+`Depends` or `Pre-Depends` entries. The archive hash guard verifies the entire
+installation set before passing packages to dpkg. Removals, replacements and
+downgrades require manual review.
 Installed native-library identity is verified against exact installed-version rows
 from the reviewed matching native APT indexes and exact binary/source/architecture
 metadata. Maintainer text is descriptive, not origin proof: Debian's PCRE2 can
@@ -686,6 +690,13 @@ These checks identify declared package metadata, not historical download origin
 or the integrity of installed file contents.
 Check-mode simulations use the package lists fetched by the repository refresh.
 See the [operator limits and risks](resolution-options.md#allow-the-native-libraries-php-needs).
+
+DNF4 identifies new hard dependencies in the tested transaction with weak
+dependencies disabled. The script verifies the downloaded RPM's identity,
+publisher, shared-library ABI and file list. Packages carrying a command
+or service require manual review. The install pins the PHP upgrades and
+uses the private tested cache. Supported sources are reviewed base distribution
+repositories and `remi-safe` for existing Remi PHP installations.
 
 ### Method flags
 
@@ -865,15 +876,17 @@ checks incomplete dpkg operations and held PHP packages. Failed metadata refresh
 including APT warnings that returned zero, prevents installation. Errors explain
 repository, network/DNS, signature and subscription possibilities.
 
-The ordinary APT path simulates an upgrade of the explicit installed PHP package set. Additional
-packages and removals require manual review. The real command uses `--only-upgrade`
+The ordinary APT path simulates an upgrade of the explicit installed PHP package set.
+Additional packages must qualify as verified required libraries. Removals require manual
+review. The real command uses `--only-upgrade`
 and `--no-remove`, retains local configuration, and requests noninteractive
 operation. It does not run a general `dist-upgrade`.
 
 The ordinary RPM path prefers DNF, then YUM, uses signature/TLS checks, and runs a test transaction.
-Only recognised English DNF4/YUM plans updating the selected PHP packages proceed.
-Dependency additions, removals, unknown plan formats and failed test transactions
-require manual review. Metadata refresh and package operations have time limits.
+Recognised plans can upgrade the selected PHP packages. DNF4 also permits verified
+required runtime libraries after a successful test. Other additions, removals,
+unknown plan formats and failed tests require manual review. Metadata refresh and
+package operations have time limits.
 DNF's successful `Nothing to do.` result is recorded as `no_updates`, with no
 install requested. It permits pending restart work; otherwise an unverified build
 gets a no-update-candidate warning. The installed build retains its assessed fixed, vulnerable or unknown status when no upgrade is available.
@@ -1490,10 +1503,54 @@ signed indexes also establish the November Ubuntu Pro and Legacy revisions.
 Freexian's signed Debian ELTS revisions require matching source-package metadata.
 The opt-in installer verifies the existing Freexian Extended LTS signing key, release, exact candidate origins, and package and extension identity. Its November rules cover native Stretch PHP 7.0, Buster PHP 7.3, and Bullseye PHP 7.4. The separate private Freexian PHP LTS service needs its own reviewed package evidence.
 
+### November RPM rules
+
 The November checker accepts later revisions within reviewed Sury, Ubuntu,
 Freexian and native AlmaLinux/Rocky Linux package series. Debian and Ubuntu
 packages use dpkg version ordering. AlmaLinux and Rocky Linux use RPM's
 comparison of version and release separately for matching native release formats.
+Alma rebuilds and stock RPMs use separate fixed revisions when they carry
+different release suffixes. For example, the AlmaLinux 9 PHP 8.0 backport
+`8.0.30-8.el9_8.1.alma.1` and the stock `8.0.30-8.el9_9.2` build both have
+the fixes.
+
+| Distribution | PHP streams with verified November fixes | Older stock packages assessed |
+| --- | --- | --- |
+| Rocky Linux 8 | 7.4, 8.2 | Reviewed 7.2, 7.3 and 8.0 builds predate the fixes |
+| Rocky Linux 9 | 8.0, 8.2, 8.3, 8.4 | Reviewed 8.1 build predates the fixes |
+| Rocky Linux 10 | 8.3, 8.4, including RISC-V | Reviewed October 8.3 and 8.4 builds predate the fixes |
+| AlmaLinux 8 | 7.4, 8.2 | Reviewed 7.2, 7.3 and 8.0 builds predate the fixes |
+| AlmaLinux 9 | 8.0, 8.2, 8.3, 8.4 | Reviewed 8.1 build predates the fixes |
+| AlmaLinux 10 | 8.3, 8.4, including x86_64_v2 | Reviewed October 8.3 and 8.4 builds predate the fixes |
+| CentOS Stream 9 | Upstream fixed releases are recognised when installed | Reviewed 8.0–8.4 builds published before the November release |
+| CentOS Stream 10 | 8.3, 8.4 | Reviewed October 8.3 and 8.4 builds predate the fixes |
+| CentOS Linux 7 and 8, CentOS Stream 8 | Archived sources ended before the November release | Reviewed stock 5.4, 7.2–7.4, 8.0 and 8.2 builds predate the fixes |
+
+See [Rocky AppStream errata](https://apollo.build.resf.org/RLSA-2026:102297),
+[AlmaLinux's November release](https://almalinux.org/blog/2026-11-19-php-security-release/),
+and the [CentOS Stream 9](https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/)
+and [Stream 10](https://mirror.stream.centos.org/10-stream/AppStream/x86_64/os/Packages/)
+package indexes. The November status of older CentOS 5 and 6 packages requires
+supplier evidence.
+
+Remi packages at the upstream fixed versions use the upstream PHP rules.
+The checker also matches these exact legacy Remi builds on x86_64 and aarch64.
+The modular RPM release ends in `.module_php.<branch>.el<major>.remi`.
+Software Collections use the corresponding `phpNN-php` package family with
+`.el<major>.remi`. The matched RPMs must identify Remi's repository as publisher.
+
+| PHP | EL releases | October build | November build |
+| --- | --- | --- | --- |
+| [7.2](https://blog.remirepo.net/post/2020/12/01/PHP-7.2-is-dead) | 8 | 7.2.34-31 | 7.2.34-32 |
+| [7.3](https://blog.remirepo.net/post/2021/12/10/PHP-7.3-is-dead) | 8 | 7.3.33-24 | 7.3.33-25 |
+| [7.4](https://blog.remirepo.net/post/2022/11/29/PHP-7.4-is-retired) | 8–10 | 7.4.33-31 | 7.4.33-32 and EL10 7.4.33-33 |
+| [8.0](https://blog.remirepo.net/post/2023/11/27/PHP-8.0-is-retired) | 8–10 | 8.0.30-21 | 8.0.30-22 and EL10 8.0.30-23 |
+| [8.1](https://blog.remirepo.net/post/2026/01/08/PHP-8.1-is-retired) | 8–10 | 8.1.34-6 | 8.1.34-7 and EL10 8.1.34-8 |
+
+The November package assessment reflects Remi's published defaults for
+CVE-2026-115560. An explicit upload-progress override requires application
+and handler review. [Remi 8.1 backport changelog](https://github.com/remicollet/php-src-security/blob/PHP-8.1-security-backports/NEWS)
+
 The [Sury evidence](sury-backport-evidence.md#24-november-mirror-refresh) records
 the current mirror revisions and source checks.
 

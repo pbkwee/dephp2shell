@@ -69,6 +69,84 @@ p2s_version_package_state php7.4-fpm 7.4.3-4ubuntu2.29+esm6 "$vendor" amd64
         expected_jammy = list('YNYNYNYNN?')
         self.assertEqual(result.splitlines(), expected_resolute_stonking + expected_jammy + ['N'])
 
+    def test_stackx_reporting_keeps_unreviewed_revisions_out_of_fix_status(self):
+        out = self.shell(r'''
+P2S_MODE=check; P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=10.13
+P2S_NOVEMBER=true
+version=5.6.40-77+0~20240606.85+debian10~1.gbpd4d5eb+sxphp.20261119.1
+vendor='Debian PHP Maintainers'
+printf '%s\n' "php5.6-cli|$version|amd64|$vendor" "php5.6-fpm|$version|amd64|$vendor" \
+    "php7.3-cli|7.3.31-1~deb10u7|amd64|$vendor" "php8.1-cli|8.1.29-1|arm64|$vendor" \
+    "php8.4-fpm|8.4.27-1|amd64|$vendor" > "$P2S_WORK/packages"
+printf '%s\n' "php5.6-cli|$version|amd64|php5.6|$version" \
+    "php5.6-fpm|$version|amd64|php5.6|$version" \
+    "php7.3-cli|7.3.31-1~deb10u7|amd64|php7.3|7.3.31-1~deb10u7" > "$P2S_WORK/deb-source-records"
+p2s_command_run() { [ "$2" = dpkg-query ] && [ "$3" = -L ]; }
+p2s_package_inventory_assess
+p2s_summary_print_versions
+for P2S_NOVEMBER in false true; do
+    result=$(p2s_version_package_state php8.5-cli 8.5.13-1+sxphp.20261125.1 "$vendor" amd64)
+    printf 'STATE|%s|%s\n' "$P2S_NOVEMBER" "$result"
+done
+''')
+        self.assertIn('Package publisher hint: StackX.', out)
+        self.assertIn('package_state:beforefix|php5.6-cli|?', out)
+        self.assertIn('package_state:beforefix|php7.3-cli|Y', out)
+        reports = [line for line in out.splitlines() if 'stackx_published_build:' in line]
+        self.assertEqual(len(reports), 2)
+        self.assertIn('buster|php5.6|amd64|5.6.40-77+0~20240606.85+debian10~1.gbpd4d5eb+sxphp.20261124.1|', reports[0])
+        self.assertIn('buster|php7.3|amd64|7.3.33-19+0~20240606.119+debian10~1.gbp87e0d7+sxphp.20261124.1|', reports[1])
+        self.assertIn('STATE|false|?', out)
+        self.assertIn('STATE|true|?', out)
+
+    def test_stackx_reporting_selects_the_debian_suite(self):
+        out = self.shell(r'''
+P2S_BACKEND=deb
+printf '%s\n' \
+    '7.4.33|?|PHP-FPM|||7.4.33-1|?|package||php7.4-fpm||amd64' \
+    '8.5.11|?|PHP-FPM|||8.5.11-1|?|package||php8.5-fpm||amd64' \
+    '8.3.37|N|PHP-FPM|||8.3.37-1|N|package||php8.3-fpm||amd64' > "$P2S_WORK/summary-versions"
+P2S_DISTRO=debian; P2S_RELEASE=9.13; p2s_stackx_report
+P2S_RELEASE=11.11; p2s_stackx_report
+P2S_RELEASE=8.11; p2s_stackx_report
+P2S_DISTRO=ubuntu; P2S_RELEASE=10.04; p2s_stackx_report
+P2S_DISTRO=debian; P2S_RELEASE=11; P2S_MODE=fix; p2s_stackx_report
+''')
+        reports = [line for line in out.splitlines() if 'stackx_published_build:' in line]
+        self.assertEqual(len(reports), 3)
+        self.assertIn('stretch|php7.4|amd64|1:7.4.30-3+', reports[0])
+        self.assertIn('bullseye|php7.4|amd64|1:7.4.33-31+', reports[1])
+        self.assertIn('bullseye|php8.5|amd64|8.5.12-1+', reports[2])
+
+    def test_stackx_november_status_requires_the_exact_reviewed_binary_and_source(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=11.11
+for branch in php8.3 php8.4 php8.5; do
+    version=$(p2s_stackx_published_build bullseye "$branch")
+    p2s_version_package_state "$branch-fpm" "$version" Debian amd64 "$branch" "$version"
+    p2s_version_package_state "$branch-fpm" "$version" Debian amd64 "$branch" "$version+b1"
+    p2s_version_package_state "$branch-fpm" "$version" Debian arm64 "$branch" "$version"
+    later=${version%.1}.2
+    p2s_version_package_state "$branch-fpm" "$later" Debian amd64 "$branch" "$later"
+done
+P2S_RELEASE=10.13
+p2s_version_package_state php8.5-fpm "$version" Debian amd64 php8.5 "$version"
+for suite in stretch buster bullseye; do
+    case "$suite" in stretch) P2S_RELEASE=9.13 ;; buster) P2S_RELEASE=10.13 ;; bullseye) P2S_RELEASE=11.11 ;; esac
+    for branch in php5.6 php7.0 php7.1 php7.2 php7.3 php7.4 php8.0 php8.1 php8.2 php8.3 php8.4 php8.5; do
+        version=$(p2s_stackx_published_build "$suite" "$branch") || continue
+        p2s_version_package_state "$branch-fpm" "$version" Debian amd64 "$branch" "$version"
+        p2s_version_package_state "$branch-fpm" "$version" Debian amd64 "$branch" "$version+b1"
+        p2s_version_package_state "$branch-fpm" "$version" Debian arm64 "$branch" "$version"
+        later=${version%.1}.2
+        p2s_version_package_state "$branch-fpm" "$later" Debian amd64 "$branch" "$later"
+    done
+done
+P2S_RELEASE=11.11; P2S_NOVEMBER=false
+p2s_version_package_state php8.5-fpm "$version" Debian amd64 php8.5 "$version"
+''')
+        self.assertEqual(out.splitlines(), list('N???' * 3 + '?' + 'N???' * 30 + '?'))
+
     def test_extended_support_versions_keep_source_and_release_boundaries(self):
         result = self.shell(r'''
 P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
@@ -247,6 +325,182 @@ p2s_freexian_signed_indexes; printf 'OTHER_KEY_RC=%s\n' "$?"
             'fixture_elts=7.3.31-1~deb10u19; fixture_native=7.3.31-1~deb10u18')
         self.assertIn('CANDIDATE_RC=0|VERSION=7.3.31-1~deb10u18', out)
 
+    def test_stackx_candidate_requires_manual_review(self):
+        out = self.freexian_candidate(
+            'P2S_FREEXIAN_ACTIVE=false; P2S_FREEXIAN_SIGNED_SUITES=""; '
+            'fixture_uri=https://mirrors.scalarx.net/stackx-php/buster/repo; '
+            'fixture_origin=ScalarX; fixture_label=ScalarX; fixture_suite=buster; '
+            'fixture_elts=7.3.33-19+0~20240606.119+debian10~1.gbp87e0d7+sxphp.20261124.1')
+        self.assertIn('APT selected a StackX build for php7.3-cli', out)
+        self.assertIn('CANDIDATE_RC=1|VERSION=', out)
+
+    def stackx_plan(self, changes='', run='p2s_package_deb_update stackx'):
+        return self.shell(r'''
+P2S_NOVEMBER=true; P2S_ALLOW_STACKX=true; P2S_MODE=check
+P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_PANEL=none
+P2S_REPOSITORY_REFRESH=refreshed; P2S_RELEASE=10.13
+P2S_PHP_SOURCE_BRANCHES=php5.6
+suite=buster; branch=php5.6; old=5.6.40-1; arch=amd64; native_arch=amd64
+duplicate=false; tamper=false; removal=false; configured=true; broad_pin=false; unreviewed=false
+fixture_fingerprint=AF97ED98AACE4CE129A03B6E2C9736B593BABF7F
+''' + changes + r'''
+fixture_name=$branch-cli
+fixture_arch=$arch
+fixture_version=$(p2s_stackx_published_build "$suite" "$branch")
+if $unreviewed; then fixture_version=${fixture_version%.1}.2; fi
+url=https://mirrors.scalarx.net/stackx-php/$suite/repo
+mkdir -p "$P2S_WORK/var/lib/apt/lists" "$P2S_WORK/etc/apt/keyrings" "$P2S_WORK/etc/apt/sources.list.d"
+if $configured; then
+    touch "$P2S_WORK/etc/apt/keyrings/stackx-php.gpg"
+    printf 'deb [signed-by=%s/etc/apt/keyrings/stackx-php.gpg] %s ./\n' "$P2S_WORK" "$url" > "$P2S_WORK/etc/apt/sources.list.d/stackx.list"
+fi
+prefix="$P2S_WORK/var/lib/apt/lists/mirrors.scalarx.net_stackx-php_${suite}_repo_._"
+digest=$(printf fixture-deb | sha256sum); digest=${digest%% *}
+printf 'Package: %s\nVersion: %s\nArchitecture: %s\nSource: %s\nProvides: phpapi-20131226\nSHA256: %s\n' \
+    "$fixture_name" "$fixture_version" "$fixture_arch" "$branch" "$digest" > "${prefix}Packages"
+printf '\nPackage: php-common\nVersion: 99\nArchitecture: all\nSHA256: %s\n' "$digest" >> "${prefix}Packages"
+index_hash=$(sha256sum "${prefix}Packages"); index_hash=${index_hash%% *}
+printf 'Origin: ScalarX PHP\nLabel: ScalarX PHP\nSuite: %s\nSHA256:\n %s 1 Packages\n' "$suite" "$index_hash" > "${prefix}InRelease"
+if $tamper; then printf '\n' >> "${prefix}Packages"; fi
+gzip -c "${prefix}Packages" > "$P2S_WORK/fixture-Packages.gz"
+printf '%s\n' "$fixture_name|$old|$fixture_arch|Debian PHP Maintainers" 'php-cli|2:76|all|Debian' > "$P2S_WORK/packages"
+printf '%s\n' "$fixture_name|$old|$fixture_arch|$branch|$old" > "$P2S_WORK/deb-source-records"
+p2s_package_deb_preflight() { :; }
+p2s_package_deb_sury_trust_preflight() { :; }
+p2s_package_deb_refresh_indexes() { P2S_REPOSITORY_REFRESH=refreshed; }
+p2s_fix_preflight() { :; }
+p2s_backports_verify_key() { [ "$2" = AF97ED98AACE4CE129A03B6E2C9736B593BABF7F ]; }
+p2s_apt_source_download() {
+    case "$1" in
+        */stackx-repository.asc) printf 'fixture key\n' > "$2" ;;
+        */InRelease) cp "${prefix}InRelease" "$2" ;;
+        */Packages.gz) cp "$P2S_WORK/fixture-Packages.gz" "$2" ;;
+        *) return 97 ;;
+    esac
+}
+p2s_command_run() {
+    case " $* " in
+        *' apt-config shell lists '*) printf "lists='%s/var/lib/apt/lists/'\n" "$P2S_WORK" ;;
+        *' apt-config shell main '*) printf "main='%s/etc/apt/preferences'\nparts='%s/etc/apt/preferences.d/'\n" "$P2S_WORK" "$P2S_WORK" ;;
+        *' apt-config shell method '*) printf "method='/usr/lib/apt/methods/'\n" ;;
+        *' dpkg-query '*' apt '*) printf '1.8.2\n' ;;
+        *' dpkg --print-architecture '*) printf '%s\n' "$native_arch" ;;
+        *' gpgv '*" --output $P2S_WORK/stackx-release "*)
+            cp "${prefix}InRelease" "$P2S_WORK/stackx-release"
+            printf '[GNUPG:] VALIDSIG %s\n' "$fixture_fingerprint" ;;
+        *' gpg '*' --dearmor '*) cat ;;
+        *' sha256sum '*|*' gzip '*) shift; "$@" ;;
+        *' apt-cache '*' policy ') printf ' 500 %s ./ Packages\n' "$url" ;;
+        *' apt-cache '*" policy php-common $fixture_name ")
+            pin=-1; if $broad_pin; then pin=500; fi
+            printf 'php-common:\n  Version table:\n     99 %s\n        500 %s ./ Packages\n' "$pin" "$url" ;;
+        *' apt-cache '*" policy $fixture_name:$fixture_arch ")
+            printf ' Installed: %s\n Candidate: %s\n Version table:\n    %s 500\n        500 %s ./ Packages\n' "$old" "$fixture_version" "$fixture_version" "$url"
+            if $duplicate; then printf '        500 https://other.invalid/php ./ Packages\n'; fi ;;
+        *' apt-cache '*' show '*) sed '/^$/q' "${prefix}Packages" ;;
+        *' dpkg-query '*'Provides'*) printf 'phpapi-20131226\n' ;;
+        *' apt-get -s '*)
+            printf 'SIMULATE:%s\n' "$*" >> "$P2S_WORK/calls"
+            printf 'Inst %s [%s] (%s ScalarX PHP:%s [%s])\n' "$fixture_name" "$old" "$fixture_version" "$suite" "$fixture_arch"
+            if $removal; then printf 'Remv php-cli [2:76]\n'; fi ;;
+        *' apt-get -y '*)
+            [ -n "$P2S_BACKPORTS_ARCHIVE_GUARD" ] && grep -Fxq "$digest" "$P2S_WORK/backports-download-sha256" || return 97
+            printf 'INSTALL:%s\n' "$*" >> "$P2S_WORK/calls" ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" | tee -a "$P2S_WORK/calls" >&2; return 97 ;;
+    esac
+}
+''' + run + r'''
+printf 'STACKX_RC=%s\n' "$?"
+if [ -r "$P2S_WORK/calls" ]; then cat "$P2S_WORK/calls"; fi
+p2s_stackx_cleanup_added_repository
+if [ -f "$P2S_WORK/etc/apt/sources.list.d/dephp2shell-stackx.list" ]; then
+    printf 'MANAGED_SOURCE\n'
+    cat "$P2S_WORK/etc/apt/preferences.d/dephp2shell-stackx.pref"
+fi
+''', isolated_sources=True)
+
+    def test_stackx_plans_signed_same_branch_upgrades_on_all_supported_suites(self):
+        for release, suite, branch, old in (
+            ('9.13', 'stretch', 'php7.2', '7.2.34-1'),
+            ('10.13', 'buster', 'php5.6', '5.6.40-1'),
+            ('11.11', 'bullseye', 'php8.5', '8.5.11-1'),
+        ):
+            with self.subTest(suite=suite):
+                out = self.stackx_plan(
+                    f'P2S_RELEASE={release}; suite={suite}; branch={branch}; '
+                    f'P2S_PHP_SOURCE_BRANCHES={branch}; old={old}'
+                )
+                self.assertIn(f'stackx_repository:beforefix|{suite}|signature=', out)
+                self.assertIn(f'provider_switch:beforefix|{branch}-cli|amd64|{old}|', out)
+                self.assertRegex(out, rf'(?m)^SIMULATE:.*{branch}-cli:amd64=.* php-cli=2:76$')
+                self.assertIn('STACKX_RC=0', out)
+                self.assertNotIn('INSTALL:', out)
+        out = self.stackx_plan('P2S_MODE=fix')
+        self.assertIn('INSTALL:', out)
+        self.assertIn('APT installed the selected StackX PHP builds', out)
+        self.assertIn('STACKX_RC=0', out)
+
+    def test_stackx_refuses_unapproved_packages_sources_and_suites(self):
+        for changes in ('tamper=true', 'fixture_fingerprint=wrong', 'duplicate=true', 'removal=true',
+                        'unreviewed=true', 'unreviewed=true; configured=false',
+                        'arch=arm64', 'native_arch=arm64', 'P2S_RELEASE=8.11', 'P2S_PHP_SOURCE_BRANCHES=php5.6,php7.3'):
+            with self.subTest(changes=changes):
+                out = self.stackx_plan('P2S_MODE=fix; ' + changes)
+                self.assertIn('STACKX_RC=1', out)
+                self.assertNotIn('INSTALL:', out)
+                self.assertNotIn('UNEXPECTED administrative command:', out)
+
+    def test_stackx_recommendation_carries_the_simulated_branch_scope(self):
+        out = self.stackx_plan(run=r'''
+P2S_ALLOW_STACKX=false; P2S_PHP_SOURCE_BRANCHES=
+printf '%s\n' '5.6.40|?|command line||Debian|5.6.40-1|?|package||php5.6-cli||amd64' > "$P2S_WORK/summary-versions"
+p2s_stackx_recommendation
+''')
+        self.assertIn('source_add_scope:beforefix|stackx|php5.6', out)
+        self.assertIn('fix_recommendation:beforefix|stackx|options=--fix --enable-extra-fixes --use-stackx --php-source-branches=php5.6|', out)
+        self.assertNotIn('INSTALL:', out)
+
+    def test_stackx_offers_signed_source_setup_without_mutating_a_check(self):
+        out = self.stackx_plan('configured=false', run=r'''
+P2S_ALLOW_STACKX=false; P2S_PHP_SOURCE_BRANCHES=
+printf '%s\n' '5.6.40|?|command line||Debian|5.6.40-1|?|package||php5.6-cli||amd64' > "$P2S_WORK/summary-versions"
+p2s_stackx_recommendation
+''')
+        self.assertIn('fix_recommendation:beforefix|stackx|options=--fix --enable-extra-fixes --use-stackx --php-source-branches=php5.6|', out)
+        self.assertIn('Fix mode configures the repository', out)
+        self.assertNotIn('MANAGED_SOURCE', out)
+        self.assertNotIn('INSTALL:', out)
+
+    def test_stackx_configures_scoped_source_and_rolls_back_before_install(self):
+        changes = 'P2S_MODE=fix; configured=false'
+        out = self.stackx_plan(changes)
+        self.assertIn('repository_change:beforefix|StackX|added=buster|', out)
+        self.assertIn('INSTALL:', out)
+        self.assertIn('MANAGED_SOURCE\nPackage: php5.6-cli:amd64', out)
+        self.assertIn('Pin-Priority: -1', out)
+        self.assertNotIn('Package: php-common', out.split('MANAGED_SOURCE\n')[1])
+        for failure in ('removal=true', 'broad_pin=true'):
+            with self.subTest(failure=failure):
+                out = self.stackx_plan(f'{changes}; {failure}')
+                self.assertIn('StackX|new_file_removed|no_installation_attempt', out)
+                self.assertNotIn('MANAGED_SOURCE', out)
+                self.assertNotIn('INSTALL:', out)
+
+    def test_stackx_cli_requires_scope_branches_and_explicit_consent(self):
+        out = self.shell(r'''
+p2s_main() { printf 'MAIN|%s|%s|%s\n' "$1" "$P2S_ALLOW_STACKX" "$P2S_PHP_SOURCE_BRANCHES"; }
+p2s_cli --use-stackx --output machine 2>&1; printf 'SCOPE=%s\n' "$?"
+p2s_cli --november-2026 --use-stackx --enable-extra-fixes --output machine 2>&1; printf 'BRANCHES=%s\n' "$?"
+p2s_cli --november-2026 --use-stackx --php-source-branches=php5.6 --output machine 2>&1; printf 'CONSENT=%s\n' "$?"
+p2s_cli --november-2026 --use-stackx --enable-extra-fixes --allow-freexian --php-source-branches=php5.6 \
+    --output machine 2>&1; printf 'CONFLICT=%s\n' "$?"
+DP2S_USE_STACKX=true p2s_cli --check --november-2026 --enable-extra-fixes --php-source-branches=php5.6,php7.3 --output machine
+''')
+        for reason in ('SCOPE', 'BRANCHES', 'CONSENT', 'CONFLICT'):
+            self.assertIn(f'{reason}=64', out)
+        self.assertEqual([line for line in out.splitlines() if line.startswith('MAIN|')],
+                         ['MAIN|--check|true|php5.6,php7.3'])
+
     def test_private_freexian_policy_reports_package_matches_without_the_token(self):
         out = self.shell(r'''
 P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=10.13
@@ -418,6 +672,183 @@ if p2s_backports_verify_indexes buster; then exit 7; fi
         self.assertIn('downloaded packages differ', out)
         self.assertIn('Backports index differs from the reviewed SHA256 snapshot', out)
 
+    def test_signed_backports_index_can_change_around_unchanged_reviewed_archives(self):
+        out = self.shell(r'''
+index="$P2S_WORK/index-sury_binary-amd64_Packages"
+version=7.4.33-38+debsuryorg12.1+1+ubuntu20.04+animaa1
+version=1:$version
+hash=$(printf '%064d' 3); other=$(printf '%064d' 4)
+printf 'Package: php7.4-cli\nVersion: %s\nArchitecture: amd64\nSHA256: %s\n\n' "$version" "$hash" > "$index"
+cohort=$(printf 'php7.4-cli|%s|amd64|sury|%s\n' "$version" "$hash" | sha256sum); cohort=${cohort%% *}
+p2s_backports_artifact_sha256() { [ "$*" = 'focal sury amd64' ] && printf '%s\n' "$cohort"; }
+p2s_command_run() { [ "$2" = sha256sum ] && shift && "$@"; }
+printf 'Package: unrelated\nVersion: 1\nArchitecture: amd64\nSHA256: %s\n' "$other" >> "$index"
+signed_release() {
+    digest=$(sha256sum "$index")
+    printf 'SHA256:\n %s %s sury/binary-amd64/Packages\n' "${digest%% *}" "$(wc -c < "$index")" > "$P2S_WORK/backports-release"
+}
+signed_release
+p2s_backports_verify_indexes focal "$P2S_WORK/index-" || exit 1
+p2s_backports_candidate_sha256 php7.4-cli "$version" amd64 sury || exit 2
+if p2s_backports_candidate_sha256 unrelated 1 amd64 sury; then exit 3; fi
+sed -i "s/$hash/$other/" "$index"
+if p2s_backports_verify_indexes focal "$P2S_WORK/index-"; then exit 4; fi
+signed_release
+if p2s_backports_verify_indexes focal "$P2S_WORK/index-"; then exit 5; fi
+rm "$P2S_WORK/backports-release"
+if p2s_backports_verify_indexes focal "$P2S_WORK/index-"; then exit 6; fi
+''')
+        self.assertIn('backports_artifact_set:beforefix|focal|sury|amd64|verified=', out)
+        self.assertIn('does not match the signed release', out)
+        self.assertIn('reviewed package set could not be verified', out)
+
+    def test_leftover_native_php_uses_the_original_advisory_without_changing_update_scope(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
+old=7.0.32-0ubuntu0.16.04.1
+fixed=7.0.33-0ubuntu0.16.04.16+esm23
+printf '%s\n' "php7.0-cli|$old|amd64|Ubuntu Developers" "php7.0-common|$fixed|amd64|Ubuntu Developers" \
+    "php7.0-cgi|$old+local|amd64|Ubuntu Developers" "php7.0-fpm|$old|amd64|Ubuntu Developers" \
+    'php7.3-cli|7.3.31-1~deb10u7|amd64|Debian PHP Maintainers' > "$P2S_WORK/packages"
+awk -F'|' '{split($1,n,"-"); print $1 "|" $2 "|" $3 "|" ($1=="php7.0-fpm" ? "wrong-source" : n[1]) "|" $2}' \
+    "$P2S_WORK/packages" > "$P2S_WORK/deb-source-records"
+p2s_package_release_report
+p2s_package_inventory_assess
+P2S_RELEASE=22.04
+printf '%s\n' 'php7.4-cli|7.4.3-4ubuntu2.29|amd64|Ubuntu Developers' \
+    'php7.4-common|7.4.3-4ubuntu2.29+esm6|amd64|Ubuntu Developers' > "$P2S_WORK/packages"
+awk -F'|' '{print $1 "|" $2 "|" $3 "|php7.4|" $2}' "$P2S_WORK/packages" > "$P2S_WORK/deb-source-records"
+p2s_package_release_report
+p2s_package_inventory_assess
+P2S_RELEASE=18.04
+printf 'CANDIDATE_SCOPE=%s %s\n' "$P2S_DISTRO" "$P2S_RELEASE"
+p2s_version_package_state php7.0-cli "$old" 'Ubuntu Developers' amd64 php7.0 "$old"
+''')
+        self.assertIn('package_state:beforefix|php7.0-cli|Y', out)
+        self.assertIn('package_state:beforefix|php7.0-common|N', out)
+        self.assertIn('package_state:beforefix|php7.0-cgi|?', out)
+        self.assertIn('package_state:beforefix|php7.0-fpm|?', out)
+        self.assertIn('package_state:beforefix|php7.3-cli|Y', out)
+        self.assertIn('build=ubuntu 16.04|host=ubuntu 18.04|scope=installed_assessment', out)
+        self.assertIn('package_state:beforefix|php7.4-cli|Y', out)
+        self.assertIn('package_state:beforefix|php7.4-common|N', out)
+        self.assertIn('build=ubuntu 20.04|host=ubuntu 22.04|scope=installed_assessment', out)
+        self.assertTrue(out.endswith('CANDIDATE_SCOPE=ubuntu 18.04\n?\n'))
+
+    def test_leftover_removal_preview_identifies_reverse_dependencies(self):
+        out = self.shell(r'''
+P2S_BACKEND=deb; P2S_MODE=check
+p2s_command_run() {
+    case "$*" in
+        '30 apt-get -s '*" remove -- php7.0-cli php7.0-common")
+            printf '%s\n' 'Remv php7.0-cli [7.0.32]' 'Remv php7.0-common [7.0.32]' 'Remv php-mcrypt [1:7.0+35ubuntu6.1]' ;;
+        *) printf 'UNEXPECTED: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+p2s_deb_leftover_removal_preview php7.0 'php7.0-cli, php7.0-common'
+P2S_MODE=fix
+p2s_deb_leftover_removal_preview php7.0 'php7.0-cli, php7.0-common'
+''')
+        self.assertEqual(out.count('package_release_removal_preview:beforefix|php7.0|simulation_only'), 1)
+        self.assertIn('includes other package changes (php-mcrypt)', out)
+        self.assertNotIn('UNEXPECTED', out)
+
+    def test_backports_offer_checks_signed_index_and_complete_branch(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
+P2S_MODE=check; P2S_STATE=Y; P2S_REPOSITORY_REFRESH=refreshed
+P2S_BACKPORTS_ADD_KEYRING="$P2S_WORK/reviewed.gpg"
+old=7.2.24-0ubuntu0.18.04.17
+new=7.2.34-71+debsuryorg12.1+1+ubuntu18.04+animaa1
+helper=2:106~exp1+debsuryorg12.1+1+animaa1
+printf '%s\n' "php7.2-cli|$old|amd64|Ubuntu" "php7.2-xml|$old|amd64|Ubuntu" \
+    'php-common|1:60ubuntu1|all|Ubuntu' > "$P2S_WORK/packages"
+printf '%s\n' "php7.2-cli|$old|amd64|php7.2|$old" "php7.2-xml|$old|amd64|php7.2|$old" \
+    'php-common|1:60ubuntu1|all|php-defaults|60ubuntu1' > "$P2S_WORK/deb-source-records"
+payload_hash=$(printf '%064d' 9)
+p2s_apt_source_download() {
+    case "$1" in
+        */InRelease) : > "$2"; printf '%s\n' release > "$2" ;;
+        */Packages.gz) gzip -c "$P2S_WORK/fixture-Packages" > "$2" ;;
+        *) return 1 ;;
+    esac
+}
+p2s_backports_verify_release() {
+    [ "$1" = bionic ] && [ "$3" = "$P2S_BACKPORTS_ADD_KEYRING" ] && "$valid_signature"
+}
+p2s_backports_index_sha256() { [ "$*" = 'bionic sury amd64' ] && printf '%s\n' "$reviewed"; }
+p2s_command_run() { case "$2" in gzip|sha256sum) shift; "$@" ;; *) return 97 ;; esac; }
+p2s_package_deb_preflight() { return 0; }
+p2s_package_deb_sury_trust_preflight() { return 0; }
+p2s_november_apt_route() { return 1; }
+p2s_repository_repair_assess() { return 1; }
+p2s_backports_missing_components() { [ "$1" = bionic ] && printf 'sury\n'; }
+p2s_backports_add_preflight() { P2S_BACKPORTS_ADD_KEYRING="$P2S_WORK/reviewed.gpg"; }
+for scenario in not_reviewed missing_helper wrong_signer good; do
+    rm -f "$P2S_WORK"/backports-preview-bionic-sury-*
+    for name in php7.2-cli php7.2-xml; do
+        printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nSHA256: %s\n\n' "$name" "$new" "$payload_hash"
+    done > "$P2S_WORK/fixture-Packages"
+    if [ "$scenario" != missing_helper ]; then
+        printf 'Package: php-common\nVersion: %s\nArchitecture: all\nSHA256: %s\n' "$helper" "$payload_hash" >> "$P2S_WORK/fixture-Packages"
+    fi
+    reviewed=$(sha256sum "$P2S_WORK/fixture-Packages"); reviewed=${reviewed%% *}
+    valid_signature=true
+    if [ "$scenario" = not_reviewed ]; then reviewed=$payload_hash; fi
+    if [ "$scenario" = wrong_signer ]; then valid_signature=false; fi
+    printf 'SCENARIO=%s\n' "$scenario"
+    p2s_november_apt_update
+done
+''', isolated_sources=True)
+        self.assertIn('Backports index differs from the reviewed SHA256 snapshot', out)
+        self.assertIn('no eligible equivalent for php-common (all)', out)
+        before_good, good = out.split('SCENARIO=good\n')
+        option = 'fix_recommendation:beforefix|debian_php_backports|'
+        self.assertNotIn(option, before_good)
+        self.assertIn(option, good)
+
+    def test_bionic_backports_approves_only_the_reviewed_php_common_dependency(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=deb; P2S_DISTRO=ubuntu; P2S_RELEASE=18.04
+P2S_BACKPORTS_ACTIVE=true
+old=1:60ubuntu1
+new=2:106~exp1+debsuryorg12.1+1+animaa1
+uri=https://animaartificialis.github.io/debian-php-backports
+hash=$(printf '%064d' 3)
+printf ' 500 %s bionic/sury amd64 Packages\n     release o=debian-php-backports,a=bionic,n=bionic,l=debian-php-backports,c=sury,b=amd64\n' \
+    "$uri" > "$P2S_WORK/candidate-origins"
+printf 'php-common|%s|all|sury|%s\n' "$new" "$hash" > "$P2S_WORK/backports-binary-hashes"
+p2s_command_run() {
+    case " $* " in
+        *' policy php-common ')
+            printf 'php-common:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n        500 %s bionic/sury amd64 Packages\n' \
+                "$old" "$new" "$new" "$uri" ;;
+        *" show php-common=$new ")
+            printf 'Package: php-common\nVersion: %s\nArchitecture: all\nSource: %s (%s)\nSHA256: %s\n' \
+                "$new" "$fixture_source" "${new#*:}" "$fixture_hash" ;;
+        *) return 97 ;;
+    esac
+}
+fixture_source=php-defaults; fixture_hash=$hash
+p2s_package_deb_candidate php-common "$old" all false Ubuntu
+printf 'REVIEWED=%s|%s\n' "$?" "$P2S_DEB_CANDIDATE"
+cat "$P2S_WORK/backports-approved-sha256"
+fixture_source=unrelated
+p2s_package_deb_candidate php-common "$old" all false Ubuntu
+printf 'WRONG_SOURCE=%s\n' "$?"
+fixture_source=php-defaults; fixture_hash=$(printf '%064d' 4)
+p2s_package_deb_candidate php-common "$old" all false Ubuntu
+printf 'WRONG_HASH=%s\n' "$?"
+p2s_backports_package_build focal php-common all 2:75
+printf 'FOCAL=%s\n' "$?"
+''')
+        version = '2:106~exp1+debsuryorg12.1+1+animaa1'
+        self.assertIn(f'REVIEWED=0|{version}', out)
+        self.assertIn(f'php-common|{version}|all|{"3":0>64}', out)
+        self.assertIn('WRONG_SOURCE=1', out)
+        self.assertIn('WRONG_HASH=1', out)
+        self.assertIn('FOCAL=1', out)
+
     def test_freexian_recommendation_simulates_the_exact_branch_with_its_extensions(self):
         fixture = r'''
 cp "$P2S_WORK/candidate-origins" "$P2S_WORK/fixture-origins"
@@ -508,6 +939,7 @@ p2s_repository_sury_source_present() { return 0; }
 p2s_repository_repair_assess() { return 1; }
 p2s_backports_missing_components() { printf '%s\n' "$2"; }
 p2s_backports_add_preflight() { return 0; }
+p2s_backports_preview_source() { return 0; }
 p2s_disruptive_backports_add_repository() {
     printf 'ADD:%s:%s\n' "$*" "$(cut -d'|' -f1 "$P2S_WORK/apt-selected" | paste -sd, -)"
 }
@@ -553,6 +985,107 @@ p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.1 AlmaLinux x86_64
 p2s_version_package_state php-common 0:8.0.30-8.el9_8.1.alma.2 AlmaLinux x86_64
 ''')
         self.assertEqual(result.splitlines(), list('NN??NN??NN??YNNNNNNNYYN?'))
+
+    def test_native_el9_php80_backports_keep_stock_and_alma_revisions_separate(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_MAJOR=9; P2S_DISTRO=rocky
+vendor='Rocky Enterprise Software Foundation'
+for name in php php-common php-cli php-fpm; do
+    p2s_version_package_state "$name" 0:8.0.30-8.el9_9.2 "$vendor" x86_64
+done
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2 "$vendor" s390x
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2 "$vendor" i686
+p2s_version_package_state php-fpm 1:8.0.30-8.el9_9.2 "$vendor" x86_64
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2 'Other RPM publisher' x86_64
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2.alma.1 "$vendor" x86_64
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2.local "$vendor" x86_64
+P2S_DISTRO=almalinux
+p2s_command_run() {
+    case "$2:$3:$4" in
+        rpm:--eval:*"'8.el9_9.1', '8.el9_9.2'"*) printf '%s\n' -1 ;;
+        rpm:--eval:*"'8.el9_9.3', '8.el9_9.2'"*|rpm:--eval:*"'8.el9_8.1.alma.2', '8.el9_8.1.alma.1'"*) printf '1\n' ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >> "$P2S_WORK/unexpected"; return 97 ;;
+    esac
+}
+for build in 8.el9_8.1 8.el9_8.1.alma.1 8.el9_8.1.alma.2 8.el9_9.1 8.el9_9.2 8.el9_9.3; do
+    p2s_version_package_state php-fpm "0:8.0.30-$build" AlmaLinux aarch64
+done
+test ! -f "$P2S_WORK/unexpected"
+''')
+        self.assertEqual(result.splitlines(), list('NNNNN?????YNN?NN'))
+
+    def test_native_el_retired_streams_and_new_architectures(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=rocky; P2S_MAJOR=8
+vendor='Rocky Enterprise Software Foundation'
+for build in 7.2.24-1.module+el8.4.0+413+c9202dda 7.3.20-1.module+el8.4.0+414+2e7afcdd 8.0.30-1.module+el8.10.0+1605+02e07af7; do
+    p2s_version_package_state php-fpm "0:$build" "$vendor" aarch64
+done
+P2S_MAJOR=9
+p2s_version_package_state php-fpm 0:8.1.32-1.module+el9.7.0+40003+454ed3c4 "$vendor" s390x
+P2S_MAJOR=10
+p2s_version_package_state php-fpm 0:8.3.36-1.el10_2 "$vendor" riscv64
+p2s_version_package_state php8.4-fpm 0:8.4.27-2.el10_3.1 "$vendor" riscv64
+p2s_version_november_package_reference php8.4-fpm 0:8.4.28-1.el10_3 "$vendor" riscv64
+P2S_DISTRO=almalinux
+p2s_version_package_state php-fpm 0:8.3.36-1.el10_2.alma.1 AlmaLinux x86_64_v2
+p2s_version_package_state php8.4-fpm 0:8.4.27-2.el10_3.1.alma.1 AlmaLinux x86_64_v2
+P2S_MAJOR=9
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2 AlmaLinux x86_64_v2
+''')
+        self.assertEqual(result.splitlines(), list('YYYYYY') +
+                         ['8.4.27-2.el10_3.1|8.4.28-1.el10_3'] + list('NN?'))
+
+    def test_centos_stream_and_archived_stock_builds(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=centos
+P2S_MAJOR=6
+p2s_version_package_state php-cli 0:5.3.3-50.el6_10 CentOS x86_64
+P2S_MAJOR=7
+p2s_version_package_state php-fpm 0:5.4.16-48.el7 CentOS x86_64
+p2s_version_package_state php-fpm 0:5.4.16-48.el7.custom CentOS x86_64
+P2S_MAJOR=8
+p2s_version_package_state php-fpm 0:7.4.19-1.module_el8.5.0+815+1c4fd2e5 CentOS x86_64
+p2s_version_package_state php-fpm 0:8.2.13-1.module_el8+765+677b369c CentOS x86_64
+P2S_MAJOR=9
+for build in 8.0.30-9.el9 8.1.27-1.module_el9+790+4812d76d 8.2.35-1.module_el9+1447+c2e1e9ab 8.3.36-1.module_el9+1448+8542a8fd 8.4.27-1.module_el9+1449+ae7b4724; do
+    p2s_version_package_state php-fpm "0:$build" CentOS x86_64
+done
+p2s_version_package_state php-fpm 0:8.0.30-9.el9 'Other RPM publisher' x86_64
+p2s_version_package_state php-fpm 0:8.0.30-8.el9_9.2 CentOS x86_64
+P2S_MAJOR=10
+p2s_version_package_state php-fpm 0:8.3.36-1.el10 CentOS x86_64
+p2s_version_package_state php-fpm 0:8.3.37-1.el10 CentOS x86_64
+p2s_version_package_state php8.4-fpm 0:8.4.27-2.el10 CentOS x86_64
+p2s_version_package_state php8.4-fpm 0:8.4.28-1.el10 CentOS x86_64
+''')
+        self.assertEqual(result.splitlines(), list('?Y?YYYYYYY??YNYN'))
+
+    def test_remi_legacy_backports_match_publisher_build_and_package_family(self):
+        result = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=rocky; P2S_MAJOR=8
+vendor="Remi's RPM repository <https://rpms.remirepo.net/> #StandWithUkraine #NoAI"
+for entry in 7.2:7.2.34-31:7.2.34-32 7.3:7.3.33-24:7.3.33-25 7.4:7.4.33-31:7.4.33-32 8.0:8.0.30-21:8.0.30-22 8.1:8.1.34-6:8.1.34-7; do
+    branch=${entry%%:*}; previous=${entry#*:}; fixed=${previous#*:}; previous=${previous%%:*}
+    p2s_version_package_state php-fpm "0:$previous.module_php.$branch.el8.remi" "$vendor" x86_64
+    p2s_version_package_state php-common "0:$fixed.module_php.$branch.el8.remi" "$vendor" x86_64
+    p2s_version_package_state "php${branch/./}-php-cli" "0:$fixed.el8.remi" "$vendor" aarch64
+done
+p2s_version_package_state php-cli 0:8.1.34-7.module_php.8.1.el8.remi 'Other RPM publisher' x86_64
+p2s_version_package_state php-cli 0:8.1.34-7.module_php.8.1.el8.remi "$vendor" s390x
+p2s_version_package_state php81-php-cli 0:8.1.34-7.module_php.8.1.el8.remi "$vendor" x86_64
+p2s_version_package_state php-cli 0:8.1.34-7.el8.remi "$vendor" x86_64
+p2s_version_package_state php-cli 0:8.1.34-7.module_php.8.1.el8.remi.local "$vendor" x86_64
+P2S_MAJOR=9; P2S_DISTRO=almalinux
+p2s_version_package_state php-fpm 0:8.1.34-7.module_php.8.1.el9.remi "$vendor" aarch64
+p2s_version_package_state php-fpm 0:8.1.34-7.module_php.8.1.el8.remi "$vendor" x86_64
+P2S_MAJOR=10
+p2s_version_package_state php74-php-cli 0:7.4.33-33.el10.remi "$vendor" x86_64
+p2s_version_package_state php80-php-cli 0:8.0.30-23.el10.remi "$vendor" x86_64
+p2s_version_package_state php-fpm 0:8.1.34-8.module_php.8.1.el10.remi "$vendor" aarch64
+''')
+        self.assertEqual(result.splitlines(), list('YNN' * 5 + '?????N?NNN'))
+
 
     def test_native_rpm_comparison_preserves_release_and_publisher(self):
         result = self.shell(r'''

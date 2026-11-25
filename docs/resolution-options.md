@@ -425,10 +425,12 @@ bash dephp2shell.sh --fix --november-2026 --enable-extra-fixes \
     --add-debian-php-backports --php-source-branches=php5.6,php7.4
 ```
 
-The fix uses the matching HTTPS suite and a dedicated signing key. The signed
-package index must match a reviewed SHA256 snapshot. The update verifies the
-hashes of the package archives APT will install. A changed index requires a
-fresh review, even if APT still shows the same package versions. The fix
+The fix uses the matching HTTPS suite and a dedicated signing key. Before
+offering to add a missing source, the check looks for equivalent packages in
+the authenticated index. A changed index is usable when the reviewed package
+names, versions, architectures and archive SHA256 hashes still match. A
+same-version rebuild with different archive bytes requires fresh review.
+The update verifies the hashes of the actual archives APT will install. The fix
 simulates the approved PHP transaction before applying changes. Automatic
 setup requires APT 1.1 or newer and working HTTPS transport. The managed preference permits the exact reviewed versions of the
 approved installed packages. Review later community versions before changing
@@ -510,17 +512,100 @@ for that repository and the recommended PHP branches.
 | Ubuntu 20.04 Focal and 18.04 Bionic | PHP 7.4 and 7.2, respectively, from Ubuntu Pro. | Check subscribed Freexian PHP LTS. Community Backports publishes reviewed builds for 5.6, 7.2, and 7.4 on both releases. |
 | Ubuntu 16.04 Xenial and 14.04 Trusty | PHP 7.0 and 5.5, respectively, from Ubuntu Legacy. | Community Backports publishes reviewed builds for Xenial PHP 5.6, 7.3, and 7.4 and Trusty PHP 5.6 and 7.4. |
 | AlmaLinux 8, 9, and 10 | Prefer the installed AlmaLinux stream. Reviewed November builds cover 7.4 and 8.2 on EL8, 8.0 and 8.2–8.4 on EL9, and 8.3–8.4 on EL10. [AlmaLinux advisories](https://almalinux.org/blog/2026-11-19-php-security-release/) | For other branches, check the installed vendor's advisory or review a supported stream change. |
-| Rocky Linux 8, 9, and 10 | Prefer the installed Rocky Linux stream. Reviewed coverage includes 7.4 and 8.2 on EL8, 8.2–8.4 on EL9, and 8.4 on EL10. [Rocky Linux advisories](https://errata.rockylinux.org/) | Check the Rocky-specific build and architecture. EL9 PHP 8.0 and EL10 PHP 8.3 needed separate evidence in the checked indexes. |
-| CentOS Stream 9 and 10 | Prefer CentOS Stream AppStream. The checked binary indexes had no verified November stock PHP fix. [Stream 9 AppStream](https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/) · [Stream 10 AppStream](https://mirror.stream.centos.org/10-stream/AppStream/x86_64/os/Packages/) | Check the installed vendor, such as Remi, before planning a supported stream change. |
+| Rocky Linux 8, 9, and 10 | Prefer the installed Rocky Linux stream. Reviewed November builds cover 7.4 and 8.2 on EL8, 8.0 and 8.2–8.4 on EL9, and 8.3–8.4 on EL10. [Rocky Linux advisories](https://errata.rockylinux.org/) | Check the installed vendor and architecture. Where the native branch has retired, review a maintained stream or a verified fix from the installed publisher. |
+| CentOS Stream 9 and 10 | Stream 10 publishes fixed PHP 8.3 and 8.4. The checked Stream 9 packages predate the November release. [Stream 9 AppStream](https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/) · [Stream 10 AppStream](https://mirror.stream.centos.org/10-stream/AppStream/x86_64/os/Packages/) | Check the installed vendor, such as Remi, before planning a supported stream change. |
+| RHEL, Oracle Linux and Fedora | Prefer a verified build for the installed distribution and PHP stream. The checker recognises upstream fixed releases. Vendor backports below those releases require a matching reviewed rule. | Consult the publisher's advisory for the exact release and package. Fedora RPMs can be checked, but Fedora has no automatic update recipe. |
 | CentOS Linux 6–8 and CentOS Stream 8 | The distribution archives preserve historical PHP packages. Use an installed vendor with a verified fix or plan an OS migration. [CentOS lifecycles](https://www.centos.org/cl-vs-cs/) | Check the existing panel or PHP publisher, such as cPanel, CloudLinux, or TuxCare. |
 
-The community rows describe standard builds reviewed from `v2026.11.23.3`.
+The community rows describe standard builds reviewed from `v2026.11.25`.
 The project publishes amd64 packages for all listed targets and arm64 packages
 for its Buster and Focal targets. The script requires the canonical signed
 HTTPS feed. Old APT clients that cannot reach that endpoint need a manual
-plan. Some targets require a new shared library or `php-common`. The script
-can decline a build when the simulation changes packages outside the reviewed
-cohort. [Community packages and setup](https://github.com/animaartificialis/debian-php-backports#packages)
+plan. On Ubuntu 18.04 the stock `php-common` is below the minimum for the
+reviewed PHP packages. The fix verifies and pins the matching Backports
+`php-common` update when this stock package is installed. It stops if the
+simulation needs changes outside the approved cohort and verified dependencies.
+[Community release](https://github.com/animaartificialis/debian-php-backports/releases/tag/v2026.11.25)
+
+### Remi PHP on Enterprise Linux
+
+Keep Remi as the publisher for an existing Remi deployment. On a native PHP
+deployment, prefer the installed distro stream when it has a verified fix.
+Remi supplies additional maintained PHP branches on EL8–10 for x86_64 and
+aarch64 through `remi-modular` and parallel Software Collections in
+`remi-safe`. Its November versions include 8.2.36, 8.3.37, 8.4.28 and
+8.5.13. Remi also publishes 8.6.0 and selected backports for retired branches.
+Check the exact build and plan migration from retired branches to a maintained
+one. [Remi November releases](https://blog.remirepo.net/post/2026/11/19/PHP-version-8.2.36-8.3.37-8.4.28-8.5.13) · [Remi 8.6 release](https://blog.remirepo.net/post/2026/11/20/PHP-version-8.6-is-released)
+
+For an existing Remi PHP 8.1 stream, the same-branch `8.1.34-7` rebuild is
+the smaller application change. Its November session mitigation relies on
+`session.upload_progress.enabled` remaining off for affected applications.
+Review effective PHP-FPM and Apache settings when local configuration overrides
+the package defaults. [Remi PHP 8.1 backports](https://blog.remirepo.net/post/2026/01/08/PHP-8.1-is-retired) · [Backport changelog](https://github.com/remicollet/php-src-security/blob/PHP-8.1-security-backports/NEWS)
+
+On supported DNF4 systems, the script can install verified runtime libraries
+required by the PHP update. For example, Remi's `php-intl` can require
+`libicu78`. DNF omits weak additions such as `icu-tzdata`. Packages with
+unverified contents or publishers still require manual review.
+
+## Use the StackX PHP fallback
+
+StackX offers amd64 PHP 5.6 and 7.0–7.4 on Debian 9 Stretch, 10 Buster and
+11 Bullseye. Its main repositories also offer PHP 8.0–8.1 on Stretch, 8.0–8.3
+on Buster and 8.0–8.5 on Bullseye. The fallback covers those published branches
+on machines without a detected hosting panel. [StackX release notes](https://www.christophe-casalegno.com/en/contributions/stackx-php-maintenance-and-fixes-for-debian-9-10-11/)
+
+The StackX choice configures the matching repository when needed. It verifies
+the publisher signing fingerprint
+`AF97 ED98 AACE 4CE1 29A0 3B6E 2C97 36B5 93BA BF7F`, installs a dedicated keyring
+and creates an APT preference scoped to the selected installed PHP packages.
+It retains an existing signed StackX source and its settings. A new source,
+keyring and preference are removed if validation stops before installation.
+They are retained after an installation attempt so packages can be recovered.
+[StackX public key](https://mirrors.scalarx.net/stackx-php/stackx-repository.asc)
+
+A check inspects the signed candidate index when StackX needs setup and
+simulates the update when the source is already configured. Use `--fix` in
+the maintenance window to configure the repository and run the simulation
+before installing. The November patch page offers the same scoped choice.
+
+```sh
+sudo bash dephp2shell.sh --check --november-2026 --enable-extra-fixes \
+  --use-stackx --php-source-branches=php5.6,php7.3
+```
+
+`DP2S_USE_STACKX=true` is equivalent to `--use-stackx`. Run StackX on its own.
+APT must select the exact reviewed revisions from the canonical signed feed. The script
+matches the source package and PHP extension API, checks archive hashes and
+retains unselected PHP branches at their installed versions. If a plan needs
+an unapproved dependency, such as a StackX-supplied shared PCRE2 library, it
+stops before installing.
+
+Start with test hosts. After the update, rerun the November check and test the
+affected websites and scheduled jobs. [Reviewed StackX builds](stackx-backport-evidence.md)
+
+### Verify older-release packages and republished builds
+
+On Debian and Ubuntu, a package left over after an OS upgrade can still be
+assessed against the advisory for its original release when its native
+revision and installed source identity agree. The update still uses the
+running OS release when considering package sources. Review other PHP
+packages with uncertain origins using the complete source revision and a
+published advisory or a source comparison.
+
+For a higher-assurance check after a same-version rebuild, obtain the exact
+binary archive using a signed repository or publisher release manifest.
+Compare its SHA256 with the reviewed digest, extract it in a temporary
+directory with `dpkg-deb -x`, and compare the installed executable and
+security-relevant modules with those files. For a running service, check the
+executable or module mapped by the process too. A service can still be
+running the earlier file after a package update.
+
+For leftover PHP, review the recorded processes and enabled handlers, the
+default CLI and scheduled jobs. A check can simulate removal with APT and
+list packages that would be changed, including dependent packages. Use that
+plan to identify what must be migrated before removal.
 
 ## Add the Sury or PPA repository
 
@@ -766,10 +851,12 @@ using that library.
 This is part of ordinary `--fix`; no separate library option or
 `--enable-extra-fixes` permission is needed.
 
-The script must prove that the proposed library upgrade is required by the selected
-PHP packages or their necessary dependency chain. It permits only already-installed
-amd64 native packages from this reviewed list: `libpcre2-8-0`, `libonig5`,
-`libargon2-1`, `libxml2`, `libzip4`, `libzip5` and `libsodium23`.
+The script must prove that the proposed library is required by the selected
+PHP packages or their necessary dependency chain. APT identifies new runtime
+libraries through `Section: libs` in the authenticated package metadata and
+verifies the final archive hashes. An APT upgrade of an already-installed
+library still uses the reviewed amd64 list, including `libpcre2-8-0`,
+`libonig5`, `libargon2-1`, `libxml2`, `libzip4`, `libzip5` and `libsodium23`.
 
 Candidates come from the matching official native distribution sources through
 APT. An explicit Debian 11 Sury migration can additionally select Sury's
@@ -781,13 +868,13 @@ package URL. The supported dependency
 method covers Debian 11/12/13 and Ubuntu 22.04/24.04/26.04. Other selected methods
 still have their own OS limits. The script pins the approved normal candidate
 versions, repeats the simulation and checks the actual plan before installation.
+DNF4 uses the tested package's shared-library ABI, files and publisher to
+verify required additions from reviewed native repositories or `remi-safe`
+for installed Remi PHP. It skips weak dependencies.
 
-Fix mode **installs library updates**; it does not merely refresh a package list.
-It adds no source definition and permits no new packages, removals, replacements,
-downgrades, base-system library upgrades or RPM dependency repairs. A missing
-library is not permission to install it. A proposed upgrade outside the list stays
-blocked. Library holds remain in effect. `--check` only inspects cached plans;
-it does not install or upgrade libraries.
+Fix mode installs the approved libraries as part of the PHP update. APT package
+holds remain in effect. Review proposed removals, replacements, downgrades and
+other package changes separately. Use `--check` to inspect without installing.
 
 Package scripts can run, PHP/web services may be restarted, and other applications
 using these libraries need consideration. The tool does not restart every process
