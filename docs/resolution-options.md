@@ -2,7 +2,7 @@
 
 If a PHP security update cannot finish, these options let you choose what else may change on your server. Some finish an interrupted installation; others restore access to updates or switch the PHP package publisher. Each section starts with the purpose, then explains the files, downloads, service changes and risks.
 
-Start with `--check`, then use `--fix` to attempt an update through the server's existing PHP package sources. Read the specific blocker if that attempt cannot finish. When the script has no procedure, check the package publisher's maintained package routes or arrange a separate update procedure.
+Start with `--check` to identify who supplies each PHP installation. Review the [panel update paths](#hosting-panel-update-paths) first when a hosting panel manages PHP. Use `--fix` to attempt the supported update path. Read the specific blocker if that attempt cannot finish. When the script has no procedure, check the package publisher's maintained package routes or arrange a separate update procedure.
 
 Choose the smallest change that can leave every PHP installation patched. Updating one PHP branch does not fix another branch, and changing the default command-line PHP does not move individual websites or scheduled jobs.
 
@@ -10,12 +10,12 @@ Choose the smallest change that can leave every PHP installation patched. Updati
 
 | What the check reports | Next step |
 | --- | --- |
+| A hosting panel manages PHP | Check the [panel update paths](#hosting-panel-update-paths) for what `--fix` can do and which steps need an operator. |
 | Native distribution PHP with an available security update | Repair or enable the appropriate existing distribution security source, then retry. A third-party PHP source is unnecessary when the distribution supplies a fix. |
 | Older Ubuntu with fixes available through Ubuntu Pro or Legacy support | Review the required support entitlement and repositories. The script does not obtain or enable a subscription. |
 | A package-manager lock or broken repository access | Let an active package operation finish, or repair the reported repository problem, then retry. Keep signature and certificate checks enabled. |
 | Fixed packages installed, but old PHP processes remain | Replace the affected processes using their application's shutdown and restart procedure, then rerun `--check`. |
 | Supervisor or another application launcher cannot be restarted safely by the script | During maintenance, stop only the affected programs and confirm their PHP children stay stopped. Retry `--fix`, restore the programs even if patching fails, test them and rerun `--check`. |
-| A supported hosting panel owns PHP | Use the recognised panel update path. Check panel licences and updater failures. Panel updates can affect more than PHP. |
 | A package build has no verified fix rule | Obtain evidence for that exact package revision or update it to a verified fixed build. Vendor backports can retain older upstream numbers; check the complete package revision against the package publisher's fix information. |
 
 Existing Sury/ondrej packages can use a recognised fixed revision from their configured source and PHP branch.
@@ -386,12 +386,34 @@ Use the package and runtime results to verify every installed branch.
 
 ## November source choice by PHP branch
 
-Start with the publisher of the installed PHP packages. Keep the PHP branch
-and verify the signed OS suite, full fixed revision, and extensions. If the
-current publisher cannot supply a fix, check the distribution's native
-security feed, then consider an eligible Sury/ondrej update with consent.
-Freexian is the next option where it has a verified build or can supply one
-under a subscription. Community Debian PHP Backports is the last resort.
+Identify who manages each PHP installation. Start with the panel's update
+path for the PHP it supplies. Use the installed package publisher for
+separate system PHP, including binaries used by cron or the command line.
+
+### Hosting panel update paths
+
+`--check` inventories PHP and reports blockers. The `--fix` column describes
+what DePHP2Shell attempts when its prerequisites pass. Verify the running
+PHP and test the affected sites and jobs after an update.
+
+| Panel | PHP update source | What `--fix` handles | What the operator handles |
+| --- | --- | --- | --- |
+| cPanel | cPanel's security updater for internal PHP. Configured EasyApache 4 package repositories for EasyApache website PHP. [EasyApache 4 docs](https://docs.cpanel.net/ea4/basics/about-easyapache-4/) | On a supported install, runs `upcp --security`, then attempts to update installed website PHP packages through the package manager. Rechecks panel and website PHP separately. | Resolve licensing, update preferences, or package conflicts if the updater skips or fails. Review unsupported handlers and choose any site PHP version changes in WHM. |
+| Plesk | Plesk's component updater for Plesk-supplied PHP. A separate system or custom handler follows its own publisher. [Plesk update docs](https://docs.plesk.com/en-US/obsidian/administrator-guide/plesk-administration/plesk-updates.59215/) | Runs the Plesk Installer for installed components within the current supported Plesk release. The component update can also affect databases, mail, and web servers. | Review the wider component update and separately patch system or custom PHP still flagged by the check. |
+| DirectAdmin | DirectAdmin CustomBuild for the PHP branches it builds. [CustomBuild update docs](https://docs.directadmin.com/custombuild/upgrading-services.html) | Detects DirectAdmin and inventories PHP. The script blocks automatic changes on this setup. | Review the configured PHP branches and update them through CustomBuild. Check its version overrides and rebuild affected extensions as needed. |
+| Virtualmin | The installed distro or third-party repository supplies PHP through APT or DNF. Virtualmin selects the handler and version per site. [Virtualmin PHP docs](https://www.virtualmin.com/docs/server-components/configuring-multiple-php-versions/) | Attempts eligible package-managed PHP updates from the existing repositories and restarts supported services. Reports APT pins that can block Apache `mod_php` updates. | Review each site's PHP handler, resolve pins or source issues, and make any handler changes in Virtualmin. Update custom PHP builds separately. |
+
+CloudLinux or CageFS detection sends the setup to manual review, including on
+a host with a supported panel updater. Review the PHP publisher and the
+runtime copies each site actually uses.
+
+### Package-managed PHP sources
+
+Start with the installed publisher. Keep the PHP branch and verify the signed
+OS suite, full fixed revision, and extensions. If the current publisher
+cannot supply a fix, check the distro security feed and eligible alternatives.
+Sury/ondrej and Freexian may supply a compatible fix. Community Debian PHP
+Backports is the last resort and requires explicit consent.
 
 | OS | Native PHP and preferred source | Alternatives for installed non-native PHP |
 | --- | --- | --- |
@@ -408,7 +430,6 @@ under a subscription. Community Debian PHP Backports is the last resort.
 | Rocky Linux 8, 9, and 10 | Prefer the installed Rocky Linux stream. Reviewed coverage includes 7.4 and 8.2 on EL8, 8.2–8.4 on EL9, and 8.4 on EL10. [Rocky Linux advisories](https://errata.rockylinux.org/) | Check the Rocky-specific build and architecture. EL9 PHP 8.0 and EL10 PHP 8.3 needed separate evidence in the checked indexes. |
 | CentOS Stream 9 and 10 | Prefer CentOS Stream AppStream. The checked binary indexes had no verified November stock PHP fix. [Stream 9 AppStream](https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/) · [Stream 10 AppStream](https://mirror.stream.centos.org/10-stream/AppStream/x86_64/os/Packages/) | Check the installed vendor, such as Remi, before planning a supported stream change. |
 | CentOS Linux 6–8 and CentOS Stream 8 | The distribution archives preserve historical PHP packages. Use an installed vendor with a verified fix or plan an OS migration. [CentOS lifecycles](https://www.centos.org/cl-vs-cs/) | Check the existing panel or PHP publisher, such as cPanel, CloudLinux, or TuxCare. |
-| Hosting panels | Prefer the panel's PHP publisher and supported service procedure for its PHP packages. | Keep panel-managed and system PHP on their respective update paths. |
 
 The community rows describe standard builds reviewed from `v2026.11.23.3`.
 The project publishes amd64 packages for all listed targets and arm64 packages
