@@ -336,6 +336,11 @@ selectors. Verified necessary upgrades of reviewed installed native libraries ar
 other dependency changes still block the plan. Mixed panel-vendor and Sury Debian updates are refused before
 either updater runs.
 
+Ordinary APT checks and fixes can select a verified native PHP build at the
+same positive priority when APT would otherwise select Sury or ondrej. That
+transaction retains the other installed PHP packages at their exact current
+versions. APT can retry a failed acquisition once within the refresh deadline.
+
 Eligible PHP branches get verified fixes from their current publishers first.
 Only branches without a verified current-source fix can enter the separately
 authorized Sury migration phase. When APT prefers a competing publisher, a
@@ -422,6 +427,12 @@ was checked on 2026-11-01 and supplies PCRE2
 `10.40-1+0~20220713.16+debian11~1.gbpb6cec5`. Other applications may use this
 shared library; the migration message and option help disclose that impact.
 
+When APT includes an already-installed versioned PHP metapackage such as
+`php8.2`, the dependency guard can pin it to the same verified native build as
+the approved `php8.2-common` upgrade. The metapackage must retain its source package,
+PHP branch, and `all` architecture. The normal candidate must come exclusively
+from reviewed sources for the host's OS suite.
+
 APT simulation parsing accepts unchanged-selector messages and the trailing
 `[]` or `[php7.4-cli:amd64 ]` dependency annotations emitted while ordering
 upgrades. The exact `Use 'apt autoremove' to remove it.` and `remove them.` advice
@@ -449,8 +460,7 @@ in effect. After a migration install attempt, the files remain for recovery and
 future updates. There is no automatic package rollback.
 See [resolution options](resolution-options.md) for the customer-facing choices.
 
-The check collects source evidence without refreshing indexes, installing query
-tools or contacting package publishers:
+The repository inventory collects local source evidence before refreshing indexes:
 
 - `package_provider`: name, full revision, architecture, inferred package
   publisher, evidence type, unverified historical download origin and a static
@@ -674,7 +684,7 @@ native origin for the installed package. `dependency_installed` records installe
 identity, while a refusal also retains redacted `dependency_package_policy`.
 These checks identify declared package metadata, not historical download origin
 or the integrity of installed file contents.
-Check-mode assessments use cached metadata only and perform no package mutations.
+Check-mode simulations use the package lists fetched by the repository refresh.
 See the [operator limits and risks](resolution-options.md#allow-the-native-libraries-php-needs).
 
 ### Method flags
@@ -695,6 +705,7 @@ manifest method identifiers retain their existing internal names.
 
 | Method option | Environment setting | Status and limit |
 | --- | --- | --- |
+| [`--allow-freexian`](resolution-options.md#use-an-existing-freexian-repository) | `DP2S_ALLOW_FREEXIAN=true` | Requires November scope and explicit permission. Uses authenticated native Extended LTS packages on Debian 9, 10 or 11. |
 | [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | `DP2S_MIGRATE_PHP_TO_SURY=true` | Implemented. Keep reviewed package names, PHP branches, architecture and extension APIs; use authenticated normal candidates. |
 | [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | `DP2S_ADD_SURY_REPOSITORY=true` | Implemented. Adds a matching official source, verified dedicated key and scoped APT preference when a branch needs the fallback. |
 | [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | `DP2S_REFRESH_SURY_SIGNING_KEY=true` | Refresh only the standard package-owned Debian Sury signing keyring, with a verified fingerprint and persistent backup. No source rewrite; custom and extrepo layouts stay blocked. |
@@ -747,13 +758,20 @@ Function names are a review aid, not authorization.
 
 ### Check recommendations and recovery
 
-`p2s_fix_recommend_options` evaluates installed/cached evidence after normal local
-preflight. A cached call to the shared APT backend sets `P2S_MODE=check`, disables
-binary cache paths, skips refresh and source addition, and returns before install.
-Alternative assessments run in subshells and do not change current blocker keys.
-A proven dependency plan recommends ordinary `--fix`, including required native-library upgrades. Standard Sury key
-replacement requires local expiry/fingerprint evidence before recommendation.
-Missing-source suggestions remain explicitly conditional on future candidates.
+`--check` refreshes enabled APT, DNF or YUM repositories for managed PHP when
+the local checks permit repository access. APT writes its package lists and skips configured update hooks
+for this check. RPM queries use the refreshed cache, decline key prompts and
+record the result of `check-update` or DNF5 `check-upgrade`. Command names
+and exit codes remain available in the machine report.
+
+`p2s_fix_recommend_options` uses the metadata already on disk. The APT backend
+sets `P2S_MODE=check`, disables binary cache paths, skips source addition, and
+returns before installation. Alternative assessments run in subshells and leave
+current blocker keys intact. A successful refresh plus a current-publisher
+assessment showing no eligible fix allows Sury fallback suggestions. A failed
+refresh, query error or rejected dependency plan needs its own diagnosis.
+Standard Sury key replacement requires local expiry/fingerprint evidence.
+A missing-source suggestion also requires verifying its candidates in fix mode.
 
 After an unresolved fix, plain `--fix` recommendations are suppressed in both readable output and machine
 records. Fresh checks can still recommend a specific additional repair. When no
@@ -830,10 +848,9 @@ For ordinary Debian-based PHP updates, check mode also checks dpkg consistency
 and PHP package holds. Panel paths additionally require a recognised panel version
 and an installed vendor updater. Fix mode repeats these checks rather than
 trusting a saved assessment.
-Check mode does not refresh repository metadata, run a package transaction or
-restart services. Available fixed packages, support entitlements, repository
-access, dependency conflicts and successful service restarts remain unconfirmed
-until an update attempt. A missing disk-space tool prevents an optimistic
+Check mode refreshes repository metadata and can assess a proposed APT plan.
+The fix repeats the refresh and revalidates its package and service prerequisites
+before installation. A missing disk-space tool prevents an optimistic
 assessment, though the existing fix path still permits an attempt without it.
 
 Search `dephp2shell.sh` for `P2S-MUTATION` to trace package/cache writes and service
@@ -940,12 +957,13 @@ See the [Debian dpkg lock guidance](https://wiki.debian.org/Teams/Dpkg/FAQ#What_
 Actual metadata downloads and unpacked files can require more space than the preflight minimum.
 APT `Contents` maps support file searches, for example through apt-file. They
 can be hundreds of megabytes each and are not required to select PHP updates.
-The fix refresh uses command-only `DefaultEnabled=false` settings for standard
+The refresh uses command-only `DefaultEnabled=false` settings for standard
 Contents targets and disables translations. Required package indexes and trust
 checks remain enabled. Source files and persistent APT settings stay unchanged.
-Explicit per-source targets and custom hooks can still request extra downloads.
+Explicit per-source targets can still request extra downloads. Check mode disables
+APT update hooks for its refresh.
 See the [apt-file disable example](https://sources.debian.org/src/apt-file/3.4/examples-apt-conf/60disable-contents-fetching.conf).
-`apt_refresh_scope` records the selected defaults. Check mode does not refresh indexes.
+`apt_refresh_scope` records the selected defaults.
 
 APT refresh blockers distinguish a missing signing key (`NO_PUBKEY`) from other
 signature failures, including when APT exits successfully with warnings. Command
@@ -1257,8 +1275,10 @@ Disk preflight records the checked `df -Pk` output as `disk_preflight`. It runs
 before early update blockers in both check and fix assessments, so an unsupported
 OS or an existing blocker does not hide a full filesystem. Other update guards
 remain enforced. Low-space warnings identify the filesystem, mount and available KiB, with duplicate mounts
-removed from the message. The 128 MiB threshold is a minimum prerequisite; it is
-not a package download/unpack space estimate. Check inodes and compare VM disk,
+removed from the message. The system filesystems must have 128 MiB free, and the
+work filesystem must have 32 MiB free for scratch files and diagnostics. These
+checks use minimum thresholds. Package downloads, unpacking and local hooks can
+need more space. Check inodes and compare VM disk,
 partition/LVM and filesystem sizes before choosing a growth or cleanup operation.
 The script does not grow disks or delete application files.
 
@@ -1468,7 +1488,7 @@ confirms Jammy's PHP 8.1 was already protected by the earlier change that
 disabled session upload progress on that release. Canonical's CVE tracker and
 signed indexes also establish the November Ubuntu Pro and Legacy revisions.
 Freexian's signed Debian ELTS revisions require matching source-package metadata.
-Installed-package recognition leaves the configured APT origin checks in force.
+The opt-in installer verifies the existing Freexian Extended LTS signing key, release, exact candidate origins, and package and extension identity. Its November rules cover native Stretch PHP 7.0, Buster PHP 7.3, and Bullseye PHP 7.4. The separate private Freexian PHP LTS service needs its own reviewed package evidence.
 
 The November checker accepts later revisions within reviewed Sury, Ubuntu,
 Freexian and native AlmaLinux/Rocky Linux package series. Debian and Ubuntu

@@ -27,7 +27,7 @@ less dephp2shell.sh
 sudo bash dephp2shell.sh --check
 ```
 
-A check inventories installed PHP packages, discovered runtimes and relevant running processes. It does not install packages, change service configurations or restart services. Human-readable results appear on screen; detailed diagnostics are saved privately for each run.
+A check inventories installed PHP packages, discovered runtimes and relevant running processes. It refreshes configured APT, DNF or YUM repositories for managed PHP and skips package installation, service configuration and service restarts. Human-readable results appear on screen; detailed diagnostics are saved privately for each run.
 
 Terminal output adapts to reported capabilities. Use `--no-color` to disable colour,
 or `--no-color --no-bold` for completely unstyled text.
@@ -44,12 +44,16 @@ sudo bash dephp2shell.sh --fix
 
 The tool checks prerequisites, attempts supported package or panel updates, restarts supported services where needed, then checks again. Updates and restarts can interrupt applications. Plesk's component updater can also update databases, mail and web servers.
 
-Normal `--fix` preserves existing package publishers and PHP branches. APT updates
+Normal `--fix` preserves PHP branches. The November update can use eligible
+verified updates from configured sources when the current publisher has no fix. APT updates
 include proven necessary upgrades of reviewed, already-installed native libraries
 from matching official OS sources. Other applications may share those libraries
 and need testing afterwards. Existing Sury/ondrej PHP can use a recognised fixed package from its configured source.
 
-A separate, explicitly enabled `--enable-extra-fixes --migrate-php-to-sury` procedure can attempt a closely matched native-to-Sury package change. It requires compatible package names, PHP branches, architecture and transaction checks. It does not change individual website PHP selections. See [resolution options](docs/resolution-options.md) before choosing it.
+Adding or expanding a PHP repository requires separate approval for the offered
+source and branches. The script checks package names, PHP extension
+compatibility, architecture, and the package transaction. Review installed
+PHP sources and repository permissions in the [resolution guide](docs/resolution-options.md).
 
 A clear result covers the installations and processes inspected for CVE-2026-109618 and CVE-2026-109619. Website testing, compromise assessment and a general security audit remain separate work. Older operating systems can still need migration even after PHP is fixed. See [upgrade and migration options](docs/resolution-options.md#when-these-methods-do-not-fit).
 

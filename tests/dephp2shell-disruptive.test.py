@@ -225,6 +225,59 @@ p2s_package_deb_update_current_sources_first
         self.assertIn('php8.2-cli:amd64=8.2.36-1~deb12u1', install)
         self.assertIn('same_priority=500', out)
 
+    def test_ordinary_check_and_fix_agree_on_equal_priority_native_build(self):
+        plan = r'''
+                    for name in php8.2-cli php8.2-common; do
+                        printf 'Inst %s [%s] (8.2.36-1~deb12u1 repo [amd64])\n' "$name" "$fixture_old"
+                    done
+'''
+        for mode, priority, publisher in [('fix', 500, 'native'), ('check', 500, 'native'),
+                                          ('fix', 400, 'native'), ('fix', 500, 'other')]:
+            with self.subTest(mode=mode, native_priority=priority, publisher=publisher):
+                fixture = self.fixture(f'P2S_NOVEMBER=true; P2S_MODE={mode}; '
+                                       f'native_priority={priority}; publisher={publisher}; P2S_DISRUPTIVE=false; '
+                                       'P2S_ALLOW_SURY_MIGRATION=false', plan=plan)
+                fixture = fixture.replace('if $duplicate_origin; then', r'''
+                        printf '     8.2.36-1~deb12u1 %s\n        %s https://deb.debian.org/debian bookworm/main amd64 Packages\n' "$native_priority" "$native_priority"
+                        if $duplicate_origin; then''').replace('else\n                        name=${last%:*}', r'''
+                        printf ' 500 https://deb.debian.org/debian bookworm/main amd64 Packages\n     release o=Debian,n=bookworm,c=main,b=amd64\n'
+                    else
+                        name=${last%:*}''')
+                fixture = fixture.replace('"$fixture_candidate" "$fixture_proposed_arch"',
+                                          '"${last#*=}" "$fixture_proposed_arch"')
+                fixture = fixture.replace('\np2s_package_deb_update\n', r'''
+sed -i '/^php8.2-redis|/d; /^php-common|/d' "$P2S_WORK/packages"
+if [ "$publisher" = other ]; then sed -i 's/Debian PHP Maintainers/Example Publisher/g' "$P2S_WORK/packages"; fi
+printf 'php8.2|%s|all|Debian PHP Maintainers\n' "$fixture_old" >> "$P2S_WORK/packages"
+if [ "$P2S_MODE" = check ]; then
+    P2S_STATE=Y; P2S_REPOSITORY_REFRESH=refreshed
+    p2s_fix_recommend_options
+else
+    p2s_package_deb_update
+fi
+''')
+                out = self.shell(fixture, isolated_sources=True)
+                if priority == 400 or publisher == 'other':
+                    self.assertIn('RC=1|ATTEMPTED=false', out)
+                    self.assertIn('candidate_provider', out)
+                    self.assertNotIn('SIMULATE:', out)
+                else:
+                    expected = 'RC=0|ATTEMPTED=' + ('true' if mode == 'fix' else 'false')
+                    self.assertIn(expected, out)
+                    self.assertIn('same_priority=500', out)
+                    simulation = next(line for line in out.splitlines() if line.startswith('SIMULATE:'))
+                    self.assertIn('php8.2-cli:amd64=8.2.36-1~deb12u1', simulation)
+                    self.assertIn('php8.2=8.2.29-1~deb12u1', simulation)
+                    self.assertIn('php-cli=2:8.2+93', simulation)
+                    if mode == 'fix':
+                        install = next(line for line in out.splitlines() if line.startswith('INSTALL:'))
+                        self.assertEqual(install.split('install --only-upgrade ', 1)[1],
+                                         simulation.split('install --only-upgrade ', 1)[1])
+                    else:
+                        self.assertIn('cached_update_plan:beforefix|approved_after_refresh', out)
+                        self.assertIn('fix_recommendation:beforefix|existing_provider|options=--fix|', out)
+                        self.assertNotIn('INSTALL:', out)
+
     def test_current_publisher_install_must_finish_before_other_branch_can_migrate(self):
         body = r'''
 P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12; P2S_PANEL=none

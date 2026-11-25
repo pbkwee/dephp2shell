@@ -88,7 +88,7 @@ p2s_fix_print_exposure_advice
         self.assertIn('No verified PHP service stop command could be identified', out)
         self.assertIn('sudo supervisorctl status', out)
         self.assertIn('do not stop cron', out)
-        self.assertIn('host service commands above do not stop that exposure', out)
+        self.assertIn('Stop any affected PHP workloads in containers or separate application environments', out)
         self.assertNotIn('run: sudo', out)
         self.assertNotIn('UNEXPECTED_COMMAND', out)
 

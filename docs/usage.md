@@ -19,16 +19,21 @@ For repair and PHP package source permissions, read the
 [option effects and risks](resolution-options.md#compare-the-options) before selecting
 one. The guide explains repository/key changes, download locations, package setup,
 service interruption and what happens after failure. These permissions add to a
-fix attempt; a successful repair can be followed by ordinary PHP updates.
+fix attempt. A successful repair can be followed by ordinary PHP updates.
+The ordinary November update can use eligible verified packages from existing
+Sury/ondrej, public Freexian Extended LTS, and community Debian PHP Backports
+repositories. Legacy explicit configured-source flags are still accepted.
 
 | Option | Behaviour |
 | --- | --- |
-| `--check` | Inspect PHP and report the result. Does not update packages or restart services. |
-| `--fix` | Check prerequisites, attempt supported updates and service restarts, then check again. |
+| `--check` | Inspect PHP and refresh configured APT, DNF or YUM metadata for managed PHP. Writes package-manager caches and skips package installation and service restarts. |
+| `--fix` | Check prerequisites, refresh repositories, attempt supported updates and service restarts, then check again. |
 | `--november-2026` | Assess the November PHP security release. By default the script assesses October PHP2Shell. |
 | `--enable-extra-fixes` | Attempt explicitly enabled alternative update methods. Each method is disabled by default. |
+| [`--add-debian-php-backports`](resolution-options.md#add-the-community-debian-php-backports-repository) | Allow adding or expanding the reviewed community feed with `--november-2026 --enable-extra-fixes` and an explicit PHP branch list. |
+| `--php-source-branches=LIST` | Comma-separated source package names approved for the repository change, such as `php5.6,php7.4` or legacy `php5`. |
 | [`--migrate-php-to-sury`](resolution-options.md#use-sury-packages) | With `--enable-extra-fixes`, allow a closely matched native-to-Sury PHP package change. |
-| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | With both options above, allow the matching official Sury/ondrej source to be added. |
+| [`--add-sury-repository`](resolution-options.md#add-the-sury-or-ppa-repository) | Allow an offered change to the matching Sury/ondrej repository. Review the approved PHP branches first. |
 | [`--refresh-sury-signing-key`](resolution-options.md#repair-the-existing-sury-signing-key) | With `--enable-extra-fixes`, replace the standard Debian Sury signing key and save a backup; source definitions stay unchanged. |
 | [`--add-os-security-repository`](resolution-options.md#add-a-missing-native-security-source) | With `--enable-extra-fixes`, add a missing matching Debian/Ubuntu `main` security source using the installed archive keyring. |
 | [`--configure-pending-php-packages`](resolution-options.md#finish-pending-php-package-configuration) | With `--enable-extra-fixes`, configure a verified set of pending standard PHP packages. |
@@ -110,9 +115,9 @@ The former `--upgrade-required-php-libraries` flag and
 `DP2S_UPGRADE_REQUIRED_PHP_LIBRARIES` setting have been removed. Use `--fix`;
 old command lines containing that flag are rejected.
 
-Alternative methods require `--enable-extra-fixes` and a separate opt-in. `DP2S_MIGRATE_PHP_TO_SURY=true` and `DP2S_ADD_SURY_REPOSITORY=true` supply the corresponding method settings; both default to false. They do not enable package publisher changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
+Alternative methods require `--enable-extra-fixes` and a separate opt-in. `DP2S_MIGRATE_PHP_TO_SURY=true`, `DP2S_ADD_SURY_REPOSITORY=true`, and `DP2S_ALLOW_FREEXIAN=true` supply the corresponding method settings. They default to false. They do not enable package publisher changes in normal `--fix` mode. Environment booleans accept `true`/`false`, `yes`/`no` or `1`/`0`.
 
-`--enable-extra-fixes` selects an update attempt unless `--check` is explicit. Use `--check --enable-extra-fixes` with the method options to inspect eligibility without adding sources or running package-manager network operations. A method option without `--enable-extra-fixes`, `--enable-extra-fixes` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
+`--enable-extra-fixes` selects an update attempt unless `--check` is explicit. Use `--check --enable-extra-fixes` with the method options to inspect eligibility without adding sources, installing packages or restarting services. A method option without `--enable-extra-fixes`, `--enable-extra-fixes` without a selected method, or repository permission without migration permission is invalid. See [resolution options](resolution-options.md) for requirements and commands, or when a check or update remains unresolved.
 
 `DP2S_CONFIGURE_PENDING_PHP_PACKAGES` and `DP2S_REINSTALL_PHP_SAME_VERSION`
 are Boolean defaults, initially false.
@@ -122,17 +127,23 @@ per attempt. All method settings require command-line `--enable-extra-fixes`;
 the consent gate has no environment equivalent.
 Explicit command-line settings take precedence over the environment.
 
-`--check` now prints suggested options when installed or cached evidence supports
-a particular update or repair. Cached simulations do not refresh repositories,
-install packages or run repairs. A missing-source migration suggestion explicitly
-states that its candidates have not been checked. Suggestions use the installed/cached observations; fix mode refreshes metadata and repeats all applicable safety checks.
+`--check` refreshes the server's enabled APT, DNF or YUM repositories for managed
+PHP when the local prerequisites pass. The refresh can take several minutes.
+Check mode skips package installation and service restarts. Use the hosting
+panel's update mechanism for panel-managed PHP.
+
+If a refresh fails, the summary names the command and why it stopped when
+the package manager reported a reason. Repair the reported repository or
+connection problem and repeat the check. Sury migration suggestions require a
+successful refresh and a current-publisher check with no eligible fix.
+Running an update repeats the refresh and package safety checks.
 
 An unresolved `--fix` run offers specific additional repairs when fresh checks
 identify one. It omits a plain `--fix` retry. If no additional automatic repair is
 identified, review the detailed log and remaining PHP findings, address the
 reported cause, then run `--check` before deciding on another update attempt.
 
-The complete report retains `fix_recommendation` and cached `option_assessment`
+The complete report retains `repository_refresh`, `fix_recommendation`, and `option_assessment`
 records, including reasons a potential method was refused.
 
 Afterwards, check important website and application functions. Existing scheduled PHP jobs can retain old code until they finish. The tool does not kill those jobs or restart cron to replace them. Arrange an application-aware rerun if needed, then check again.

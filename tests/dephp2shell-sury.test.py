@@ -231,7 +231,9 @@ uri=https://deb.debian.org/debian; origin=Debian'''
 
     def test_non_sury_installed_package_cannot_receive_sury_candidate(self):
         out = self.shell(self.fixture('old=7.4.33-1; selector=2:8.4-1'), isolated_sources=True)
-        self.assertIn('replace non-Sury package', out)
+        self.assertIn('APT selected the Sury build', out)
+        self.assertIn('for php7.4-cli (installed build 7.4.33-1)', out)
+        self.assertIn('apt-cache policy php7.4-cli:amd64', out)
         self.assertNotIn('INSTALL:', out)
 
     def test_transaction_cannot_add_or_change_non_sury_packages(self):
@@ -339,14 +341,17 @@ printf 'Types: deb\r\nURIs: https://account:private-token@repo.invalid/private-p
         self.assertNotIn('INSTALL:', out)
 
     def test_trust_diagnostics_write_failure_blocks_before_refresh(self):
-        for target in ('apt-trust-settings', 'apt-trust-settings.redacted', 'apt-source-trust-settings'):
+        for target, diagnosis in (
+                ('apt-trust-settings', 'Could not read authentication settings from apt-config dump.'),
+                ('apt-trust-settings.redacted', 'Could not write the redacted APT authentication report.'),
+                ('apt-source-trust-settings', 'Could not read authentication settings in APT source file')):
             with self.subTest(target=target):
                 out = self.shell(self.fixture('mkdir "$P2S_WORK/' + target + '"\n' + r'''
 mkdir -p "$P2S_WORK/etc/apt"
 touch "$P2S_WORK/etc/apt/sources.list"
 '''), isolated_sources=True)
                 self.assertIn('source_authentication', out)
-                self.assertIn('needs manual review', out)
+                self.assertIn(diagnosis, out)
                 self.assertNotIn('REFRESH', out)
                 self.assertNotIn('INSTALL:', out)
 
@@ -359,7 +364,8 @@ awk() {
 }
 '''), isolated_sources=True)
         self.assertIn('/etc/apt/sources.list.d/unreadable.sources|read_or_assessment_failed', out)
-        self.assertIn('unreadable.sources could not be assessed', out)
+        self.assertRegex(out, r'Could not read authentication settings in APT source file '
+                              r'[^\n]*/etc/apt/sources\.list\.d/unreadable\.sources\.')
         self.assertNotIn('REFRESH', out)
         self.assertNotIn('INSTALL:', out)
 

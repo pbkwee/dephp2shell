@@ -22,7 +22,8 @@ class PinnedDependencyPlanTest(unittest.TestCase):
     def test_only_unchanged_pinned_resimulation_reaches_installation(self):
         fixture = DEPENDENCY_HELPERS['DependencyRepairTest']().fixture().replace(
             'p2s_command_run() {', 'fixture_dependency_command() {')
-        for scenario in ('unchanged', 'architecture', 'version', 'removal', 'unapproved'):
+        for scenario in ('unchanged', 'architecture', 'version', 'removal', 'unapproved',
+                         'install_failed', 'install_timeout'):
             with self.subTest(scenario=scenario):
                 out = self.shell(fixture + '\nscenario=' + shlex.quote(scenario) + r'''
 P2S_MODE=fix
@@ -58,7 +59,12 @@ p2s_command_run() {
                             esac ;;
                     esac
                     cat "$P2S_WORK/current-plan" ;;
-                *' install '*) printf 'INSTALLED %s\n' "$*" >> "$P2S_WORK/installations" ;;
+                *' install '*)
+                    printf 'INSTALLED %s\n' "$*" >> "$P2S_WORK/installations"
+                    case "$scenario" in
+                        install_failed) return 100 ;;
+                        install_timeout) return 124 ;;
+                    esac ;;
                 *) printf 'UNEXPECTED_APT_OPERATION\n'; return 97 ;;
             esac ;;
         *) printf 'UNEXPECTED_UPDATE_OPERATION\n'; return 97 ;;
@@ -76,10 +82,123 @@ cat "$P2S_WORK/installations" 2>/dev/null
                 if scenario == 'unchanged':
                     self.assertIn('RC=0|BLOCKED=false', out)
                     self.assertRegex(out, r'INSTALLED .*php8\.2-cli:amd64=8\.2\.35-1 libxml2:amd64=2\.9\.15-1')
+                elif scenario in ('install_failed', 'install_timeout'):
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    self.assertIn('Installing the approved PHP package updates', out)
+                    self.assertIn('dpkg --audit', out)
+                    self.assertNotIn('APT completed the approved PHP package updates', out)
+                    if scenario == 'install_timeout':
+                        self.assertIn('APT reached the 30-minute installation limit', out)
+                    else:
+                        self.assertIn('APT installation failed (exit 100)', out)
                 else:
                     self.assertIn('RC=1|BLOCKED=true', out)
                     self.assertIn('pinned dependency simulation changed scope', out)
                     self.assertNotIn('INSTALLED', out)
+
+
+    def test_native_php_metapackage_upgrade_is_verified_and_pinned(self):
+        for scenario in ('fix', 'check', 'different_build', 'different_branch', 'unversioned',
+                         'not_installed', 'new_package', 'held', 'foreign_duplicate',
+                         'wrong_source', 'wrong_arch', 'changed_resimulation'):
+            with self.subTest(scenario=scenario):
+                out = self.shell(f'scenario={scenario}\n' + r'''
+P2S_BACKEND=deb; P2S_DISTRO=debian; P2S_RELEASE=12; P2S_NOVEMBER=true
+P2S_MODE=fix; [ "$scenario" != check ] || P2S_MODE=check
+old=8.2.35-1~deb12u1; fixed=8.2.36-1~deb12u1
+meta=php8.2; metapackage_version=$fixed; arch=all
+case "$scenario" in
+    different_build) metapackage_version=8.2.37-1~deb12u1 ;;
+    different_branch) meta=php8.3; metapackage_version=8.3.37-1~deb12u1 ;;
+    unversioned) meta=php ;;
+    wrong_arch) arch=amd64 ;;
+esac
+for name in libapache2-mod-php8.2 php8.2-cli php8.2-common php8.2-curl; do
+    printf '%s|%s|amd64|Debian PHP Maintainers\n' "$name" "$old" >> "$P2S_WORK/packages"
+    printf 'Inst %s [%s] (%s Debian-Security:12/oldstable-security [amd64]) []\n' \
+        "$name" "$old" "$fixed" >> "$P2S_WORK/plan"
+done
+printf '%s|%s|all|Debian PHP Maintainers\n' "$meta" "$old" >> "$P2S_WORK/packages"
+if [ "$scenario" = new_package ]; then
+    printf 'Inst %s (%s Debian-Security:12/oldstable-security [%s])\n' "$meta" "$metapackage_version" "$arch" >> "$P2S_WORK/plan"
+else
+    printf 'Inst %s [%s] (%s Debian-Security:12/oldstable-security [%s])\n' "$meta" "$old" "$metapackage_version" "$arch" >> "$P2S_WORK/plan"
+fi
+printf 'Conf %s (%s Debian-Security:12/oldstable-security [%s])\n' "$meta" "$metapackage_version" "$arch" >> "$P2S_WORK/plan"
+p2s_command_exists() { case "$1" in apt-get|apt-cache|apt-mark|dpkg) return 0 ;; *) return 1 ;; esac; }
+dpkg() { [ "$1" = --compare-versions ] || return 97; command dpkg "$@"; }
+p2s_package_deb_candidate() {
+    # Only the metapackage needs the independent exact-candidate query in this fixture.
+    [ "$1" != "$meta" ] || { printf 'UNEXPECTED_META_SELECTION\n'; return 97; }
+    P2S_DEB_CANDIDATE=$fixed
+}
+p2s_command_run() {
+    local last
+    for last in "$@"; do :; done
+    case "$2" in
+        apt-mark)
+            if [ "$scenario" = held ]; then printf '%s\n' "$meta"; fi ;;
+        dpkg) [ "$3" = --audit ] ;;
+        dpkg-query)
+            [ "$last" = "$meta" ] || return 97
+            [ "$scenario" != not_installed ] || return 1
+            printf 'install ok installed|%s|%s|all|%s|%s|Debian PHP Maintainers\n' "$meta" "$old" "$meta" "$old" ;;
+        apt-cache)
+            case "$last" in
+                policy) cat <<'EOF'
+ 500 http://security.debian.org/debian-security bookworm-security/main amd64 Packages
+     release v=12,o=Debian,a=oldstable-security,n=bookworm-security,l=Debian-Security,c=main,b=amd64
+EOF
+                    ;;
+                "$meta")
+                    printf '%s:\n  Installed: %s\n  Candidate: %s\n  Version table:\n     %s 500\n' "$meta" "$old" "$metapackage_version" "$metapackage_version"
+                    printf '        500 http://security.debian.org/debian-security bookworm-security/main amd64 Packages\n'
+                    if [ "$scenario" = foreign_duplicate ]; then
+                        printf '        500 https://foreign.invalid/repo bookworm-security/main amd64 Packages\n'
+                    fi
+                    printf ' *** %s 100\n        100 /var/lib/dpkg/status\n' "$old" ;;
+                "$meta=$metapackage_version")
+                    printf 'Package: %s\nVersion: %s\nArchitecture: all\n' "$meta" "$metapackage_version"
+                    if [ "$scenario" = wrong_source ]; then printf 'Source: php-defaults\n'; fi
+                    printf 'Filename: pool/php/%s.deb\nSHA256: %064d\n' "$meta" 1 ;;
+                *) printf 'UNEXPECTED_APT_QUERY %s\n' "$last"; return 97 ;;
+            esac ;;
+        apt-get)
+            case " $* " in
+                *' update ') return 0 ;;
+                *' -s '*)
+                    printf '%s\n' "$*" >> "$P2S_WORK/simulations"
+                    if [ "$scenario" = changed_resimulation ] && [ "$last" = "$meta=$fixed" ]; then
+                        sed 's/\[all\]/[amd64]/g' "$P2S_WORK/plan"
+                    else
+                        cat "$P2S_WORK/plan"
+                    fi ;;
+                *' install '*) printf 'INSTALLED %s\n' "$*" >> "$P2S_WORK/installations" ;;
+                *) printf 'UNEXPECTED_APT_OPERATION\n'; return 97 ;;
+            esac ;;
+        *) printf 'UNEXPECTED_UPDATE_OPERATION\n'; return 97 ;;
+    esac
+}
+p2s_package_deb_update
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+cat "$P2S_WORK/simulations" "$P2S_WORK/installations" 2>/dev/null
+:
+''')
+                self.assertNotIn('UNEXPECTED_', out)
+                if scenario in ('fix', 'check'):
+                    self.assertIn('RC=0|BLOCKED=false', out)
+                    self.assertIn('dependency_approval:beforefix|php8.2|8.2.36-1~deb12u1|all|php8.2', out)
+                    self.assertRegex(out, r'install --only-upgrade .* php8\.2=8\.2\.36-1~deb12u1')
+                    if scenario == 'fix':
+                        self.assertRegex(out, r'INSTALLED .* php8\.2=8\.2\.36-1~deb12u1')
+                    else:
+                        self.assertNotIn('INSTALLED', out)
+                else:
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    self.assertNotIn('INSTALLED', out)
+                    expected = {'held': 'held_package', 'new_package': 'dependency_plan',
+                                'changed_resimulation': 'dependency_plan'}.get(scenario, 'dependency_scope')
+                    self.assertIn(f'blocker:beforefix|{expected}|', out)
 
 
 @unittest.skipUnless(shutil.which('apt-get'), 'requires APT')

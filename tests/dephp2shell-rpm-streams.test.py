@@ -92,7 +92,7 @@ printf 'php-common|0:7.2.24-1.module_el8.10.0+4315+7b734bf3.alma.1|x86_64|AlmaLi
 printf 'php-common|N\n' > "$P2S_WORK/package-states"
 '''))
         self.assertIn('already has verified PHP2Shell fixes', out)
-        self.assertIn('concerns ongoing support', out)
+        self.assertIn('Review the stream migration advice for ongoing support', out)
         self.assertIn('target=7.4|', out)
         self.assertNotIn('First try --fix', out)
 

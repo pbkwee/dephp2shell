@@ -19,10 +19,16 @@ BASH = os.environ.get('DP2S_TEST_BASH', '/bin/bash')
 RAW = ('dss:info: Checking PHP.\n'
        'dss:warn: Review PHP.\n'
        'dss:error: Unable to verify.\n'
-       'dss:info: Result: Review required.\n'
+       'dss:fixmethod: Attempted --fix\n'
+       'dss:attemptingfix: Updating PHP.\n'
+       'dss:fixmethod: Restarted PHP.\n'
+       'dss:warn: Result: Review required.\n'
+       'dss:warn: Next action: Check PHP.\n'
+       'dss:info: End of diagnostics.\n'
        'dss:manifest:example:beforefix|evidence\n')
 PLAIN = ('Checking PHP.\nWarning: Review PHP.\nError: Unable to verify.\n'
-         'Result: Review required.\n')
+         'Updating PHP.\nRestarted PHP.\nEnd of diagnostics.\n'
+         'Result: Review required.\nNext action: Check PHP.\n')
 ANSI = re.compile(r'\x1b\[[0-9;]*m')
 
 
@@ -46,8 +52,10 @@ uname() { printf 'Linux\n'; }
 p2s_main() {
     printf called > "$FIXTURE_ROOT/called"
     printf '%s\n' 'dss:info: Checking PHP.' 'dss:warn: Review PHP.' \
-        'dss:error: Unable to verify.' 'dss:info: Result: Review required.' \
-        'dss:manifest:example:beforefix|evidence'
+        'dss:error: Unable to verify.' 'dss:fixmethod: Attempted --fix' \
+        'dss:attemptingfix: Updating PHP.' 'dss:fixmethod: Restarted PHP.' \
+        'dss:warn: Result: Review required.' 'dss:warn: Next action: Check PHP.' \
+        'dss:info: End of diagnostics.' 'dss:manifest:example:beforefix|evidence'
 }
 p2s_command_exists() {
     if [ "$1" = tput ] && [ "$FIXTURE_CAPABILITIES" = missing ]; then return 1; fi
@@ -118,7 +126,7 @@ tput() {
         self.assert_ok(run)
         self.assertIn('\x1b[33m!\x1b[0m ', run.stdout)
         self.assertIn('\x1b[31m!\x1b[0m ', run.stdout)
-        for label in ('Warning:', 'Error:', 'Result:'):
+        for label in ('Warning:', 'Error:', 'Result:', 'Next action:'):
             self.assertIn('\x1b[1m' + label + '\x1b[0m', run.stdout)
         self.assertEqual(ANSI.sub('', run.stdout).replace('! ', ''), PLAIN)
         self.assertNotIn('\x1b[', run.stderr)
@@ -128,7 +136,7 @@ tput() {
                            env={'TERM': 'dumb', 'FIXTURE_CAPABILITIES': 'missing'})
         self.assert_ok(run)
         colored = re.findall(r'\x1b\[(?:31|33)m(.*?)\x1b\[39m', run.stdout)
-        self.assertEqual(colored, ['!', '!'])
+        self.assertEqual(colored, ['!', '!', '!'])
         codes = set(ANSI.findall(run.stdout))
         self.assertTrue(codes <= {'\x1b[31m', '\x1b[33m', '\x1b[39m',
                                  '\x1b[1m', '\x1b[22m'}, codes)
@@ -217,6 +225,11 @@ tput() {
         self.assertIn('\x1b[', human.stdout)
         logs = list(self.root.rglob('output.log'))
         self.assertEqual(len(logs), 2)
+        start, end = human.stderr.splitlines()
+        self.assertEqual(start, end)
+        self.assertTrue(end.startswith('Detailed log: '))
+        self.assertIn(Path(end.split(': ', 1)[1]), logs)
+        self.assertEqual(len(logged.stderr.splitlines()), 1)
         for log in logs:
             self.assertEqual(log.read_text(), RAW)
 

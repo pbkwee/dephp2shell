@@ -194,7 +194,7 @@ p2s_package_deb_repair_audit_collect() {
     case "$eligible" in pending) P2S_PENDING_PHP_REPAIR_ELIGIBLE=true;; exact) P2S_EXACT_PHP_REPAIR_ELIGIBLE=true;; esac
     printf 'php8.2-cli|8.2.35-1|amd64\n' > "$P2S_WORK/repair-reinstall"
 }
-p2s_package_deb_repair_exact_candidate_validate() { return 0; }
+p2s_package_deb_exact_candidate_validate() { return 0; }
 p2s_fix_recommend_options
 printf 'BLOCKED=%s\n' "$P2S_BLOCKED"
 ''')
@@ -222,14 +222,17 @@ p2s_fix_recommend_options
                     self.assertIn('run --check before trying the repair again', out)
 
     def test_incomplete_fix_recommends_from_fresh_afterfix_preflight_only(self):
-        for outcome in ('pending', 'unrelated', 'fixed', 'generic'):
+        for outcome in ('pending', 'unrelated', 'fixed', 'generic', 'legacy_yum'):
             with self.subTest(outcome=outcome):
                 out = self.shell('outcome=' + outcome + r'''
 P2S_DISRUPTIVE=true; P2S_ALLOW_SURY_MIGRATION=true
 P2S_ALLOW_SURY_REPOSITORY=true; P2S_ALLOW_PENDING_PHP_CONFIGURATION=true
 P2S_ALLOW_EXACT_PHP_REINSTALL=true
 P2S_REPOSITORY_REPAIR=sury-key
-p2s_distro_detect() { P2S_BACKEND=deb; }
+p2s_distro_detect() {
+    P2S_BACKEND=deb
+    if [ "$outcome" = legacy_yum ]; then P2S_BACKEND=rpm; fi
+}
 p2s_repository_inventory_collect() { :; }
 p2s_inventory_collect_and_assess() {
     P2S_STATE=Y
@@ -238,9 +241,13 @@ p2s_inventory_collect_and_assess() {
 }
 p2s_fix_check_distro_recipe() {
     printf 'RECIPE:%s\n' "$P2S_PHASE"
+    if [ "$outcome" = legacy_yum ]; then p2s_fix_block unsupported_os 'No automatic update recipe'; return 1; fi
     if [ "$P2S_PHASE" = beforefix ]; then p2s_fix_block stale 'Old blocker'; fi
 }
-p2s_fix_run() { P2S_TRANSACTION_ATTEMPTED=true; return 0; }
+p2s_fix_run() {
+    [ "$outcome" != legacy_yum ] || return 1
+    P2S_TRANSACTION_ATTEMPTED=true
+}
 p2s_fix_preflight() {
     printf 'PREFLIGHT:%s|%s|%s|%s|%s|%s|%s|%s\n' "$P2S_PHASE" "$P2S_MODE" "$P2S_DISRUPTIVE" "$P2S_ALLOW_SURY_MIGRATION" "$P2S_ALLOW_SURY_REPOSITORY" "$P2S_ALLOW_PENDING_PHP_CONFIGURATION" "$P2S_ALLOW_EXACT_PHP_REINSTALL" "$P2S_REPOSITORY_REPAIR"
     if grep -q stale "$P2S_WORK/blocker-keys"; then return 97; fi
@@ -258,6 +265,7 @@ p2s_package_deb_repair_audit_collect() {
 p2s_repository_repair_assess() { return 1; }
 p2s_package_deb_update() { return 1; }
 p2s_disruptive_sury_validate_equivalents() { return 1; }
+p2s_check_refresh_packages() { printf 'CHECK_REFRESH:%s|%s|%s\n' "$P2S_PHASE" "$P2S_MODE" "$P2S_BACKEND"; }
 p2s_command_run() { return 0; }
 # Never create or remove the production patch lock.
 mkdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
@@ -265,6 +273,7 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
 (p2s_main --fix)
 ''', status=0 if outcome == 'fixed' else 1)
                 self.assertNotIn('fix_recommendation:beforefix|', out)
+                self.assertEqual('CHECK_REFRESH:afterfix|check|rpm' in out, outcome == 'legacy_yum')
                 if outcome == 'pending':
                     self.assertIn('RECIPE:afterfix', out)
                     self.assertIn('PREFLIGHT:afterfix|check|false|false|false|false|false|none', out)
@@ -275,7 +284,7 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
                     self.assertNotIn('This script could not finish the PHP fix', out)
                 else:
                     self.assertIn('This script could not finish the PHP fix', out)
-                    self.assertIn('After resolving them, run --check again', out)
+                    self.assertIn('then run --check again to reassess the server', out)
                 if outcome == 'fixed':
                     self.assertNotIn('RECIPE:afterfix', out)
                     self.assertNotIn('PREFLIGHT:', out)
@@ -351,27 +360,148 @@ p2s_fix_recommend_options
         self.assertNotIn('--enable-extra-fixes', out)
         self.assertNotIn('--upgrade-required-php-libraries', out)
 
-    def test_check_recommends_migration_only_after_cached_equivalence_checks(self):
-        out = self.shell(DISRUPTIVE['DisruptiveTest']().fixture('P2S_MODE=check') + r'''
+    def test_check_recommends_migration_only_after_successful_refresh(self):
+        for freshness in ('not_refreshed', 'failed', 'refreshed'):
+            with self.subTest(freshness=freshness):
+                out = self.shell(DISRUPTIVE['DisruptiveTest']().fixture('P2S_MODE=check') + r'''
 P2S_STATE=Y
+P2S_REPOSITORY_REFRESH=''' + freshness + '''
 p2s_fix_recommend_options
 ''', isolated_sources=True)
-        self.assertIn('Suggested options: --fix --enable-extra-fixes --migrate-php-to-sury.', out)
-        self.assertNotIn('REFRESH', out)
-        self.assertNotIn('INSTALL:', out)
+                self.assertEqual('Suggested options: --fix --enable-extra-fixes --migrate-php-to-sury.' in out,
+                                 freshness == 'refreshed')
+                self.assertNotIn('REFRESH', out)
+                self.assertNotIn('INSTALL:', out)
 
     def test_missing_source_recommendation_is_explicitly_conditional(self):
         out = self.shell(r'''
-P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true
+P2S_STATE=Y; P2S_BACKEND=deb; P2S_BLOCKED=true; P2S_REPOSITORY_REFRESH=refreshed
 printf 'unsupported_os\n' > "$P2S_WORK/blocker-keys"
 : > "$P2S_WORK/apt-origins"
 p2s_repository_repair_assess() { return 1; }
 p2s_disruptive_sury_validate_equivalents() { return 0; }
-p2s_package_deb_update() { return 1; }
+p2s_package_deb_update() { p2s_fix_block no_candidate "No PHP update found."; return 1; }
 p2s_fix_recommend_options
 ''', isolated_sources=True)
         self.assertIn('--migrate-php-to-sury --add-sury-repository', out)
         self.assertIn('candidates from the missing repository have not been checked', out)
+
+    def test_default_check_refreshes_apt_before_assessing_current_publisher(self):
+        for scenario, fresh, blocker in [('no_php', 'not_refreshed', ''),
+                                         ('fixed', 'refreshed', ''),
+                                         ('fixed_fix', 'refreshed', ''),
+                                         ('native', 'refreshed', ''),
+                                         ('plan_failure', 'refreshed', 'The PHP simulation failed.'),
+                                         ('partial', 'failed', 'apt-get update left some package lists incomplete.'),
+                                         ('failure', 'failed', 'apt-get update failed (exit 100).'),
+                                         ('timeout', 'failed', 'apt-get update timed out after 300 seconds.')]:
+            with self.subTest(scenario=scenario):
+                out = self.shell('scenario=' + scenario + r'''
+p2s_work_directory_init() { :; }
+p2s_distro_detect() { P2S_DISTRO=debian; P2S_RELEASE=12; P2S_MAJOR=12; }
+p2s_repository_inventory_collect() { :; }
+p2s_inventory_collect_and_assess() {
+    P2S_BACKEND=deb; P2S_STATE=Y; P2S_COUNT=1
+    case "$scenario" in
+        fixed|fixed_fix) P2S_STATE=N ;;
+        no_php) P2S_STATE=N; P2S_COUNT=0; : > "$P2S_WORK/packages"; return ;;
+    esac
+    printf 'php8.2-cli|8.2.35-1~deb12u1|amd64|Debian\n' > "$P2S_WORK/packages"
+    printf 'php8.2-cli|8.2.35-1~deb12u1|amd64|php8.2|8.2.35-1~deb12u1\n' > "$P2S_WORK/deb-source-records"
+}
+id() { printf '0\n'; }
+p2s_package_lock_warn() { :; }
+p2s_fix_preflight() { :; }
+p2s_package_deb_preflight() { :; }
+p2s_package_deb_repair_audit_collect() { P2S_REPAIR_AUDIT_NEEDED=false; }
+p2s_package_deb_sury_trust_preflight() { :; }
+p2s_repository_repair_assess() { return 1; }
+p2s_command_run() {
+    case "$2:$3" in
+        df:-Pk) return 0 ;;
+        apt-get:-c)
+            grep -Fx '#clear APT::Update::Post-Invoke-Success;' "$4" >/dev/null || return 97
+            grep -Fx '#clear Binary::apt-get::APT::Update::Pre-Invoke;' "$4" >/dev/null || return 97
+            case " $* " in *' Acquire::Retries=1 '*' update '*) ;; *) return 97 ;; esac
+            case "$scenario" in
+                fixed|fixed_fix|native|plan_failure) : > "$P2S_WORK/refreshed" ;;
+                partial) printf 'W: Some index files failed to download\n' ;;
+                failure) return 100 ;;
+                timeout) return 124 ;;
+                *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+            esac ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+p2s_package_deb_update() {
+    if [ -f "$P2S_WORK/refreshed" ] && $P2S_APT_CURRENT_PROVIDER_ONLY && ! $P2S_ALLOW_SURY_MIGRATION; then
+        if [ "$scenario" = native ]; then
+            p2s_manifest_record cached_update_plan 'approved_after_refresh|fresh_fix_preflight_and_refresh_required'
+            return 0
+        fi
+        p2s_fix_block transaction_plan 'The PHP simulation failed.'
+    else
+        p2s_fix_block no_candidate 'Cached APT has no newer package.'
+    fi
+    return 1
+}
+p2s_disruptive_sury_validate_equivalents() { printf 'UNEXPECTED_MIGRATION\n'; return 97; }
+mode=--check
+[ "$scenario" != fixed_fix ] || mode=--fix
+p2s_cli "$mode" --november-2026 --output machine
+''')
+                if scenario != 'fixed_fix':
+                    self.assertIn('repositories=' + fresh, out)
+                self.assertEqual('repository_refresh:' in out, scenario != 'no_php')
+                if blocker:
+                    self.assertIn(blocker, out)
+                self.assertIn('dss:isvulnerable:afterfix: CVE_2026_126714' +
+                              ('N' if scenario in ('fixed', 'fixed_fix', 'no_php') else 'Y'), out)
+                self.assertEqual('APT refreshed the package lists and found an update plan' in out, scenario == 'native')
+                self.assertEqual('Next action: Run the PHP update.' in out, scenario == 'native')
+                self.assertEqual('Next action: Resolve the reported APT plan problem' in out,
+                                 scenario == 'plan_failure')
+                self.assertNotIn('sury_migration_identity', out)
+                self.assertNotIn('UNEXPECTED_', out)
+
+    def test_rpm_check_uses_appropriate_metadata_and_candidate_commands(self):
+        cases = [('dnf', '4.4.2', 'check-update', 100, 0, ''),
+                 ('dnf', 'dnf5 version 5.2.17.0', 'check-upgrade', 0, 0, ''),
+                 ('yum', '3.4.3', 'check-update', 1, 0, ''),
+                 ('yum', '3.4.3', 'check-update', 0, 124, ''),
+                 ('yum', '3.4.3', 'check-update', 0, 0, 'There are no enabled repos.')]
+        for manager, version, query, query_status, refresh_status, refresh_output in cases:
+            with self.subTest(manager=manager, version=version, refresh_status=refresh_status,
+                              refresh_output=refresh_output):
+                out = self.shell(f'fixture_manager={manager}; fixture_version=\'{version}\'; '
+                                 f'fixture_query={query}; query_status={query_status}; '
+                                 f'refresh_status={refresh_status}; refresh_output=\'{refresh_output}\'\n' + r'''
+P2S_BACKEND=rpm; P2S_MODE=check; P2S_STATE=Y
+id() { printf '0\n'; }
+printf 'php-cli|0:8.3.6-1|x86_64|Example\n' > "$P2S_WORK/packages"
+p2s_command_exists() { [ "$1" = "$fixture_manager" ]; }
+p2s_command_run() {
+    [ "$2" = "$fixture_manager" ] || return 97
+    case " $* " in
+        *' --version '*) printf '%s\n' "$fixture_version" ;;
+        *' --assumeno '*' makecache '*) printf '%s\n' "$refresh_output"; return "$refresh_status" ;;
+        *" --cacheonly --assumeno $fixture_query php-cli.x86_64 "*) return "$query_status" ;;
+        *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
+    esac
+}
+p2s_check_refresh_packages
+printf 'state=%s\n' "$P2S_REPOSITORY_REFRESH"
+''')
+                self.assertIn(f'{manager} makecache|exit={refresh_status}', out)
+                if refresh_status or refresh_output:
+                    diagnosis = 'timed out after 300 seconds' if refresh_status else 'found no enabled repositories'
+                    self.assertIn(f'{manager} makecache {diagnosis}', out)
+                    self.assertIn('state=failed', out)
+                    self.assertNotIn('rpm_candidate_query:', out)
+                else:
+                    self.assertIn(f'{manager} {query}|exit={query_status}', out)
+                    self.assertIn({0: 'found no update', 100: 'found newer PHP package builds',
+                                   1: 'failed (exit 1)'}[query_status], out)
 
     def test_failed_audit_cannot_authorize_package_repair(self):
         out = self.shell(r'''

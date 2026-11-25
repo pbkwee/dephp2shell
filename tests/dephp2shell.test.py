@@ -1044,7 +1044,7 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
 
     def test_next_action_preserves_state_and_respects_scope_and_update_blockers(self):
         for state, record, blocked, expected in [
-                ('?', '8.2.35|N|PHP-FPM|', False, 'Verify the remaining inventory'),
+                ('?', '8.2.35|N|PHP-FPM|', False, 'Review and restart the services'),
                 ('?', '8.2.35|N|PHP-FPM|', True, 'Verify the remaining inventory'),
                 ('?', '7.4.33|?|command line|', True, 'Confirm which websites'),
                 ('?', 'unknown|?|command line|', False, 'Confirm which websites'),
@@ -1063,7 +1063,10 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 self.assertIn('STATE=' + state + '|BLOCKED=' + str(blocked).lower() + '|RESTART=true', out)
                 if state == '?' and '|N|' in record:
                     self.assertNotIn('Obtain verified fixed packages', action)
-                    self.assertIn('pending PHP restarts', action)
+                    if blocked:
+                        self.assertIn('separate application environments', action)
+                    else:
+                        self.assertIn('replaced PHP code', action)
                 else:
                     self.assertNotIn('For unknown', action)
 
@@ -1136,7 +1139,7 @@ printf 'BACKEND=%s|UNKNOWN=%s|BLOCKED=%s\n' "$P2S_BACKEND" "$P2S_UNKNOWN" "$P2S_
                 result = next(row for row in out.splitlines() if 'Result:' in row)
                 self.assertEqual('The check verified both PHP2Shell fixes for some PHP installations.' in result, mixed)
                 if mixed:
-                    self.assertIn('Review the versions below', result)
+                    self.assertIn('Review the PHP versions that still need a fix or verification', result)
                     self.assertNotIn('does not prove', result)
 
     def test_fixed_host_versions_do_not_clear_unverified_other_environments(self):
@@ -1325,12 +1328,12 @@ printf 'STATE=%s\n' "$P2S_STATE"
                     self.assertIn('with Sury allowed as a fallback' if scenario == 'sury_migration'
                                   else 'existing PHP package sources', out)
                 elif assessment == 'blocked':
-                    self.assertIn('could not confirm it was safe to run the PHP update', out)
+                    self.assertIn('A local check blocked the PHP update', out)
                 elif assessment == 'unknown':
                     self.assertIn('The local checks found no blocker.', out)
                     self.assertIn('attempts to install any fixes that pass the package checks', out)
 
-    def test_check_mode_runs_only_local_preflight_commands(self):
+    def test_check_mode_never_calls_fix_or_restart_during_refresh(self):
         for backend, manager in [('deb', 'apt-get'), ('rpm', 'dnf'), ('rpm', 'yum')]:
             with self.subTest(backend=backend, manager=manager):
                 out = self.shell('backend=' + backend + '; manager=' + manager + r'''
@@ -1357,9 +1360,11 @@ p2s_command_run() {
 }
 p2s_fix_run() { printf 'UNEXPECTED_FIX\n'; return 97; }
 p2s_service_run() { printf 'UNEXPECTED_SERVICE\n'; return 97; }
+p2s_check_refresh_packages() { printf 'CHECK_REFRESH\n'; P2S_REPOSITORY_REFRESH=refreshed; }
 (p2s_main --check)
 ''')
-                self.assertIn('patchability:beforefix|eligible_to_attempt', out)
+                self.assertIn('CHECK_REFRESH', out)
+                self.assertIn('patchability:beforefix|eligible_to_attempt|scope=host_php|repositories=refreshed', out)
                 self.assertIn('dss:isvulnerable:beforefix: CVE_2026_109618Y', out)
                 self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618Y', out)
                 self.assertNotIn('UNEXPECTED_', out)
@@ -1580,7 +1585,7 @@ printf 'RC=%s\n' "$?"
                 self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618' + expected, out)
                 self.assertIn('RC=0' if expected == 'N' else 'RC=1', out)
                 if expected == 'Y':
-                    self.assertIn('The update attempt finished, but at least one PHP installation is still vulnerable', out)
+                    self.assertIn('At least one PHP installation is still vulnerable after the update attempt', out)
                     self.assertNotIn('could not be completed or verified', out)
 
     def apt_fixture(self, stage, result=1, output='fixture failure'):
@@ -1963,7 +1968,7 @@ rmdir() { [ "$1" = /var/run/rh-php2shell.lock ]; }
                 self.assertIn('dss:isvulnerable:beforefix: CVE_2026_109618Y', out)
                 self.assertIn('dss:isvulnerable:afterfix: CVE_2026_109618' + expected, out)
                 if fix_status == 0 and expected == '?':
-                    self.assertIn('update attempt finished, but we could not verify', out)
+                    self.assertIn('Review the remaining verification warnings to identify which PHP installations still need checking', out)
                     self.assertNotIn('service restart commands completed', out)
                     self.assertIn('Temporary exposure reduction:', out)
                 elif fix_status == 1:
@@ -2082,7 +2087,7 @@ p2s_fix_run
 printf 'RC=%s|ATTEMPTED=%s\\n' "$?" "$P2S_TRANSACTION_ATTEMPTED"
 ''')
         self.assertIn('RC=1|ATTEMPTED=false', out)
-        self.assertIn('repositories|Package refresh failed', out)
+        self.assertIn('repositories|apt-get update failed (exit 1)', out)
         self.assertNotIn('UNEXPECTED_RESTART', out)
 
     def test_runtime_package_mismatch_requires_review(self):
@@ -2206,6 +2211,48 @@ printf 'RC=%s|BLOCKED=%s\\n' "$?" "$P2S_BLOCKED"
                     self.assertNotIn('account:secret', out)
                     self.assertNotIn('/private', out)
 
+    def test_litespeed_directory_alone_does_not_block_updates(self):
+        for installed in ('yes', 'no'):
+            with self.subTest(installed=installed):
+                out = self.shell(f'installed={installed}\n' + r'''
+mkdir -p "$P2S_WORK/usr/local/lsws/bin"
+if [ "$installed" = yes ]; then
+    touch "$P2S_WORK/usr/local/lsws/bin/lshttpd"
+    chmod u+x "$P2S_WORK/usr/local/lsws/bin/lshttpd"
+fi
+p2s_command_exists() { return 1; }
+p2s_panel_inventory_collect
+printf 'BLOCKED=%s\n' "$P2S_BLOCKED"
+''', isolated_paths=True, isolated_sources=True)
+                self.assertIn('panel:beforefix|litespeed|', out)
+                self.assertIn('BLOCKED=' + ('true' if installed == 'yes' else 'false'), out)
+                self.assertEqual('blocker:beforefix|detached_php|' in out, installed == 'yes')
+
+    def test_scratch_space_has_its_own_minimum(self):
+        for system, scratch, blocker in [(150000, 65536, ''), (100000, 65536, '/var'),
+                                         (150000, 16000, '/tmp')]:
+            with self.subTest(system=system, scratch=scratch):
+                out = self.shell(f'system_kib={system}; scratch_kib={scratch}\n' + r'''
+p2s_command_exists() { [ "$1" = df ]; }
+p2s_command_run() {
+    [ "$2:$3" = df:-Pk ] || return 97
+    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+    case "$4" in
+        /) printf '/dev/root 999999 100 900000 1%% /\n/dev/var 999999 100 %s 1%% /var\n' "$system_kib" ;;
+        "$P2S_WORK") printf 'tmpfs 65536 100 %s 1%% /tmp\n' "$scratch_kib" ;;
+        *) return 97 ;;
+    esac
+}
+p2s_fix_disk_preflight
+printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
+''')
+                self.assertIn('disk_preflight:beforefix|tmpfs', out)
+                if blocker:
+                    self.assertIn('RC=1|BLOCKED=true', out)
+                    self.assertIn('disk_space|Insufficient free space for a PHP update: ' + blocker, out)
+                else:
+                    self.assertIn('RC=0|BLOCKED=false', out)
+
     def test_low_space_or_failed_space_check_prevents_package_update(self):
         for disk_status, available, blocker in [(1, 900000, 'disk_check'), (0, 100, 'disk_space')]:
             with self.subTest(disk_status=disk_status, available=available):
@@ -2286,7 +2333,8 @@ p2s_service_preflight
 printf 'RC=%s|BLOCKED=%s\n' "$?" "$P2S_BLOCKED"
 """, isolated_paths=True)
                 self.assertIn('RC=1|BLOCKED=true', out)
-                self.assertIn('PHP-FPM (PID 4242) configuration validation failed', out)
+                outcome = 'timed out after 30 seconds' if exit_status == 124 else 'failed (exit 1)'
+                self.assertIn('PHP-FPM (PID 4242) configuration validation ' + outcome, out)
                 self.assertIn('configtest_exit:beforefix|PHP-FPM (PID 4242)|' + str(exit_status), out)
                 self.assertIn('configtest_output:beforefix|ERROR: configuration syntax failure', out)
                 self.assertIn('configtest_output:beforefix|dss:isvulnerable:afterfix: forged', out)
