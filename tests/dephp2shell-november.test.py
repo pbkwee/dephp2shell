@@ -10,6 +10,80 @@ HELPERS = runpy.run_path(str(Path(__file__).with_name('dephp2shell.test.py')))
 class NovemberTest(unittest.TestCase):
     shell = HELPERS['PHP2ShellTest'].shell
 
+    def test_plesk_november_backport_is_exact_and_alt_php_common_is_supporting(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=centos; P2S_MAJOR=7
+fixed=0:7.4.33-1centos.7.261118.1054
+p2s_version_package_state plesk-php74-cli "$fixed" Plesk x86_64
+p2s_version_package_state plesk-php74-fpm "$fixed" Plesk x86_64
+p2s_version_package_state plesk-php74-cli "${fixed}.local" Plesk x86_64
+p2s_version_package_state plesk-php74-cli "$fixed" 'different vendor' x86_64
+p2s_version_package_state plesk-php74-cli "$fixed" Plesk i386
+p2s_package_is_engine alt-php-common && exit 1
+p2s_package_is_engine alt-php-internal-common
+''')
+        self.assertEqual(out.splitlines(), list('NN???'))
+
+    def test_old_build_date_adds_risk_guidance_without_changing_state(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_PHASE=beforefix; P2S_MODE=check
+printf '%s\n' '5.1.6|?|CGI|Jul 16 2008 19:48:30|CentOS|0:5.1.6-20.el5_2.1|?|runtime' \
+    '7.4.33|?|CGI|Nov 18 2026 10:59:22|Plesk|7.4.33-unknown|Y|runtime' \
+    '8.4.28|N|CGI|Sep 30 2026 00:00:00|Test||N|runtime' > "$P2S_WORK/summary-versions"
+p2s_summary_print_versions
+''')
+        self.assertEqual(out.count('unlikely to include their fixes'), 1)
+        self.assertIn('PHP 5.1.6 (CGI): patch status not verified.', out)
+        self.assertIn('PHP 8.4.28 (CGI): November PHP fixes verified.', out)
+
+    def test_tuxcare_rpm_fallbacks_match_the_published_el_builds(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=centos; P2S_MAJOR=6
+p2s_version_package_state alt-php53-cli 0:5.3.29-226.el6 CloudLinux x86_64
+p2s_version_package_state alt-php53-cli 0:5.3.29-226.el7 CloudLinux x86_64
+p2s_version_package_state alt-php53-cli 0:5.3.29-226.el6 Other x86_64
+p2s_version_package_state php-cli 0:5.3.3-50.el6_10 CentOS x86_64
+P2S_MAJOR=7
+p2s_version_package_state php-cli 0:5.4.16-48.el7.tuxcare.els23 TuxCare x86_64
+p2s_version_package_state php-fpm 0:5.4.16-48.el7.tuxcare.els23 CloudLinux i686
+p2s_version_package_state php-cli 0:5.4.16-48.el7.tuxcare.els25 TuxCare x86_64
+p2s_version_package_state php-cli 0:5.4.16-48.el7 CentOS x86_64
+''')
+        self.assertEqual(out.splitlines(), list('N???NN?Y'))
+
+    def test_cpanel_stock_80_earlier_backport_remains_affected_in_november(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_DISTRO=centos; P2S_MAJOR=7
+p2s_version_package_state ea-php80-php-cli 0:8.0.31-2.2.3.cpanel 'cPanel, Inc.' x86_64
+p2s_version_package_state ea-php80-php-fpm 0:8.0.31-2.2.3.cpanel 'cPanel, Inc.' x86_64
+p2s_version_package_state ea-php80-php-fpm 0:8.0.31-2.2.4.cpanel 'cPanel, Inc.' x86_64
+p2s_version_package_state ea-php80-php-cli 0:8.0.31-2.2.3.cpanel CloudLinux x86_64
+''')
+        self.assertEqual(out.splitlines(), list('YY??'))
+
+    def test_primary_blocker_keeps_the_actual_failure_at_the_top_of_the_saved_result(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_PHASE=afterfix; P2S_STATE=Y; P2S_BLOCKED=true
+printf '%s\n' rpm_php_excluded > "$P2S_WORK/fix-blocker-keys"
+printf '%s\n' service_mapping > "$P2S_WORK/blocker-keys"
+p2s_summary_print_result
+''')
+        self.assertEqual(out.count('primary_blocker:afterfix|'), 1)
+        self.assertIn('primary_blocker:afterfix|rpm_php_excluded|', out)
+        self.assertIn('Result: The check found PHP affected by the November PHP vulnerabilities. The DNF exclusion pins', out)
+
+    def test_rpm_dns_failure_is_visible_before_the_unsupported_os_reason(self):
+        out = self.shell(r'''
+P2S_NOVEMBER=true; P2S_BACKEND=rpm; P2S_PHASE=afterfix; P2S_STATE=Y
+printf '%s\n' unsupported_os > "$P2S_WORK/fix-blocker-keys"
+printf '%s\n' "PYCURL ERROR 6 - Couldn't resolve host 'vault.centos.org'" > "$P2S_WORK/log"
+p2s_package_refresh_failure_report "$P2S_WORK/log" 'RPM metadata refresh failed.'
+p2s_summary_print_result
+''')
+        self.assertIn('repository_failure:afterfix|dns', out)
+        self.assertIn('primary_blocker:afterfix|repository_dns|', out)
+        self.assertIn('Check DNS and retry the repository check.', out)
+
     def test_upstream_thresholds_and_default_scope(self):
         result = self.shell(r'''
 for version in 8.2.35 8.3.36 8.4.27 8.5.12 8.6.0; do

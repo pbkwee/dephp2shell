@@ -1907,6 +1907,31 @@ cat "$P2S_WORK/calls"
                     expected = expected[:expected.index(fail_stage) + 1]
                 self.assertEqual(re.findall(r'^STAGE=(.*)$', out, re.M), expected)
 
+    def test_dnf_reports_the_observed_php_exclusion_on_a_coupled_update_failure(self):
+        for exclude, expected in (('php php*-php', 'rpm_php_excluded'), ('php*-php', 'transaction_plan')):
+            with self.subTest(exclude=exclude):
+                out = self.shell("exclude=" + shlex.quote(exclude) + "\n" + r'''
+P2S_BACKEND=rpm; P2S_PHASE=beforefix; P2S_MODE=fix
+mkdir -p "$P2S_WORK/etc/dnf"
+printf '[main]\nexclude=%s\n' "$exclude" > "$P2S_WORK/etc/dnf/dnf.conf"
+p2s_package_policy_collect
+printf 'php|0:8.0.30-8.el9_8.1|x86_64|Rocky Enterprise Software Foundation\n' > "$P2S_WORK/packages"
+p2s_command_exists() { [ "$1" = dnf ]; }
+p2s_command_run() {
+    case " $* " in
+        *' --version '*) printf '4.7.0\n' ;;
+        *' makecache '*) return 0 ;;
+        *' --setopt=tsflags=test '*)
+            printf ' Problem: package php-8.0.30-8.el9_8.1.x86_64 from @System requires php-common(x86-64) = 8.0.30-8.el9_8.1, but none of the providers can be installed\n'
+            return 1 ;;
+        *) printf 'UNEXPECTED_INSTALL\n'; return 97 ;;
+    esac
+}
+if p2s_package_rpm_update; then exit 1; fi
+''', isolated_sources=True)
+                self.assertIn(f'blocker:beforefix|{expected}|', out)
+                self.assertNotIn('UNEXPECTED_INSTALL', out)
+
     def test_rpm_publisher_guard_accepts_dnf_backed_yum_and_blocks_unverified_resolvers(self):
         cases = [
             ('yum', '4.4.2', 'AlmaLinux', 'DNF4'),

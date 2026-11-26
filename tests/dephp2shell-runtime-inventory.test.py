@@ -496,7 +496,9 @@ p2s_panel_inventory_collect
 printf 'UNKNOWN=%s|BLOCKED=%s\n' "$P2S_UNKNOWN" "$P2S_BLOCKED"
 ''')
         self.assertIn('CageFS configuration was found', out)
-        self.assertIn('This script cannot verify whether applications use separate PHP copies', out)
+        self.assertIn('Reported PHP builds and dates cover the host', out)
+        self.assertIn('cagefsctl --list-enabled', out)
+        self.assertIn('cagefs_enter_user ACCOUNT "php -v"', out)
         self.assertIn('UNKNOWN=true|BLOCKED=true', out)
         self.assertNotIn('CageFS was detected', out)
 

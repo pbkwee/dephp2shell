@@ -469,7 +469,10 @@ p2s_cli "$mode" --november-2026 --output machine
                  ('dnf', 'dnf5 version 5.2.17.0', 'check-upgrade', 0, 0, ''),
                  ('yum', '3.4.3', 'check-update', 1, 0, ''),
                  ('yum', '3.4.3', 'check-update', 0, 124, ''),
-                 ('yum', '3.4.3', 'check-update', 0, 0, 'There are no enabled repos.')]
+                 ('yum', '3.4.3', 'check-update', 0, 0, 'There are no enabled repos.'),
+                 ('yum', '3.0.6', 'check-update', 100, 0, ''),
+                 ('yum', '3.0.6', 'check-update', 0, 0, ''),
+                 ('yum', '3.2.29', 'check-update', 1, 0, '')]
         for manager, version, query, query_status, refresh_status, refresh_output in cases:
             with self.subTest(manager=manager, version=version, refresh_status=refresh_status,
                               refresh_output=refresh_output):
@@ -484,14 +487,32 @@ p2s_command_run() {
     [ "$2" = "$fixture_manager" ] || return 97
     case " $* " in
         *' --version '*) printf '%s\n' "$fixture_version" ;;
-        *' --assumeno '*' makecache '*) printf '%s\n' "$refresh_output"; return "$refresh_status" ;;
+        *' yum --help '*)
+            printf '  -C, --cacheonly\n'
+            if [ "$fixture_version" != 3.0.6 ]; then printf '  --setopt=SETOPTS\n'; fi
+            if [ "$fixture_version" = 3.4.3 ]; then printf '  --assumeno\n'; fi ;;
+        *' --assumeno '*' makecache '*)
+            if [ "$fixture_manager" = yum ] && [ "$fixture_version" != 3.4.3 ]; then
+                printf 'UNEXPECTED legacy refresh\n' >&2; return 97
+            fi
+            printf '%s\n' "$refresh_output"; return "$refresh_status" ;;
         *" --cacheonly --assumeno $fixture_query php-cli.x86_64 "*) return "$query_status" ;;
+        *" yum -C $fixture_query php-cli.x86_64 "*) return "$query_status" ;;
         *) printf 'UNEXPECTED administrative command: %s\n' "$*" >&2; return 97 ;;
     esac
 }
 p2s_check_refresh_packages
 printf 'state=%s\n' "$P2S_REPOSITORY_REFRESH"
 ''')
+                self.assertNotIn('UNEXPECTED', out)
+                if version in ('3.0.6', '3.2.29'):
+                    self.assertIn('yum makecache|skipped|reason=refresh_options_unavailable', out)
+                    self.assertIn('state=cached_only', out)
+                    self.assertIn(f'yum check-update|exit={query_status}', out)
+                    self.assertIn('Only cached package information is available', out)
+                    if query_status != 1:
+                        self.assertIn('in cached metadata', out)
+                    continue
                 self.assertIn(f'{manager} makecache|exit={refresh_status}', out)
                 if refresh_status or refresh_output:
                     diagnosis = 'timed out after 300 seconds' if refresh_status else 'found no enabled repositories'

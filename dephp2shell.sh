@@ -733,6 +733,14 @@ p2s_version_november_package_reference() {
                     affected=8.1.34-2.cp110~${version##*~}
                     fixed=8.1.34-3.cp110~${version##*~} ;;
             esac ;;
+        rpm:centos:Plesk)
+            # Plesk's November bulletin and PHP_7.4.33_15 EL7 archive identify this build.
+            # https://support.plesk.com/hc/en-us/articles/45146523211671
+            # https://autoinstall.plesk.com/pool/PHP_7.4.33_15/dist-rpm-CentOS-7-x86_64/packages/
+            case "$vendor:$P2S_MAJOR:$arch:$name" in
+                Plesk:7:x86_64:plesk-php74-cli|Plesk:7:x86_64:plesk-php74-fpm|Plesk:7:x86_64:plesk-php74-common)
+                    fixed=7.4.33-1centos.7.261118.1054 ;;
+            esac ;;
         rpm:*:'cPanel EasyApache')
             # EA4 25.98 and the official EL7/8 RPM indexes identify the exact stock backport.
             case "$vendor:$arch:$P2S_MAJOR" in 'cPanel, Inc.:x86_64:'[78])
@@ -743,6 +751,10 @@ p2s_version_november_package_reference() {
                             7) affected=7.4.34-2.2.5.cpanel ;;
                             8) affected=7.4.34-2.2.3.cpanel ;;
                         esac ;;
+                    ea-php80-php|ea-php80-php-cli|ea-php80-php-common|ea-php80-php-fpm|ea-php80-php-litespeed)
+                        # cPanel's -2 spec adds the earlier SOAP fixes, without the November fixes.
+                        # https://github.com/CpanelInc/ea-php80/blob/main/SPECS/ea-php80.spec
+                        if [ "$P2S_MAJOR" = 7 ]; then affected=8.0.31-2.2.3.cpanel; fi ;;
                 esac ;;
             esac
             case "$P2S_DISTRO:$vendor:$arch:$P2S_MAJOR:$name" in
@@ -754,12 +766,34 @@ p2s_version_november_package_reference() {
                 affected=$release.el$P2S_MAJOR.cloudlinux.1
                 fixed=$release.el$P2S_MAJOR.cloudlinux.2
             fi ;;
-        rpm:cloudlinux:'CloudLinux/TuxCare alt-PHP (namespace hint)')
-            # CloudLinux's EL8/9 source RPMs and November bulletin identify these legacy builds.
-            case "$vendor:$arch:$P2S_MAJOR:$name" in
-                CloudLinux:x86_64:[89]:alt-php74-*) fixed=7.4.33-84.el$P2S_MAJOR ;;
-                CloudLinux:x86_64:[89]:alt-php80-*) fixed=8.0.30-72.el$P2S_MAJOR ;;
-                CloudLinux:x86_64:[89]:alt-php81-*) fixed=8.1.34-43.el$P2S_MAJOR ;;
+        rpm:*:'CloudLinux/TuxCare alt-PHP (namespace hint)')
+            # Exact stable builds for the matching EL release, not a candidate-source approval.
+            # https://cloudlinux.com/security/php-november-2026-security-releases
+            # https://errata.tuxcare.com/els_alt_php/el6/
+            # https://errata.tuxcare.com/els_alt_php/el7/
+            case "$P2S_DISTRO:$vendor:$arch:$P2S_MAJOR" in
+                centos:CloudLinux:x86_64:[67]|centos:TuxCare:x86_64:[67]|cloudlinux:CloudLinux:x86_64:[7-9]|cloudlinux:CloudLinux:x86_64:10|almalinux:CloudLinux:x86_64:[89]|almalinux:CloudLinux:x86_64:10)
+                    case "$name" in *-cli|*-common|*-cgi|*-fpm) family=${name%-*} ;; *) family=$name ;; esac
+                    case "$family" in
+                        alt-php52) release=5.2.17-247 ;; alt-php53) release=5.3.29-226 ;;
+                        alt-php54) release=5.4.45-206 ;; alt-php55) release=5.5.38-188 ;;
+                        alt-php56) release=5.6.40-152 ;; alt-php70) release=7.0.33-152 ;;
+                        alt-php71) release=7.1.33-117 ;; alt-php72) release=7.2.34-102 ;;
+                        alt-php73) release=7.3.33-86 ;; alt-php74) release=7.4.33-84 ;;
+                        alt-php80) release=8.0.30-72 ;; alt-php81) release=8.1.34-43 ;;
+                    esac
+                    if [ -n "$release" ]; then fixed="$release.el$P2S_MAJOR"; fi ;;
+            esac ;;
+        rpm:centos:TuxCare|rpm:centos:CloudLinux|rpm:cloudlinux:TuxCare|rpm:cloudlinux:CloudLinux)
+            # CentOS 7 ELS and CloudLinux 7 ELS ship different exact revisions.
+            # https://errata.tuxcare.com/els_os/centos7els/CLSA-2026-1795106529.html
+            # https://errata.tuxcare.com/els_os/cloudlinux7els/CLSA-2026-1795106319.html
+            case "$P2S_MAJOR:$arch:$name" in
+                7:x86_64:php|7:i686:php|7:x86_64:php-cli|7:i686:php-cli|7:x86_64:php-common|7:i686:php-common|7:x86_64:php-fpm|7:i686:php-fpm|7:x86_64:php-embedded|7:i686:php-embedded)
+                    case "$P2S_DISTRO" in
+                        centos) fixed=5.4.16-48.el7.tuxcare.els23 ;;
+                        cloudlinux) fixed=5.4.16-48.el7.tuxcare.els25 ;;
+                    esac ;;
             esac ;;
     esac
     printf '%s|%s\n' "$affected" "$fixed"
@@ -991,10 +1025,10 @@ p2s_package_is_engine() {
     if [ "$P2S_BACKEND" = deb ]; then
         case "$1" in php|php[0-9]|php[0-9].[0-9]|php-common|php-cli|php-cgi|php-fpm|php-phpdbg|libapache*-mod-php) return 1 ;; esac
     fi
-    # EasyApache's unversioned CLI selector has its own version (for example 1.0.0).
-    case "$1" in ea-php-cli|ea-php[0-9]|ea-php[0-9][0-9]) return 1 ;; esac
+    # EasyApache's CLI selector and alt-php-common have their own support-package versions.
+    case "$1" in ea-php-cli|ea-php[0-9]|ea-php[0-9][0-9]|alt-php-common) return 1 ;; esac
     # EasyApache's LiteSpeed SAPI package owns lsphp and versions the PHP engine.
-    case "$1" in ea-php[0-9][0-9]-php-litespeed) return 0 ;; esac
+    case "$1" in ea-php[0-9][0-9]-php-litespeed|alt-php[0-9][0-9]) return 0 ;; esac
     # cpanel-php84-xml-serializer 0.21.0 versions a library, not PHP itself.
     # Strip only engine-role suffixes; the remaining panel/LiteSpeed stem must end in digits.
     case "$stem" in
@@ -1354,7 +1388,8 @@ p2s_package_policy_collect() {
     local files
     case "$P2S_BACKEND" in
         deb) files=(/etc/apt/preferences /etc/apt/preferences.d/*) ;;
-        rpm) files=(/etc/yum.conf /etc/dnf/dnf.conf /etc/yum.repos.d/*.repo
+        rpm) : > "$P2S_WORK/rpm-php-excludes"
+            files=(/etc/yum.conf /etc/dnf/dnf.conf /etc/yum.repos.d/*.repo
             /etc/yum/pluginconf.d/versionlock.conf /etc/yum/pluginconf.d/versionlock.list /etc/yum/pluginconf.d/priorities.conf
             /etc/dnf/plugins/versionlock.conf /etc/dnf/plugins/versionlock.list /etc/dnf/modules.d/*.module) ;;
         *) return 0 ;;
@@ -1409,6 +1444,13 @@ p2s_package_policy_collect() {
         while IFS= read -r record; do
             p2s_manifest_record "$kind" "$file|$(printf '%s\n' "$record" | p2s_manifest_redact_repository_urls)"
         done < "$P2S_WORK/policy-excerpt"
+        case "$P2S_BACKEND:$file" in
+            rpm:/etc/yum.conf|rpm:/etc/dnf/dnf.conf)
+                # [main]|line=2|exclude=php php*-php includes the exact package php.
+                if grep -Eq '^\[main\]\|line=[0-9]+\|(exclude|excludepkgs)[[:blank:]]*=[[:blank:]]*([^,[:blank:]]+[,[:blank:]]+)*php([,[:blank:]]|$)' "$P2S_WORK/policy-excerpt"; then
+                    printf '%s\n' "$file" >> "$P2S_WORK/rpm-php-excludes"
+                fi ;;
+        esac
     done
     p2s_manifest_record package_policy_scope 'standard_paths_only|custom_paths_and_full_precedence_not_evaluated|no_policy_changes|RPM_plugins_not_invoked|versionlock_can_affect_transactions_but_not_info_queries'
 }
@@ -1892,15 +1934,16 @@ p2s_package_failure_report() {
                 p2s_message_print warn "Repository request failed with HTTP 404 (file not found): $details. Check this request against the configured source; the repository may have moved or the package index may be stale."
             done
     fi
-    if LC_ALL=C grep -Ei 'Could not resolve|Couldn.t resolve|Name or service not known|Temporary failure resolving' "$1" >/dev/null; then
-        p2s_manifest_record repository_failure dns
-        p2s_message_print warn "Package-source name resolution failed; check the server DNS and network configuration."
-    fi
     if LC_ALL=C grep -Ei 'NO_PUBKEY|GPG error|not signed|signature.*(fail|invalid)|unsigned package' "$1" >/dev/null; then
         # Keep lock and disk failures primary when the same log also contains signing errors.
         P2S_PACKAGE_FAILURE=${P2S_PACKAGE_FAILURE:-authentication}
         p2s_manifest_record repository_failure authentication
         p2s_message_print warn "Package authentication failed. Check the vendor signing keys and repository configuration; signature checks were not disabled."
+    fi
+    if LC_ALL=C grep -Ei "Could(n.t| not) resolve (host|proxy|')|Name or service not known|Temporary failure resolving" "$1" >/dev/null; then
+        P2S_PACKAGE_FAILURE=${P2S_PACKAGE_FAILURE:-dns}
+        p2s_manifest_record repository_failure dns
+        p2s_message_print warn "Package-source name resolution failed. Check the repository hostname with getent hosts and check the server's DNS and network settings."
     fi
 }
 
@@ -1919,6 +1962,7 @@ p2s_package_refresh_failure_report() {
                 reason="a repository signing key is missing (NO_PUBKEY)"
             fi
             p2s_fix_block repositories "Package-list refresh stopped because $reason. APT may retain old indexes for the failed repository even when other lists are current. Use the reported repository and possible source files to investigate the signing error in the detailed log. Repair that repository's signing configuration, or disable it if no longer needed, then retry." ;;
+        dns:rpm) p2s_fix_block repository_dns "$2" ;;
         *) p2s_fix_block repositories "$2" ;;
     esac
 }
@@ -5553,6 +5597,15 @@ p2s_package_rpm_refresh_indexes() {
     local manager="$1" log="$2" consent=-y status=0
     shift 2
     [ "${P2S_MODE:-fix}" != check ] || consent=--assumeno
+    if [ "$manager:$consent" = yum:--assumeno ] &&
+        ! (p2s_command_run 30 yum --help < /dev/null > "$log" 2>&1 &&
+           LC_ALL=C grep -Eq '^[[:blank:]]*--assumeno([[:blank:]]|$)' "$log" &&
+           LC_ALL=C grep -Eq '^[[:blank:]]*--setopt([=[:blank:]]|$)' "$log"); then
+        P2S_REPOSITORY_REFRESH=cached_only
+        p2s_manifest_record repository_refresh 'yum makecache|skipped|reason=refresh_options_unavailable'
+        p2s_message_print warn "This Yum could not be verified to support a metadata refresh with the required options. Only cached package information is available for this check."
+        return 0
+    fi
     P2S_REPOSITORY_REFRESH=failed
     p2s_message_print info "Running $manager makecache to refresh package metadata."
     p2s_command_run 300 "$manager" "$consent" "$@" '--setopt=*.metadata_expire=0' --setopt=timeout=20 --setopt=retries=1 --setopt=gpgcheck=1 --setopt=sslverify=true '--setopt=*.skip_if_unavailable=false' makecache < /dev/null > "$log" 2>&1 || status=$?
@@ -5621,7 +5674,18 @@ p2s_package_rpm_update() {
     p2s_package_rpm_refresh_indexes "$manager" "$log" "${cache_options[@]}" || return 1
     # P2S-MUTATION: Test transaction can download/cache packages; no real PHP installation is requested.
     if ! p2s_command_run 1800 "$manager" "${transaction_options[@]}" "${cache_options[@]}" --setopt=tsflags=test update "${packages[@]}" > "$log" 2>&1; then
-        p2s_package_log_report "$log"; p2s_fix_block transaction_plan "The RPM test transaction failed with publisher protection enabled. Review the package manager output. No packages were installed."; return 1
+        p2s_package_log_report "$log"
+        # DNF: package php-8.0.30-8.el9_8.1.x86_64 from @System requires php-common(x86-64) = ...
+        if [ -s "$P2S_WORK/rpm-php-excludes" ] &&
+            grep -Eq 'package php-[0-9][^ ]* from @System requires php-common(\([^)]*\))? =' "$log"; then
+            p2s_fix_block rpm_php_excluded "The installed php package requires the old php-common build and is excluded in $(paste -sd, "$P2S_WORK/rpm-php-excludes"). If sites need mod_php, allow the installed package to update with its matching PHP packages. If all sites use other handlers, review removing the unused mod_php package while keeping the exclusion."
+            if [ "${P2S_PANEL:-}" = virtualmin ]; then
+                p2s_message_print info 'Virtualmin normally excludes php and php*-php on RPM systems to prevent mod_php installation. Check each site in Virtualmin before changing the DNF rule.'
+            fi
+        else
+            p2s_fix_block transaction_plan "The RPM test transaction failed with publisher protection enabled. Review the package manager output. No packages were installed."
+        fi
+        return 1
     fi
     p2s_package_log_report "$log"
     # DNF can successfully report no work; that is not an unrecognised transaction.
@@ -5888,7 +5952,13 @@ p2s_panel_inventory_collect() {
                 panel_found=true
                 p2s_message_print info "Control panel detected: Virtualmin. Fix mode can update package-managed PHP using the existing repositories and supported service restarts. Check each virtual server's selected PHP version and application compatibility; website PHP selections are not changed by this script." ;;
             cloudlinux) p2s_fix_block control_panel "CloudLinux was detected. Its PHP packages and service restarts need a vendor-specific review; automatic updates are disabled for this setup." ;;
-            cagefs) P2S_UNKNOWN=true; p2s_fix_block cagefs "CageFS configuration was found. This script cannot verify whether applications use separate PHP copies or safely update them." ;;
+            cagefs)
+                P2S_UNKNOWN=true
+                p2s_fix_block cagefs "CageFS configuration was found. Reported PHP builds and dates cover the host. Verify the PHP selected and running for each CageFS account."
+                p2s_message_print info 'List accounts with cagefsctl --list-enabled. If PHP Selector is used, run selectorctl --user-current --user=ACCOUNT. Check the PHP version and build date inside the account with cagefs_enter_user ACCOUNT "php -v".'
+                if [ "$P2S_PANEL" = cpanel ]; then
+                    p2s_message_print info 'Check each domain in WHM MultiPHP Manager and verify the PHP its website serves after updating EasyApache and any CloudLinux PHP packages in use. The account command checks CLI PHP.'
+                fi ;;
             litespeed)
                 # The directory can outlive the server. Engine and process inventory also checks LiteSpeed.
                 if [ -x "$directory/bin/lshttpd" ] || [ -x "$directory/bin/openlitespeed" ]; then
@@ -6844,7 +6914,14 @@ p2s_summary_print_versions() {
             if ($5 ~ /^Sury\/|^StackX /) key=key SUBSEP $6
             if (!(key in version)) { order[++count]=key; version[key]=$1; state[key]=$2; provider[key]=$5 }
             if (!seen_role[key SUBSEP $3]++) roles[key]=roles[key] (roles[key] ? ", " : "") $3
-            if ($4 != "" && !seen_build[key SUBSEP $3 SUBSEP $4]++) builds[key]=builds[key] (builds[key] ? "; " : "") $3 ": " $4
+            if ($4 != "" && !seen_build[key SUBSEP $3 SUBSEP $4]++) {
+                builds[key]=builds[key] (builds[key] ? "; " : "") $3 ": " $4
+                # php -v reports, for example, "Nov 10 2021 12:04:12".
+                if ($4 ~ /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]+ +(19[0-9][0-9]|20[0-9][0-9]) /) {
+                    split($4, date, / +/)
+                    if (date[3]+0<2026 || (date[3]+0==2026 && date[1] !~ /^(Oct|Nov|Dec)$/)) old_builds[key]=1
+                }
+            }
             if ($7 == "Y") affected_upstream[key]=1
             if ($2 == "Y" && $7 == "?") presumed_affected[key]=1
             if ($8 != "") evidence[key SUBSEP $8]=1
@@ -6874,6 +6951,8 @@ p2s_summary_print_versions() {
                 if ((provider[key] ~ /^Sury\// || november=="true") && revisions[key]) text=text " Installed package build: " revisions[key] "."
                 if (state[key]=="N" && affected_upstream[key]) text=text " The PHP package publisher added the security fixes without changing the PHP version."
                 if (state[key]=="?") {
+                    if (november=="true" && old_builds[key])
+                        text=text " A reported executable build predates the October and November releases by weeks or more and is unlikely to include their fixes. Confirm a publisher backport or move the workload to patched PHP."
                     if (provider[key] !~ /^Sury\// && revisions[key] && november!="true") text=text " Installed package build: " revisions[key] "."
                     if (reasons[key SUBSEP "engine_package_version_mismatch"])
                         text=text " The executable reports a different PHP version from its owning package; check the runtime mismatch warning."
@@ -6984,32 +7063,61 @@ p2s_fix_print_exposure_advice() {
     p2s_message_print warn "Verify that the affected PHP workers have stopped and cannot be relaunched by requests, schedules, supervisors or panel monitoring. These commands cover the identified services only. Keep affected applications offline until their PHP fixes are verified; stopping services does not patch PHP."
 }
 
+p2s_summary_primary_blocker() {
+    local key message
+    # Prefer the repair or transaction failure over generic inventory warnings.
+    for key in lock package_repair_fpm_user rpm_php_excluded cagefs repository_dns unsupported_os transaction_plan package_state source_authentication repositories service_mapping custom_runtime runtime_owner; do
+        grep -Fqx -- "$key" "$P2S_WORK/fix-blocker-keys" "$P2S_WORK/blocker-keys" 2>/dev/null || continue
+        case "$key" in
+            lock) message='Another update may hold the patch lock.' ;;
+            package_repair_fpm_user) message='A PHP-FPM pool account could not be resolved. Restore the correct account or review the pool before retrying.' ;;
+            rpm_php_excluded) message='The DNF exclusion pins the installed Apache PHP package and blocks its matching libraries from updating. Check whether any site uses mod_php before changing the exclusion.' ;;
+            cagefs) message='CageFS account PHP is unverified. After updating, check the configured PHP handler for each domain and confirm the PHP build inside each account.' ;;
+            repository_dns) message='The server could not resolve a package repository hostname. Check DNS and retry the repository check.' ;;
+            unsupported_os)
+                case "${P2S_PANEL:-none}:${P2S_DISTRO:-unknown}:${P2S_MAJOR:-unknown}" in
+                    cpanel:centos:7|plesk:centos:7) message='This CentOS 7 host needs a panel-managed PHP update or a move to a supported server.' ;;
+                    *) message='Automatic updates are unavailable for this operating system. Check for a maintained PHP publisher or move the workload to a supported server.' ;;
+                esac ;;
+            transaction_plan) message='The package manager could not produce an approved PHP update plan. Review the transaction error before retrying.' ;;
+            package_state) message='An unfinished package operation is blocking the update. Review and repair the reported package state first.' ;;
+            source_authentication|repositories) message='The configured package sources could not be refreshed or authenticated. Review the repository error before retrying.' ;;
+            service_mapping) message='The updater could not identify how to restart an affected PHP service safely. Identify its launcher before retrying.' ;;
+            custom_runtime|runtime_owner) message='Some PHP executables need a separate update procedure. Identify their owner and how their workloads are started.' ;;
+        esac
+        p2s_manifest_record primary_blocker "$key|$message"
+        P2S_PRIMARY_BLOCKER=" $message"
+        return 0
+    done
+}
+
 p2s_summary_print_result() {
     local unresolved_versions='' update_blockers='' issue_name=PHP2Shell fixes='both PHP2Shell fixes' check_options=--check
-    local migration_target target_branch target_state target_web target_cli target_preparation target_workloads
+    local migration_target target_branch target_state target_web target_cli target_preparation target_workloads P2S_PRIMARY_BLOCKER=''
     if ${P2S_NOVEMBER:-false}; then
         issue_name='the November PHP vulnerabilities'
         fixes='the November PHP fixes'
         check_options='--check --november-2026'
     fi
+    if [ "$P2S_STATE" != N ]; then p2s_summary_primary_blocker; fi
     # This describes the final phase only; before/after protocol markers remain unchanged.
     case "$P2S_STATE" in
-        Y) p2s_message_print warn "Result: The check found PHP affected by $issue_name. If patching has to wait, take affected PHP applications offline." ;;
+        Y) p2s_message_print warn "Result: The check found PHP affected by $issue_name.$P2S_PRIMARY_BLOCKER If patching has to wait, take affected PHP applications offline." ;;
         '?')
             # Package and executable checks can disagree within one installation; describe component evidence.
             if p2s_state_has_only_fixed_versions; then
                 if ${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false}; then
-                    p2s_message_print warn "Result: Verified host PHP builds include $fixes. PHP in a separate application environment still needs checking."
+                    p2s_message_print warn "Result: Verified host PHP builds include $fixes. PHP in a separate application environment still needs checking.$P2S_PRIMARY_BLOCKER"
                 else
-                    p2s_message_print warn "Result: Verified PHP builds include $fixes. Some checks are still unresolved."
+                    p2s_message_print warn "Result: Verified PHP builds include $fixes. Some checks are still unresolved.$P2S_PRIMARY_BLOCKER"
                 fi
                 p2s_manifest_record verification_scope "assessed_host_versions=fixed|separate_environment_review=${P2S_SEPARATE_ENVIRONMENT_REVIEW:-false}|overall=unknown"
             elif [ -s "$P2S_WORK/summary-versions" ] && awk -F'|' '
                 $2 == "N" { fixed=1 } $2 == "?" { unverified=1 }
                 END { exit !(fixed && unverified) }' "$P2S_WORK/summary-versions"; then
-                p2s_message_print warn "Result: The check verified $fixes for some PHP installations. Review the PHP versions that still need a fix or verification."
+                p2s_message_print warn "Result: The check verified $fixes for some PHP installations. Review the PHP versions that still need a fix or verification.$P2S_PRIMARY_BLOCKER"
             else
-                p2s_message_print warn "Result: We could not verify whether all PHP installations include $fixes. Review the checks that still need attention."
+                p2s_message_print warn "Result: We could not verify whether all PHP installations include $fixes. Review the checks that still need attention.$P2S_PRIMARY_BLOCKER"
             fi ;;
         N)
             if [ "$P2S_COUNT" -eq 0 ]; then
@@ -7207,7 +7315,18 @@ p2s_fix_check_distro_recipe() {
         almalinux:*|rocky:*|rhel:*|ol:*) [ "$P2S_MAJOR" -ge 8 ] && return 0 ;;
         centos:7)
             p2s_fix_block unsupported_os "No automatic update recipe for $P2S_DISTRO $P2S_RELEASE is implemented in this script. CentOS Linux 7 reached end of life on 30 June 2024. Standard CentOS 7 archives contain historical PHP packages, including PHP 5.4.16-48.el7 from April 2020, without the PHP2Shell fixes. Updating those packages with yum upgrade or repairing archive mirror access will not resolve PHP2Shell. Use a maintained PHP publisher with a verified fix, or migrate applications to a supported OS and patched PHP."
+            if ${P2S_NOVEMBER:-false}; then
+                p2s_message_print info "For stock PHP 5.4 on CentOS 7, TuxCare publishes a fixed build through its paid CentOS 7 ELS service. Check whether you already have an entitlement. https://errata.tuxcare.com/els_os/centos7els/CLSA-2026-1795106529.html"
+            fi
             return 1 ;;
+        centos:5|centos:6)
+            if ${P2S_NOVEMBER:-false}; then
+                p2s_fix_block unsupported_os "CentOS $P2S_MAJOR standard repositories are retired. Their archived PHP predates the November fixes. Plan to migrate the workload to maintained PHP."
+                if [ "$P2S_MAJOR" = 6 ]; then
+                    p2s_message_print info "For x86_64 CentOS 6, TuxCare publishes patched parallel PHP builds. This is a separate subscription and the workload must be switched to the new PHP handler. https://docs.tuxcare.com/els-for-runtimes/php/"
+                fi
+                return 1
+            fi ;;
         centos:*) [ "$P2S_MAJOR" -ge 9 ] && return 0 ;;
     esac
     p2s_fix_block unsupported_os "No automatic update recipe for $P2S_DISTRO $P2S_RELEASE is implemented in this script. Ask the PHP package publisher whether it supplies a verified fix for this OS release. If no maintained build is available, plan an OS upgrade or move the affected workloads to a supported server."
@@ -7926,7 +8045,7 @@ $(cat "$P2S_WORK/recommend-migration-plan.log")"
 p2s_check_refresh_packages() {
     local manager query=check-update manager_version status=0 name version arch vendor log="$P2S_WORK/rpm-availability.log"
     local P2S_MODE=check
-    local packages=()
+    local packages=() query_options=(--cacheonly --assumeno) evidence='after refreshing repositories'
     case "${P2S_PANEL:-}:$P2S_BACKEND" in
         cpanel:*|plesk:*) return 0 ;;
         *:deb|*:rpm) ;;
@@ -7958,15 +8077,17 @@ p2s_check_refresh_packages() {
     fi
     IFS= read -r manager_version < "$log"
     case "$manager_version" in 'dnf5 version '*) query=check-upgrade ;; esac
+    [ "$manager" != yum ] || query_options=(-C)
     p2s_package_rpm_refresh_indexes "$manager" "$log" || return 1
     [ "$P2S_STATE" != N ] || return 0
-    p2s_command_run 90 "$manager" --cacheonly --assumeno "$query" "${packages[@]}" < /dev/null > "$log" 2>&1 || status=$?
+    if [ "$P2S_REPOSITORY_REFRESH" = cached_only ]; then evidence='in cached metadata'; fi
+    p2s_command_run 90 "$manager" "${query_options[@]}" "$query" "${packages[@]}" < /dev/null > "$log" 2>&1 || status=$?
     p2s_package_log_report "$log"
     # DNF and YUM return 100 when an update exists, even when no transaction was requested.
     p2s_manifest_record rpm_candidate_query "$manager $query|exit=$status"
     case "$status" in
-        0) p2s_message_print warn "$manager $query found no update for the installed PHP packages after refreshing repositories." ;;
-        100) p2s_message_print info "$manager $query found newer PHP package builds. See the run log for versions and repositories. A fix attempt checks the publishers and dependency plan before installing." ;;
+        0) p2s_message_print warn "$manager $query found no update for the installed PHP packages $evidence." ;;
+        100) p2s_message_print info "$manager $query found newer PHP package builds $evidence. See the run log for versions and repositories. A fix attempt checks the publishers and dependency plan before installing." ;;
         124) p2s_fix_block candidate_query "$manager $query timed out after 90 seconds. Review the package-manager log and rerun the check."; return 1 ;;
         *) p2s_fix_block candidate_query "$manager $query failed (exit $status). Review the package-manager log and rerun the check."; return 1 ;;
     esac
@@ -8090,7 +8211,7 @@ p2s_fix_run() {
 
 p2s_main() {
     # Update the revision when script behaviour changes; the checksum separately identifies the loaded functions.
-    local mode=check result=0 command fix_options=--fix script_revision=2026-11-26.7 check_options=--check
+    local mode=check result=0 command fix_options=--fix script_revision=2026-11-26.9 check_options=--check
     local P2S_APT_PLAN=
     case "$#:$1" in
         0:|1:--check|1:--check-vuln) ;;
@@ -8226,6 +8347,7 @@ p2s_main() {
     p2s_vulnerability_result afterfix "$P2S_STATE"
     if [ "$mode" = fix ] && [ "$P2S_STATE" != N ]; then
         # Reassess current blockers without carrying consent or stale failures into retry advice.
+        cp "$P2S_WORK/blocker-keys" "$P2S_WORK/fix-blocker-keys" 2>/dev/null || :
         (
             P2S_MODE=check; P2S_BLOCKED=false; : > "$P2S_WORK/blocker-keys"
             P2S_DISRUPTIVE=false; P2S_ALLOW_SURY_MIGRATION=false; P2S_ALLOW_SURY_REPOSITORY=false

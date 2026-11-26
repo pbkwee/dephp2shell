@@ -1003,6 +1003,12 @@ lines do not implicate other repositories. Host matches can include multiple
 sources or disabled definitions. Confirm the repository and suite before changing
 a file. Unmatched mirrors or custom configuration paths remain unidentified.
 
+Check-mode Yum refresh requires support for `--assumeno` and `--setopt`. Older
+Yum checks available cached candidates with `yum -C check-update` and records
+`repositories=cached_only`. A result from that cache cannot establish current
+availability. An RPM metadata refresh stopped by DNS surfaces that failure in
+the primary blocker.
+
 HTTP 404 classification requires an explicit missing-file status (`404 Not Found`,
 `HTTP Error 404`, or `Status code: 404`), not a substring of a download size or
 APT item number. APT `Hit`/`Get`/`Ign` progress rows cannot supply failure identities.
@@ -1160,13 +1166,23 @@ and updater without running the updater. A panel directory can be a leftover. Ch
 | Virtualmin | Permit the ordinary explicit PHP package update and supported service restarts. Virtualmin's presence alone is not a blocker or a verification gap. Check each virtual server's PHP selection before removing or migrating old PHP branches. |
 
 The November check verifies the exact x86_64 cPanel 110 internal PHP 8.1
-RPMs on EL7/8/9 and the stock EasyApache PHP 7.4 backport on EL7/8. It reports
+RPMs on EL7/8/9 and the stock EasyApache PHP 7.4 backport on EL7/8. The CentOS 7
+EasyApache index publishes `7.4.34-3.3.1.cpanel` for `common` and `fpm`.
+The latest stock PHP 8.0 build in that index is `8.0.31-2.2.3.cpanel` and
+misses the November fixes. The checker reports
 the internal PHP result after the updater returns. CloudLinux EasyApache and
 Alt-PHP use separate package revisions and still require a manual update and
 CageFS runtime review where applicable.
 [cPanel release notes](https://docs.cpanel.net/release-notes/release-notes/#cpanel--whm-security-update---november-19) ·
 [EasyApache changelog](https://docs.cpanel.net/changelogs/easyapache-4-change-log-25/#2598) ·
+[CentOS 7 EasyApache repository metadata](https://httpupdate.cpanel.net/cpanelsync/repos/CentOS/7/EA4/repodata/repomd.xml) ·
 [CloudLinux release matrix](https://cloudlinux.com/security/php-november-2026-security-releases)
+
+Virtualmin's RPM configuration excludes `php` and `php*-php` to keep Apache's
+embedded module out of FPM-based deployments. When an installed `php` RPM
+requires the old `php-common`, check the actual site handlers before approving
+an update to the coupled RPMs or removal of the unused module.
+[Virtualmin package restriction](https://github.com/virtualmin/Virtualmin-Config/blob/master/lib/Virtualmin/Config/Plugin/Virtualmin.pm#L264-L301)
 
 `--select-release-current` retains the selected Plesk release instead of requesting
 the latest release. It does not make the component update security-only or promise
@@ -1511,6 +1527,25 @@ Freexian's signed Debian ELTS revisions require matching source-package metadata
 The opt-in installer verifies the existing Freexian Extended LTS signing key, release, exact candidate origins, and package and extension identity. Its November rules cover native Stretch PHP 7.0, Buster PHP 7.3, and Bullseye PHP 7.4. The separate private Freexian PHP LTS service needs its own reviewed package evidence.
 
 ### November RPM rules
+
+The checker recognises the CentOS 7 x86_64 Plesk PHP 7.4 revision from the
+November vendor archive. It also recognises the separate native CentOS 7 and
+CloudLinux 7 TuxCare ELS revisions and reviewed CloudLinux or TuxCare alt-PHP
+revisions. Package recognition leaves repository setup and handler changes
+subject to operator approval. Old executable build dates can add a risk hint to
+an unverified result. Packages built just before a coordinated release can
+already include its fixes, so date alone leaves the reported state unchanged.
+[Plesk November advisory](https://support.plesk.com/hc/en-us/articles/45146523211671) ·
+[CloudLinux November advisory](https://cloudlinux.com/security/php-november-2026-security-releases) ·
+[TuxCare CentOS 7 errata](https://errata.tuxcare.com/els_os/centos7els/CLSA-2026-1795106529.html) ·
+[TuxCare EL6 alt-PHP errata](https://errata.tuxcare.com/els_alt_php/el6/)
+
+When there is a known blocker, the final `Result:` line includes one short
+explanation. The machine log also emits `primary_blocker` with a stable reason
+key. It keeps the detailed blocker records and the before/after PHP assessments.
+The DNF exclusion diagnostic requires both a recorded exact `php` exclusion
+and a failed transaction that names the installed package's matching
+`php-common` requirement.
 
 The November checker accepts later revisions within reviewed Sury, Ubuntu,
 Freexian and native AlmaLinux/Rocky Linux package series. Debian and Ubuntu
